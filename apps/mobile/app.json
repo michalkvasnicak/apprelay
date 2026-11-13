@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "plugins": ["./plugins/with-wireguard"],
+    "plugins": ["./plugins/with-wireguard", "expo-notifications"],
     "ios": {
       "deploymentTarget": "27.0",
       "supportsTablet": false

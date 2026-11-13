@@ -2,6 +2,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { usePushNotifications } from "./src/notifications/usePushNotifications";
 import { isVpnAvailable, type VpnStatus } from "./src/vpn/native";
 import { queryClient, useVpn } from "./src/vpn/queries";
 
@@ -34,6 +35,7 @@ function VpnScreen() {
     status === "disconnecting" ||
     (!active && !identity.data);
   const device = registration.data;
+  const notifications = usePushNotifications(device, status === "connected" && !busy);
   const errors = [identity.error, statusQuery.error, connection.error].filter(Boolean);
   let buttonLabel = "Connect";
   if (registration.isPending) {
@@ -75,6 +77,12 @@ function VpnScreen() {
         {errors.length > 0 && (
           <Text accessibilityRole="alert" style={styles.error}>
             {errors.map((error) => error?.message).join("\n")}
+          </Text>
+        )}
+        {notifications.error && (
+          <Text accessibilityRole="alert" style={styles.error}>
+            Notifications: {notifications.error} Will retry when the VPN reconnects or the app
+            returns to the foreground with the VPN connected.
           </Text>
         )}
         <Pressable
