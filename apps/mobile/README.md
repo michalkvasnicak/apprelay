@@ -63,13 +63,13 @@ The native provider validates the API settings and applies exactly the returned 
 
 Native source changes require regenerating the Expo iOS project and rebuilding the app; a JavaScript-only update is insufficient.
 
-### Experimental Bonjour pairing proxy
+### Bonjour pairing proxy
 
-While the tunnel is running, `BonjourProxy.swift` listens on the device's VPN IPv4 address, UDP port 5354. It consumes the server experiment's complete unicast announcements (PTR, SRV, TXT and A records in one packet). It does not fetch discovery metadata from the API or replay raw DNS packets.
+While the tunnel is running, `BonjourProxy.swift` listens on the device's VPN IPv4 address, UDP port 5354. It consumes the pairing worker's complete unicast announcements (PTR, SRV, TXT and A records in one packet). It does not fetch discovery metadata from the API or replay raw DNS packets.
 
 For `_remotepairing-pairable-host._tcp.local.`, the extension opens a local TCP listener and publishes the same instance name and raw TXT records through Bonjour. The advertised endpoint is the iPhone's listener; accepted connections are relayed to the announcement's server IPv4 address and port using sockets explicitly bound to the tunnel interface. That server destination must be covered by the VPN routes. This makes the service visible on Wi-Fi; it is not restricted to the advertising iPhone.
 
-The advertisement expires if announcements stop for the advertised SRV TTL. Disconnect closes the UDP receiver, listener and relays and withdraws the advertisement. Only one service is proxied at a time. Incomplete DNS announcements and IPv6 destinations are not supported by this experiment. UDP 5354 avoids the system mDNS port (5353). Announcement reception and discovery by the same iPhone still need physical-device verification.
+The advertisement expires if announcements stop for the advertised SRV TTL. Disconnect closes the UDP receiver, listener and relays and withdraws the advertisement. Only one service is proxied at a time. Incomplete DNS announcements and IPv6 destinations are not supported. UDP 5354 avoids the system mDNS port (5353).
 
 The plugin adds local-network usage and Bonjour declarations to both targets. The foreground app starts a Bonjour browse on Connect to request local-network permission; approve the prompt. Native Console logs under subsystem `AppRelay`, category `BonjourProxy`, distinguish receiving, listener startup and publication failures without logging pairing payloads or TXT contents.
 
@@ -80,7 +80,7 @@ pnpm --filter @apprelay/mobile exec expo prebuild --platform ios --no-install
 pnpm ios
 ```
 
-Reconnect with the server's pairing experiment running. Look for `Listening for pairing announcements` and `Pairing proxy Bonjour advertisement published` in device logs, then check the native pairing UI. Successful publication does not establish that the same iPhone will discover the service.
+Reconnect with a pairing worker session running. Look for `Listening for pairing announcements` and `Pairing proxy Bonjour advertisement published` in device logs, then check the native pairing UI. Successful publication does not establish that the same iPhone will discover the service.
 
 ### Validation status
 

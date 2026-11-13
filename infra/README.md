@@ -1,6 +1,8 @@
 # Local infrastructure
 
-Docker Compose runs PostgreSQL and Caddy. The Rust API and root VPN agent stay native on macOS; neither container needs VPN privileges or the server's private key.
+Docker Compose runs PostgreSQL, Temporal, and Caddy. The Rust API, pairing worker,
+and root VPN agent stay native on macOS; containers need no VPN privileges or
+server private key.
 
 ```text
 iPhone / Mac -> Caddy :8443 -> host.lima.internal:8080 -> native Rust API
@@ -8,7 +10,8 @@ iPhone / Mac -> Caddy :8443 -> host.lima.internal:8080 -> native Rust API
                                                          | VPN agent via host Unix socket
 ```
 
-This is a development configuration, not a production deployment. The API currently provides only `GET /health`; migrations and peer registration are not implemented yet. Caddy will return 502 until the native server is running and reachable at its upstream.
+This is a development configuration, not a production deployment. Caddy will
+return 502 until the native server is running and reachable at its upstream.
 
 ## Start
 
@@ -24,7 +27,23 @@ docker compose logs -f
 
 The default HTTPS URL is `https://localhost:8443`. PostgreSQL is published only on `127.0.0.1:5432`. Only HTTPS TCP is published for Caddy; its administration port and HTTP/3 UDP are not exposed.
 
-Named volumes persist database data, Caddy certificates and its local CA. Services are independent: Caddy does not need PostgreSQL to start.
+Named volumes persist PostgreSQL data, Temporal's SQLite database, Caddy
+certificates and its local CA. Services are independent: Caddy does not need
+PostgreSQL or Temporal to start.
+
+## Temporal
+
+The pinned `temporalio/temporal:1.6.2` image runs `server start-dev` with persistence
+in `temporal-data`. Its gRPC API is exposed only at `127.0.0.1:7233` and its UI at
+<http://localhost:8233>. The development server creates the `default` namespace.
+This is not a production Temporal deployment and has no authentication.
+
+Run the pairing worker natively, not in Docker: it needs the host's WireGuard
+interface and VPN-agent Unix socket. See [pairing worker](../apps/server/README.md#pairing-worker-macos)
+for startup and manually queueing a device. Only one worker should run for the
+10-active-session limit. Export `DATABASE_URL` in its shell; optional settings
+are `APPRELAY_TEMPORAL_ADDRESS=http://127.0.0.1:7233` and
+`APPRELAY_TEMPORAL_NAMESPACE=default`.
 
 ## Native application configuration
 
@@ -38,13 +57,15 @@ After trusting Caddy's CA, open `https://<configured-host>:8443/health`. Expect 
 
 The listener defaults to `127.0.0.1:8080`; export `APPRELAY_HTTP_ADDRESS` to change it. If Colima cannot reach loopback, select a reachable interface and restrict access using the firewall. A 502 response indicates Caddy cannot reach the native API.
 
-The future PostgreSQL integration should connect using:
+The API and pairing worker connect to PostgreSQL using:
 
 ```text
 DATABASE_URL=postgres://apprelay:<URL-encoded-password>@127.0.0.1:5432/apprelay
 ```
 
-Export application settings in the shell running the API. Compose's root `.env` is for Compose interpolation; the current Rust server does not load it automatically and does not use PostgreSQL yet.
+Export application settings in the shell running each native process. Compose's
+root `.env` is for Compose interpolation; native Rust processes do not load it
+automatically.
 
 Caddy connects to `host.lima.internal:8080`, not container localhost. This hostname relies on Colima/Lima DNS; do not override it with Docker's `host-gateway`, which may point at the Linux VM rather than macOS. The API listener must be reachable through this host route. Depending on Colima's networking, loopback may work; otherwise use a reachable interface and firewall restrictions. Do not expose an unauthenticated API broadly as a workaround.
 
@@ -110,7 +131,8 @@ This keeps all data. **Destructive reset**, only when intentional:
 docker compose down --volumes
 ```
 
-This deletes PostgreSQL data and the Caddy CA. You must trust the replacement CA on clients afterward.
+This deletes PostgreSQL data, Temporal workflow history, and the Caddy CA. You
+must trust the replacement CA on clients afterward.
 
 PostgreSQL initialization settings only apply to an empty data volume. Changing `POSTGRES_PASSWORD` in `.env` does not change the password in an existing database; change that role's password explicitly or intentionally reset the local database.
 

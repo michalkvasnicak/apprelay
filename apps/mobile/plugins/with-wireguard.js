@@ -41,7 +41,7 @@ module.exports = function withWireGuard(config) {
   config = withInfoPlist(config, (mod) => {
     mod.modResults.AppRelayKeychainGroup = keychainGroup;
     mod.modResults.NSLocalNetworkUsageDescription =
-      "Advertise the experimental pairing proxy on your local network while the VPN is connected.";
+      "Advertise the pairing proxy on your local network while the VPN is connected.";
     mod.modResults.NSBonjourServices = [
       ...new Set([
         ...(mod.modResults.NSBonjourServices ?? []),
@@ -75,7 +75,7 @@ module.exports = function withWireGuard(config) {
       <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
       <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
       <key>AppRelayKeychainGroup</key><string>${keychainGroup}</string>
-      <key>NSLocalNetworkUsageDescription</key><string>Advertise the experimental pairing proxy on your local network while the VPN is connected.</string>
+      <key>NSLocalNetworkUsageDescription</key><string>Advertise the pairing proxy on your local network while the VPN is connected.</string>
       <key>NSBonjourServices</key><array><string>_remotepairing-pairable-host._tcp</string></array>
       <key>NSExtension</key><dict>
         <key>NSExtensionPointIdentifier</key><string>com.apple.networkextension.packet-tunnel</string>

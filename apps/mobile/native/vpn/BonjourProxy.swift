@@ -3,7 +3,7 @@ import Foundation
 import Network
 import os
 
-// Experimental bridge for the server's unicast DNS-SD announcements.
+// Bridge for the server's unicast DNS-SD pairing announcements.
 final class BonjourProxy: NSObject, NetServiceDelegate {
     private let queue = DispatchQueue(label: "AppRelay.BonjourProxy")
     private let logger = Logger(subsystem: "AppRelay", category: "BonjourProxy")

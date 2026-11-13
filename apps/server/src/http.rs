@@ -172,6 +172,11 @@ async fn register_device(
             "registration expired; retry registration",
         ));
     }
+    #[cfg(target_os = "macos")]
+    if let Err(error) = crate::temporal_pairing::start(device.id).await {
+        // Registration remains valid even when the pairing queue is unavailable.
+        eprintln!("Could not queue pairing for device {}: {error}", device.id);
+    }
     Ok((
         StatusCode::CREATED,
         Json(RegistrationResponse {

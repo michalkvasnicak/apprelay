@@ -4,6 +4,9 @@
   "scripts": {
     "start": "cargo run",
     "start:release": "cargo run --release",
+    "vpn:agent": "cargo build --bin vpn-agent && sudo -E env PATH=\"$PATH\" ./target/debug/vpn-agent",
+    "pairing:worker": "cargo run --bin pairing-worker",
+    "pairing:start": "cargo run --bin pair-device",
     "lint": "cargo clippy --all-targets -- -D warnings",
     "typecheck": "cargo check --all-targets",
     "format": "cargo fmt",
