@@ -28,6 +28,18 @@ sudo env PATH="$PATH" \
 
 Keep the agent running. In another terminal, run `pnpm start` from `apps/server` **without sudo**. Stopping the server does not stop the VPN; stopping the agent cleans it up.
 
+## Local PostgreSQL and HTTPS
+
+See [local infrastructure](../../infra/README.md) for the root Docker Compose setup. PostgreSQL and Caddy run in containers; this server and the VPN agent remain native on the host. Caddy proxies HTTPS to this server on port 8080. PostgreSQL integration is not implemented yet.
+
+### Health endpoint
+
+Run `pnpm run server` from the repository root, then open `https://<configured-host>:8443/health` on your Mac or iPhone after trusting Caddy's CA. A successful response is HTTP 200 with `{"status":"ok"}`.
+
+The native listener defaults to `127.0.0.1:8080`. Override it with the exported `APPRELAY_HTTP_ADDRESS` environment variable if needed for Colima host connectivity. For example, `APPRELAY_HTTP_ADDRESS=0.0.0.0:8080 pnpm run server` listens on all IPv4 interfaces; use firewall restrictions to avoid unwanted direct HTTP access. TLS is handled by Caddy, not this listener.
+
+This is process liveness only: it does not verify PostgreSQL, VPN connectivity or WireGuard handshakes. An unavailable VPN agent is logged at startup but does not prevent HTTP serving.
+
 ## Configuration
 
 Configuration comes from exported environment variables, not `.env` files. VPN settings below belong to the agent:
@@ -50,4 +62,4 @@ Keep the key outside version control. Only the agent needs access to it; it pass
 
 ## Current scope
 
-The socket API supports status/start/stop; the server currently queries status on startup. Peer provisioning, iOS client configuration, forwarding, and NAT are not implemented yet.
+The socket API supports status/start/stop; the server queries status on startup and serves `GET /health`. HTTP shuts down gracefully on SIGINT or SIGTERM. Peer provisioning, iOS client configuration, forwarding, and NAT are not implemented yet.

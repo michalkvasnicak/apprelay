@@ -1,0 +1,16 @@
+{
+	# Trust the local CA explicitly on clients instead.
+	skip_install_trust
+	# Development uses HTTPS directly; no HTTP redirect port is published.
+	auto_https disable_redirects
+	# IP-address clients may omit SNI during the TLS handshake.
+	default_sni {$APPRELAY_HTTPS_HOST}
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://{$APPRELAY_HTTPS_HOST}:8443 {
+	tls internal
+	reverse_proxy {$APPRELAY_API_UPSTREAM}
+}
