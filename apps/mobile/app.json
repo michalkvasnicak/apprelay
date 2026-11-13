@@ -6,9 +6,12 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "plugins": ["./plugins/with-wireguard"],
     "ios": {
+      "bundleIdentifier": "sk.brosoft.apprelay",
       "deploymentTarget": "27.0",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "appleTeamId": "RZ6B3UWFHF"
     },
     "android": {
       "adaptiveIcon": {

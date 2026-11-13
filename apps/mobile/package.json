@@ -5,8 +5,8 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios --device",
     "web": "expo start --web",
     "lint": "oxlint --fix --deny-warnings --react-plugin .",
     "format": "oxfmt --write .",
