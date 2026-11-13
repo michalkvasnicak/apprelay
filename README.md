@@ -1,10 +1,11 @@
 # apprelay
 
-pnpm monorepo with a minimal Expo React Native app, TypeScript, and a blank white screen.
+pnpm monorepo with a minimal Expo React Native app and a Rust server process.
 
 ## Layout
 
-- `apps/mobile` — Expo app (`@apprelay/mobile`).
+- `apps/mobile` — Expo app (`@apprelay/mobile`) with a blank white screen.
+- `apps/server` — Rust process (`@apprelay/server`), currently idle until Ctrl+C.
 - `packages/*` — workspace location for future shared packages.
 - Repository root — shared tooling, Git hooks, and Pi hooks.
 
@@ -23,12 +24,23 @@ Root development commands forward to `apps/mobile`. Open the app in Expo Go, or 
 
 Use `pnpm --filter @apprelay/mobile <command>` to target the app directly. Add Expo dependencies with `pnpm --filter @apprelay/mobile exec expo install <package>`.
 
+### Rust server
+
+Install Rust 1.85 or newer with the Clippy and rustfmt components, then run:
+
+```sh
+pnpm server
+```
+
+The process waits asynchronously for Ctrl+C and exits cleanly. It does not listen on any ports or implement HTTP, VPN, or device functionality yet. `pnpm --filter @apprelay/server start:release` runs an optimized build.
+
 ## Code quality
 
 - `pnpm lint` — run each workspace's lint script (the mobile app uses oxlint with React rules, autofixes, and warnings treated as errors).
-- `pnpm typecheck` — run each workspace's TypeScript checking.
-- `pnpm format` / `pnpm format:check` — oxfmt across the repository.
-- Husky runs lint-staged before commits, formatting and re-staging supported staged files.
+- `pnpm typecheck` — TypeScript checking for mobile and `cargo check` for the server.
+- The server's lint script runs Clippy with warnings treated as errors.
+- `pnpm format` / `pnpm format:check` — oxfmt across the repository plus rustfmt for the server.
+- Husky runs lint-staged before commits, formatting and re-staging supported staged files with oxfmt or rustfmt.
 - Pi runs lint and typecheck automatically before settling. See [`.pi/README.md`](.pi/README.md).
 
 No navigation, application features, or tests are included.

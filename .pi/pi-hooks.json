@@ -4,6 +4,34 @@
     "maxRetries": 5,
     "checks": [
       {
+        "name": "server: lint",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/server lint",
+        "inputs": [
+          "apps/server/**/*.rs",
+          "apps/server/Cargo.toml",
+          "apps/server/Cargo.lock",
+          "apps/server/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml"
+        ]
+      },
+      {
+        "name": "server: typecheck",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/server typecheck",
+        "inputs": [
+          "apps/server/**/*.rs",
+          "apps/server/Cargo.toml",
+          "apps/server/Cargo.lock",
+          "apps/server/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml"
+        ]
+      },
+      {
         "name": "mobile: lint",
         "type": "command",
         "command": "pnpm --filter @apprelay/mobile lint",

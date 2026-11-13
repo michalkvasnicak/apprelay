@@ -1,0 +1,12 @@
+{
+  "name": "@apprelay/server",
+  "private": true,
+  "scripts": {
+    "start": "cargo run",
+    "start:release": "cargo run --release",
+    "lint": "cargo clippy --all-targets -- -D warnings",
+    "typecheck": "cargo check --all-targets",
+    "format": "cargo fmt",
+    "format:check": "cargo fmt --check"
+  }
+}

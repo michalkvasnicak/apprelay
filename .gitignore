@@ -39,6 +39,9 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Rust build output
+target/
+
 # typescript
 *.tsbuildinfo
 

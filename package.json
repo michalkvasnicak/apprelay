@@ -3,13 +3,14 @@
   "private": true,
   "scripts": {
     "start": "pnpm --filter @apprelay/mobile start",
+    "server": "pnpm --filter @apprelay/server start",
     "android": "pnpm --filter @apprelay/mobile android",
     "ios": "pnpm --filter @apprelay/mobile ios",
     "web": "pnpm --filter @apprelay/mobile web",
     "prepare": "husky",
     "lint": "pnpm -r lint",
-    "format": "oxfmt --write .",
-    "format:check": "oxfmt --check .",
+    "format": "oxfmt --write . && pnpm --filter @apprelay/server format",
+    "format:check": "oxfmt --check . && pnpm --filter @apprelay/server format:check",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
@@ -21,7 +22,8 @@
     "typescript": "~6.0.3"
   },
   "lint-staged": {
-    "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,json5,css,scss,less,html,vue,md,mdx,yaml,yml}": "oxfmt --write"
+    "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,json5,css,scss,less,html,vue,md,mdx,yaml,yml}": "oxfmt --write",
+    "*.rs": "rustfmt --edition 2024"
   },
   "packageManager": "pnpm@10.33.2"
 }
