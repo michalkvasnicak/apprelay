@@ -45,6 +45,7 @@ export function useVpn() {
       await client.cancelQueries({ queryKey: statusKey });
       if (active) {
         await vpn.disconnect();
+        registration.reset();
         return "disconnecting";
       }
       if (!identity.data) {
