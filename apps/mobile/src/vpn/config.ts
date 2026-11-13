@@ -34,37 +34,5 @@ export async function registerDevice(publicKey: string): Promise<DeviceRegistrat
   if (response.status !== 201) {
     throw new Error(`Device registration failed (HTTP ${response.status}).`);
   }
-  const data: unknown = await response.json();
-  if (!isRegistration(data)) {
-    throw new Error("The VPN server returned an invalid device registration.");
-  }
-  return data;
-}
-
-function isRegistration(value: unknown): value is DeviceRegistration {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const data = value as Partial<DeviceRegistration>;
-  const wg = data.wireguard;
-  return (
-    typeof data.device_id === "string" &&
-    data.device_id.length > 0 &&
-    typeof data.address === "string" &&
-    /^.+\/32$/.test(data.address) &&
-    typeof data.expires_at === "string" &&
-    Date.parse(data.expires_at) > Date.now() &&
-    typeof data.lifetime_seconds === "number" &&
-    Number.isInteger(data.lifetime_seconds) &&
-    data.lifetime_seconds > 0 &&
-    !!wg &&
-    typeof wg.server_public_key === "string" &&
-    /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(wg.server_public_key) &&
-    Array.isArray(wg.allowed_ips) &&
-    wg.allowed_ips.length > 0 &&
-    wg.allowed_ips.every((ip: unknown) => typeof ip === "string" && /^.+\/\d+$/.test(ip)) &&
-    Number.isInteger(wg.persistent_keepalive_seconds) &&
-    wg.persistent_keepalive_seconds >= 0 &&
-    wg.persistent_keepalive_seconds <= 65535
-  );
+  return (await response.json()) as DeviceRegistration;
 }

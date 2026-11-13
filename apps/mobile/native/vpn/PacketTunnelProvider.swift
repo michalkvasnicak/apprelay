@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import NetworkExtension
 import WireGuardKit
 
@@ -17,7 +18,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let privateKey = PrivateKey(rawValue: try VpnKeychain.privateKey(reference: reference)),
                   let publicKey = PublicKey(base64Key: settings.publicKey),
                   let clientAddress = IPAddressRange(from: settings.clientAddress),
-                  let endpoint = Endpoint(from: "\(settings.host):\(settings.port)") else {
+                  let endpoint = Endpoint(from: "\(settings.host):\(settings.port)"),
+                  let keepalive = UInt16(exactly: settings.persistentKeepaliveSeconds) else {
                 throw VpnError.invalidConfiguration
             }
             var interface = InterfaceConfiguration(privateKey: privateKey)
@@ -27,11 +29,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             peer.endpoint = endpoint
             peer.allowedIPs = settings.allowedIPs.compactMap { IPAddressRange(from: $0) }
             guard peer.allowedIPs.count == settings.allowedIPs.count else { throw VpnError.invalidConfiguration }
-            peer.persistentKeepAlive = UInt16(settings.persistentKeepaliveSeconds)
-            allowedRoutes = settings.allowedIPs.map { cidr in
-                let parts = cidr.split(separator: "/")
-                let prefix = Int(parts[1])!
-                let mask = UInt32.max << (32 - prefix)
+            peer.persistentKeepAlive = keepalive
+            allowedRoutes = try settings.allowedIPs.map { cidr in
+                let parts = cidr.split(separator: "/", omittingEmptySubsequences: false)
+                guard parts.count == 2, IPv4Address(String(parts[0])) != nil,
+                      let prefix = Int(parts[1]), (0...32).contains(prefix) else {
+                    throw VpnError.invalidConfiguration
+                }
+                let mask: UInt32 = prefix == 0 ? 0 : UInt32.max << (32 - prefix)
                 let subnetMask = [24, 16, 8, 0].map { String((mask >> $0) & 255) }.joined(separator: ".")
                 return NEIPv4Route(destinationAddress: String(parts[0]), subnetMask: subnetMask)
             }
