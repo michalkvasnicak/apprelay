@@ -17,6 +17,10 @@ impl Vpn {
         })
     }
 
+    pub fn interface_name(&self) -> Option<&str> {
+        self.interface.name()
+    }
+
     pub async fn wait(&mut self) -> io::Result<()> {
         self.interface.wait().await
     }

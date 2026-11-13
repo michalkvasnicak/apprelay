@@ -1,31 +1,36 @@
 # AppRelay server
 
-Rust service that manages a WireGuard interface: startup, key and port configuration, IPv4 addressing, subnet routing, and cleanup on shutdown or failure.
+Two processes: a root `vpn-agent` owns WireGuard; the unprivileged application server manages it through a restricted Unix socket.
 
 ## Platform support
 
 | Platform        | Status                                                                         |
 | --------------- | ------------------------------------------------------------------------------ |
 | macOS           | Implemented using `wireguard-go` and a dynamically allocated `utun` interface. |
-| Linux           | Not implemented yet; the server exits with an unsupported-platform error.      |
+| Linux           | VPN agent not implemented yet.                                                 |
 | Other platforms | Not supported.                                                                 |
 
-On macOS, `wireguard-go` and `wg` (from `wireguard-tools`) must be available on the server process's `PATH`. Running the server requires root privileges to manage interfaces, routes, and runtime files under `/var/run`.
+On macOS, `wireguard-go` and `wg` (from `wireguard-tools`) must be on the agent's `PATH`.
 
 ## Running on macOS
 
-The server must run as root. From `apps/server`, build as your normal user, then run the binary with `sudo`:
+From `apps/server`, with `APPRELAY_VPN_PRIVATE_KEY_FILE` exported, build as your normal user and start the agent as root:
 
 ```sh
-cargo build
-sudo -E env PATH="$PATH" ./target/debug/apprelay-server
+cargo build --bins
+sudo env PATH="$PATH" \
+  APPRELAY_VPN_PRIVATE_KEY_FILE="$APPRELAY_VPN_PRIVATE_KEY_FILE" \
+  APPRELAY_VPN_AGENT_UID="$(id -u)" \
+  APPRELAY_VPN_ADDRESS="${APPRELAY_VPN_ADDRESS:-10.77.0.1/24}" \
+  APPRELAY_VPN_PORT="${APPRELAY_VPN_PORT:-51820}" \
+  ./target/debug/vpn-agent
 ```
 
-This requests preservation of exported configuration variables and retains your `PATH` for Homebrew tools. Environment preservation is subject to sudo policy. Do not run Cargo or pnpm as root.
+Keep the agent running. In another terminal, run `pnpm start` from `apps/server` **without sudo**. Stopping the server does not stop the VPN; stopping the agent cleans it up.
 
 ## Configuration
 
-Configuration is read from environment variables:
+Configuration comes from exported environment variables, not `.env` files. VPN settings below belong to the agent:
 
 | Variable                        | Default        | Description                                                                          |
 | ------------------------------- | -------------- | ------------------------------------------------------------------------------------ |
@@ -33,14 +38,16 @@ Configuration is read from environment variables:
 | `APPRELAY_VPN_ADDRESS`          | `10.77.0.1/24` | Server IPv4 address and prefix length. The server also adds a route for this subnet. |
 | `APPRELAY_VPN_PORT`             | `51820`        | UDP listen port, between 1 and 65535.                                                |
 
+`APPRELAY_VPN_AGENT_UID` selects the permitted non-root server user (defaults to `SUDO_UID`). On macOS, both processes use `/var/db/apprelay/vpn-agent.sock`; to override it, set `APPRELAY_VPN_AGENT_SOCKET` for both, including explicitly in the `sudo env` command. Its directory must be root-owned and not group/world-writable.
+
 The private-key file must be a regular file with no group or other permissions, typically mode `600`. Generate it once and reuse it across restarts:
 
 ```sh
 (umask 077; wg genkey > /path/to/server.key)
 ```
 
-Keep the key outside version control. The server passes it to `wg` through stdin, not command-line arguments.
+Keep the key outside version control. Only the agent needs access to it; it passes the key to `wg` through stdin.
 
 ## Current scope
 
-The server monitors `wireguard-go` and cleans up on Ctrl+C, SIGTERM, startup failure, or daemon exit. Peer provisioning, iOS client configuration, traffic forwarding, and NAT are not implemented yet; devices cannot connect until peers are configured.
+The socket API supports status/start/stop; the server currently queries status on startup. Peer provisioning, iOS client configuration, forwarding, and NAT are not implemented yet.

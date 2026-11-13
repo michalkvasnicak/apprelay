@@ -144,6 +144,10 @@ impl Interface {
         }
     }
 
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
     pub async fn wait(&mut self) -> io::Result<()> {
         let status = self.child.wait().await?;
         Err(io::Error::other(format!(
