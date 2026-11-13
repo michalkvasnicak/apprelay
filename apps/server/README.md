@@ -38,7 +38,7 @@ The default agent socket on Linux is `/var/run/apprelay/vpn-agent.sock`. The ser
 
 Linux pairing binds its TCP and unicast DNS-SD sockets to the VPN interface using `SO_BINDTODEVICE`, rather than macOS's `IP_BOUND_IF`. Provision `CAP_NET_RAW` for the non-root pairing worker; a binding failure aborts the session instead of falling back to another interface. For a native deployment, a service manager can grant this capability (for example, systemd `AmbientCapabilities=CAP_NET_RAW`). The API and notification worker do not need it. Pairing and notification workers and workflow dispatch are enabled on both platforms; their existing Temporal, PostgreSQL, encryption, and APNs settings still apply. No system Bonjour/Avahi service or USB access is used by this pairing flow.
 
-For a future container deployment, the agent must run as root with `NET_ADMIN` and sufficient permissions to prepare/chown the Unix socket. Do not grant `SYS_MODULE` or full privileged mode: the kernel module belongs to the host. Docker packaging is not included here. Active database registrations are not yet automatically restored into WireGuard after an agent restart; devices must register again to reprovision their peers.
+For a future container deployment, the agent must run as root with `NET_ADMIN` and sufficient permissions to prepare/chown the Unix socket. Do not grant `SYS_MODULE` or full privileged mode: the kernel module belongs to the host. Docker packaging is not included here.
 
 ## Local PostgreSQL and HTTPS
 

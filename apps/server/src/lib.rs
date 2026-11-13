@@ -7,6 +7,8 @@ pub mod cleanup;
 pub mod db;
 #[cfg(unix)]
 pub mod http;
+#[cfg(unix)]
+pub mod reconciliation;
 mod secrets;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

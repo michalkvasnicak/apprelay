@@ -8,7 +8,7 @@ async fn main() -> std::io::Result<()> {
             devices::DeviceRepository, pairing_codes::PairingCodeRepository,
             push_tokens::PushTokenRepository,
         },
-        http,
+        http, reconciliation,
     };
     use tokio::{
         net::TcpListener,
@@ -60,7 +60,8 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(&address).await?;
     eprintln!("HTTP server listening on {}", listener.local_addr()?);
 
-    let cleanup = tokio::spawn(cleanup::run(pool, agent.clone()));
+    let cleanup = tokio::spawn(cleanup::run(pool.clone(), agent.clone()));
+    let reconciliation = tokio::spawn(reconciliation::run(pool, agent.clone()));
     let result = axum::serve(listener, http::router(devices, agent, push_tokens, codes))
         .with_graceful_shutdown(async move {
             tokio::select! {
@@ -70,7 +71,9 @@ async fn main() -> std::io::Result<()> {
         })
         .await;
     cleanup.abort();
+    reconciliation.abort();
     let _ = cleanup.await;
+    let _ = reconciliation.await;
     result
 }
 
