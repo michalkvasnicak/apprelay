@@ -6,8 +6,9 @@ struct VpnSettings {
     let host: String
     let port: Int
     let publicKey: String
-    let serverAddress: String
     let clientAddress: String
+    let allowedIPs: [String]
+    let persistentKeepaliveSeconds: Int
 
     init(_ values: [String: Any]) throws {
         guard let host = values["host"] as? String,
@@ -15,23 +16,43 @@ struct VpnSettings {
               let publicKey = values["publicKey"] as? String,
               let keyData = Data(base64Encoded: publicKey), keyData.count == 32,
               keyData.contains(where: { $0 != 0 }),
-              let serverAddress = values["serverAddress"] as? String,
               let clientAddress = values["clientAddress"] as? String,
-              Self.isUnicastIPv4(host), Self.isUnicastIPv4(serverAddress),
-              Self.isUnicastIPv4(clientAddress),
-              host != serverAddress, host != clientAddress, serverAddress != clientAddress else {
+              let allowedIPs = values["allowedIPs"] as? [String], !allowedIPs.isEmpty,
+              let keepalive = values["persistentKeepaliveSeconds"] as? Int,
+              (0...65535).contains(keepalive),
+              Self.isEndpointHost(host),
+              clientAddress.hasSuffix("/32"),
+              Self.isUnicastIPv4(String(clientAddress.dropLast(3))),
+              allowedIPs.allSatisfy({ Self.isIPv4Route($0) }) else {
             throw VpnError.invalidConfiguration
         }
         self.host = host
         self.port = port
         self.publicKey = publicKey
-        self.serverAddress = serverAddress
         self.clientAddress = clientAddress
+        self.allowedIPs = allowedIPs
+        self.persistentKeepaliveSeconds = keepalive
     }
 
     var dictionary: [String: Any] {
         ["host": host, "port": port, "publicKey": publicKey,
-         "serverAddress": serverAddress, "clientAddress": clientAddress]
+         "clientAddress": clientAddress, "allowedIPs": allowedIPs,
+         "persistentKeepaliveSeconds": persistentKeepaliveSeconds]
+    }
+
+    private static func isEndpointHost(_ value: String) -> Bool {
+        if IPv4Address(value) != nil { return isUnicastIPv4(value) }
+        guard value.count <= 253, value.contains(".") else { return false }
+        return value.split(separator: ".", omittingEmptySubsequences: false).allSatisfy {
+            $0.range(of: "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$", options: .regularExpression) != nil
+        }
+    }
+
+    // Keep the existing split-tunnel policy: IPv4 only, never a default route.
+    private static func isIPv4Route(_ value: String) -> Bool {
+        let parts = value.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, let prefix = Int(parts[1]), (1...32).contains(prefix) else { return false }
+        return isUnicastIPv4(String(parts[0]))
     }
 
     private static func isUnicastIPv4(_ value: String) -> Bool {
@@ -51,7 +72,7 @@ enum VpnError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidConfiguration:
-            return "Invalid VPN settings. Use distinct endpoint, server and device IPv4 addresses, a valid port and server public key."
+            return "Invalid VPN settings. Expected a DNS/IPv4 endpoint, a device IPv4 /32, IPv4 split routes, valid keepalive, port and server public key."
         case .keychain(let status):
             return "Unable to access the VPN keychain (\(status)). Check signing and keychain-sharing entitlements."
         case .missingKey:

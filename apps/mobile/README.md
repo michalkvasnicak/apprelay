@@ -2,26 +2,13 @@
 
 ## iOS WireGuard VPN
 
-The UI provides Connect/Disconnect, system tunnel status, an editable device VPN address and a selectable device public key. This is an **iOS-only custom native build**, not Expo Go. Android/web display an unsupported-platform message; simulator builds are intentionally unsupported.
+The UI provides Connect/Disconnect, system tunnel status, API-assigned device settings and a selectable device public key. This is an **iOS-only custom native build**, not Expo Go. Android/web display an unsupported-platform message; simulator builds are intentionally unsupported.
 
 ### Build configuration
 
 Copy `.env.example` to `.env.local` in this directory. Set `APPLE_TEAM_ID` to your Apple Developer Team ID and `APPLE_BUNDLE_IDENTIFIER` to the app identifier for this build. The bundle identifier is required; there is no production fallback. `app.config.ts` reads these native build settings without an `EXPO_PUBLIC_` prefix. If `APPLE_TEAM_ID` is empty, no team is configured by the app config.
 
-Also supply the Mac's Wi-Fi IPv4 address, UDP port and existing WireGuard **public** key. Expo embeds `EXPO_PUBLIC_*` values in the JavaScript bundle; they are not secrets. Never put server or device private keys in these variables. `.env.local` is ignored by Git; provide the same signing settings in your CI/build environment when building there.
-
-Obtain the server public key on the Mac using its existing private-key file:
-
-```sh
-wg pubkey < /path/to/server.key
-```
-
-| Variable                           | Meaning                                                        |
-| ---------------------------------- | -------------------------------------------------------------- |
-| `EXPO_PUBLIC_WG_SERVER_HOST`       | Mac Wi-Fi IPv4 endpoint, e.g. `192.168.1.42`. Required.        |
-| `EXPO_PUBLIC_WG_SERVER_PORT`       | WireGuard UDP port, e.g. `51820`. Required.                    |
-| `EXPO_PUBLIC_WG_SERVER_PUBLIC_KEY` | Existing server WireGuard public key. Required.                |
-| `EXPO_PUBLIC_WG_SERVER_TUNNEL_IP`  | Server IPv4 address inside WireGuard. Defaults to `10.77.0.1`. |
+Set `EXPO_PUBLIC_VPN_API_URL` to the VPN server's HTTPS base URL, for example `https://vpn.example.com`. The app appends `/v1/devices`. Credentials, query strings and fragments are not accepted. Expo embeds this public URL in the JavaScript bundle; never put private keys in environment variables. `.env.local` is ignored by Git.
 
 Release builds need these variables in their bundling environment too. Restart Expo after local changes; rebuild/rebundle for distributed changes, including updates. Values are not read from the phone's environment at runtime.
 
@@ -58,30 +45,23 @@ pnpm ios
 
 The incremental prebuild replaces the previous remote package reference with the patched local package and refreshes the Go build script. `expo run:ios` alone does not necessarily rerun prebuild when `ios/` already exists.
 
-### Register the device on the Mac
+### Device registration and connection
 
-1. Open the native app. It generates a per-installation X25519 keypair and shows **only its public key**. The private key stays in the shared Keychain, accessible after first unlock, and is never sent to JavaScript or stored in VPN preference dictionaries.
-2. Assign a unique device tunnel IPv4 address, for example `10.77.0.2`, and enter it in the UI. This is not the iPhone's Wi-Fi address. The address is remembered after successful VPN configuration.
-3. The server agent currently has no peer-provisioning API. Register the displayed public key manually against the agent's current interface:
+Connect posts the device's base64 WireGuard public key to `POST /v1/devices` over HTTPS and requires `201 Created`. The private key stays in the shared Keychain and is never sent to JavaScript or the API. The response supplies the device ID, IPv4 `/32` address, expiry, server key, DNS/IPv4 UDP endpoint, IPv4 allowed routes and keepalive interval. The device address is no longer manually editable.
 
-   ```sh
-   sudo env PATH="$PATH" wg set utun6 peer '<device-public-key>' allowed-ips 10.77.0.2/32
-   ```
+Registration uses a TanStack Query mutation with automatic retries disabled: the API contract does not guarantee idempotency. A successful response is reused in memory until `expires_at`, including after a tunnel-start failure. Reconnecting after expiry or restarting the app registers again. There is no persistent registration cache, background renewal or client-enforced expiry disconnect; server-side peer expiry must be enforced by the VPN server. `lifetime_seconds` is validated as metadata; `expires_at` determines reuse.
 
-   Replace `utun6` with the interface printed by the running agent. Repeat registration after restarting the agent; this command changes runtime state, not persistent agent configuration. Never reuse a device address for another peer.
+Approve iOS's VPN prompt on first connection. The API and WireGuard endpoint must be reachable from the phone, and the server must actually implement peer provisioning; the Rust process in this repository is unchanged. No authentication beyond the supplied public-key contract is added.
 
-4. Allow UDP 51820 (or your configured port) through the Mac's firewall. Both devices must have Wi-Fi reachability without client isolation. No router port forwarding is needed on the same LAN.
-5. Tap **Connect** and approve iOS's VPN configuration prompt. Tap **Disconnect** to stop it. The tunnel runs in the extension independently of React Native while the app is suspended; UI status refreshes when the app returns to the foreground and while it is active.
+Identity and status use TanStack Query queries. Status polls once per second in the foreground and refreshes on app activation; Connect/Disconnect use mutations. No component `useEffect` is needed. The tunnel runs independently in the extension while JavaScript is suspended.
 
-“Tunnel active” reports iOS provider state, **not a successful WireGuard handshake**. A missing peer, wrong server public key, blocked UDP port or unreachable Mac can leave a running tunnel with no usable connection. Check handshakes on the Mac and reach a service at `10.77.0.1:<port>` to establish end-to-end connectivity. The service must listen on the tunnel address or a suitable wildcard, not just loopback.
+“Tunnel active” reports iOS provider state, **not a successful WireGuard handshake**. Verify handshakes and service reachability on the server.
 
-### Single-server routing
+### Split routing
 
-The peer allows exactly `<server tunnel IP>/32`, normally `10.77.0.1/32`. The native provider validates the public settings itself and derives the route instead of accepting arbitrary routes from JavaScript. It also replaces WireGuardKit's generated Network Extension routes with exactly that server host route on every network-settings application, including path changes.
+The native provider validates the API settings and applies exactly the returned IPv4 allowed routes, including after network-path changes. Subnets such as `10.77.0.0/24` are supported; default routes and IPv6 settings are deliberately rejected. The client interface uses `/32`. DNS is unchanged, and other destinations retain normal iOS routing. This is destination-based routing, not per-app routing; any app contacting an allowed destination can use the tunnel.
 
-There are no default routes, IPv6 routes, DNS overrides, on-demand rules or `includeAllNetworks` enforcement. The client's interface address also uses `/32`. Traffic to other destinations retains normal iOS routing; the Mac's Wi-Fi endpoint carries only the encrypted transport over the normal network.
-
-This is destination-based routing, not per-app routing: any app contacting the private server IP can use the tunnel. Bonjour discovery is not implemented.
+Native source changes require regenerating the Expo iOS project and rebuilding the app; a JavaScript-only update is insufficient.
 
 ### Validation status
 

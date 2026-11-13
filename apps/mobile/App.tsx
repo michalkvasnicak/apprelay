@@ -1,22 +1,9 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  AppState,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { getVpnServerConfig } from "./src/vpn/config";
-import { isVpnAvailable, vpn, type VpnStatus } from "./src/vpn/native";
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : "An unexpected VPN error occurred.";
-}
+import { isVpnAvailable, type VpnStatus } from "./src/vpn/native";
+import { queryClient, useVpn } from "./src/vpn/queries";
 
 const statusLabels = {
   disconnected: "Disconnected",
@@ -28,142 +15,62 @@ const statusLabels = {
 } as const satisfies Record<VpnStatus, string>;
 
 export default function App() {
-  const configuration = useMemo(() => {
-    try {
-      return { server: getVpnServerConfig(), error: null };
-    } catch (error) {
-      return { server: null, error: message(error) };
-    }
-  }, []);
-  const [status, setStatus] = useState<VpnStatus>("unknown");
-  const [publicKey, setPublicKey] = useState("");
-  const [clientAddress, setClientAddress] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  return (
+    <QueryClientProvider client={queryClient}>
+      <VpnScreen />
+    </QueryClientProvider>
+  );
+}
 
-  useEffect(() => {
-    if (!isVpnAvailable) {
-      return;
-    }
-    let mounted = true;
-    let refreshing = false;
-    const refresh = async () => {
-      if (refreshing || AppState.currentState !== "active") {
-        return;
-      }
-      refreshing = true;
-      try {
-        const current = await vpn.getStatus();
-        if (mounted) {
-          setStatus(current);
-          setStatusError(null);
-        }
-      } catch (cause) {
-        if (mounted) {
-          setStatus("unknown");
-          setStatusError(message(cause));
-        }
-      } finally {
-        refreshing = false;
-      }
-    };
-    void vpn
-      .getIdentity()
-      .then((identity) => {
-        if (mounted) {
-          setPublicKey(identity.publicKey);
-          setClientAddress(identity.clientAddress);
-        }
-      })
-      .catch((cause: unknown) => {
-        if (mounted) {
-          setError(message(cause));
-        }
-      });
-    void refresh();
-    const interval = setInterval(() => {
-      void refresh();
-    }, 1000);
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        void refresh();
-      }
-    });
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-      subscription.remove();
-    };
-  }, []);
-
+function VpnScreen() {
+  const { identity, status: statusQuery, registration, connection } = useVpn();
+  const status = statusQuery.isError ? "unknown" : (statusQuery.data ?? "unknown");
   const active = status === "connected" || status === "connecting" || status === "reconnecting";
+  const busy = connection.isPending;
   const disabled =
     !isVpnAvailable ||
     busy ||
     status === "unknown" ||
     status === "disconnecting" ||
-    (!active && (!configuration.server || !publicKey || !clientAddress.trim()));
-
-  async function toggleVpn() {
-    if (disabled) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      if (active) {
-        await vpn.disconnect();
-        setStatus("disconnecting");
-      } else if (configuration.server) {
-        await vpn.connect(configuration.server, clientAddress);
-        setStatus("connecting");
-      }
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      setBusy(false);
-    }
+    (!active && !identity.data);
+  const device = registration.data;
+  const errors = [identity.error, statusQuery.error, connection.error].filter(Boolean);
+  let buttonLabel = "Connect";
+  if (registration.isPending) {
+    buttonLabel = "Registering device…";
+  } else if (active) {
+    buttonLabel = "Disconnect";
   }
 
   return (
     <View style={styles.screen}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>AppRelay VPN</Text>
         <Text style={styles.status} accessibilityLiveRegion="polite">
           {isVpnAvailable ? statusLabels[status] : "Native iOS build required"}
         </Text>
-        {configuration.server && (
-          <Text style={styles.description}>
-            Server: {configuration.server.endpoint.host}:{configuration.server.endpoint.port}
+        <Text style={styles.description}>
+          Connect registers this device securely with the VPN server. Only the returned private
+          routes use the tunnel; other destinations use your normal connection. Tunnel status does
+          not confirm a successful WireGuard handshake.
+        </Text>
+        {device && (
+          <Text selectable style={styles.description}>
+            Device: {device.device_id}
             {"\n"}
-            Private route: {configuration.server.allowedIPs[0]} only
+            Address: {device.address}
+            {"\n"}
+            Server: {device.wireguard.endpoint}
+            {"\n"}
+            Private routes: {device.wireguard.allowed_ips.join(", ")}
+            {"\n"}
+            Registration expires: {device.expires_at}
           </Text>
         )}
-        <Text style={styles.description}>
-          Other destinations use your normal connection. An active tunnel does not confirm that the
-          server has accepted this device.
-        </Text>
-        <Text style={styles.label}>Device VPN address</Text>
-        <TextInput
-          accessibilityLabel="Device VPN address"
-          style={styles.input}
-          value={clientAddress}
-          onChangeText={setClientAddress}
-          placeholder="e.g. 10.77.0.2"
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="numbers-and-punctuation"
-          editable={isVpnAvailable && !active && !busy && status === "disconnected"}
-        />
-        <Text style={styles.description}>
-          Assign an unused address and register it with this device’s public key on the Mac before
-          connecting. Do not reuse an address across devices.
-        </Text>
         <Text style={styles.label}>Device public key</Text>
         <Text selectable style={styles.key}>
-          {publicKey || "Unavailable until the native module initializes."}
+          {identity.data?.publicKey || "Unavailable until the native module initializes."}
         </Text>
         {!isVpnAvailable && (
           <Text style={styles.error}>
@@ -171,22 +78,20 @@ export default function App() {
             cannot run this VPN.
           </Text>
         )}
-        {(configuration.error || error || statusError) && (
+        {errors.length > 0 && (
           <Text accessibilityRole="alert" style={styles.error}>
-            {[configuration.error, error, statusError].filter(Boolean).join("\n")}
+            {errors.map((error) => error?.message).join("\n")}
           </Text>
         )}
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ disabled, busy }}
           disabled={disabled}
-          onPress={() => {
-            void toggleVpn();
-          }}
+          onPress={() => connection.mutate(active)}
           style={[styles.button, disabled && styles.disabledButton]}
         >
           {busy && <ActivityIndicator color="#fff" />}
-          <Text style={styles.buttonText}>{active ? "Disconnect" : "Connect"}</Text>
+          <Text style={styles.buttonText}>{buttonLabel}</Text>
         </Pressable>
       </ScrollView>
     </View>
@@ -200,15 +105,6 @@ const styles = StyleSheet.create({
   status: { fontSize: 20, fontWeight: "600", color: "#2456a6" },
   description: { fontSize: 15, lineHeight: 22, color: "#475569" },
   label: { fontSize: 15, fontWeight: "600", color: "#15243b" },
-  input: {
-    borderWidth: 1,
-    borderColor: "#94a3b8",
-    borderRadius: 8,
-    padding: 14,
-    fontSize: 17,
-    backgroundColor: "#fff",
-    color: "#15243b",
-  },
   key: { fontSize: 14, fontFamily: "monospace", color: "#15243b" },
   error: { color: "#b42318", fontSize: 14, lineHeight: 21 },
   button: {

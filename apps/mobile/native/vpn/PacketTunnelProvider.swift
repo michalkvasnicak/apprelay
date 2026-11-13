@@ -5,7 +5,7 @@ import WireGuardKit
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     // Do not log WireGuard configuration or runtime output (it contains keys).
     private lazy var adapter = WireGuardAdapter(with: self) { _, _ in }
-    private var routedServerAddress: String?
+    private var allowedRoutes: [NEIPv4Route] = []
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         do {
@@ -16,8 +16,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             let settings = try VpnSettings(values)
             guard let privateKey = PrivateKey(rawValue: try VpnKeychain.privateKey(reference: reference)),
                   let publicKey = PublicKey(base64Key: settings.publicKey),
-                  let clientAddress = IPAddressRange(from: "\(settings.clientAddress)/32"),
-                  let allowedIP = IPAddressRange(from: "\(settings.serverAddress)/32"),
+                  let clientAddress = IPAddressRange(from: settings.clientAddress),
                   let endpoint = Endpoint(from: "\(settings.host):\(settings.port)") else {
                 throw VpnError.invalidConfiguration
             }
@@ -26,9 +25,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // No DNS override and no IPv6 configuration.
             var peer = PeerConfiguration(publicKey: publicKey)
             peer.endpoint = endpoint
-            peer.allowedIPs = [allowedIP]
-            peer.persistentKeepAlive = 25
-            routedServerAddress = settings.serverAddress
+            peer.allowedIPs = settings.allowedIPs.compactMap { IPAddressRange(from: $0) }
+            guard peer.allowedIPs.count == settings.allowedIPs.count else { throw VpnError.invalidConfiguration }
+            peer.persistentKeepAlive = UInt16(settings.persistentKeepaliveSeconds)
+            allowedRoutes = settings.allowedIPs.map { cidr in
+                let parts = cidr.split(separator: "/")
+                let prefix = Int(parts[1])!
+                let mask = UInt32.max << (32 - prefix)
+                let subnetMask = [24, 16, 8, 0].map { String((mask >> $0) & 255) }.joined(separator: ".")
+                return NEIPv4Route(destinationAddress: String(parts[0]), subnetMask: subnetMask)
+            }
             adapter.start(tunnelConfiguration: TunnelConfiguration(
                 name: "AppRelay", interface: interface, peers: [peer]
             )) { error in
@@ -43,8 +49,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch { completionHandler(error) }
     }
 
-    // WireGuardKit also generates an interface-address route. Replace its generated
-    // routes with exactly the server /32, including on network-path reconfiguration.
+    // Replace generated interface routes with the API's split routes, including
+    // on network-path reconfiguration.
     override func setTunnelNetworkSettings(_ tunnelNetworkSettings: NETunnelNetworkSettings?,
                                           completionHandler: ((Error?) -> Void)? = nil) {
         guard let settings = tunnelNetworkSettings as? NEPacketTunnelNetworkSettings else {
@@ -55,11 +61,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             return
         }
-        guard let server = routedServerAddress, let ipv4 = settings.ipv4Settings else {
+        guard !allowedRoutes.isEmpty, let ipv4 = settings.ipv4Settings else {
             completionHandler?(VpnError.invalidConfiguration)
             return
         }
-        ipv4.includedRoutes = [NEIPv4Route(destinationAddress: server, subnetMask: "255.255.255.255")]
+        ipv4.includedRoutes = allowedRoutes
         ipv4.excludedRoutes = []
         settings.ipv6Settings = nil
         settings.dnsSettings = nil

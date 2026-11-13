@@ -14,8 +14,7 @@ final class AppRelayVPN: NSObject {
         Task { @MainActor in
             do {
                 let identity = try VpnKeychain.identity()
-                resolve(["publicKey": identity.publicKey,
-                         "clientAddress": UserDefaults.standard.string(forKey: "vpn.clientAddress") ?? ""])
+                resolve(["publicKey": identity.publicKey])
             } catch { reject("VPN_IDENTITY", error.localizedDescription, error) }
         }
     }
@@ -66,7 +65,6 @@ final class AppRelayVPN: NSObject {
                 manager.onDemandRules = []
                 try await save(manager)
                 try await reload(manager)
-                UserDefaults.standard.set(settings.clientAddress, forKey: "vpn.clientAddress")
                 try manager.connection.startVPNTunnel()
                 // This means startup was requested, not that the peer has handshaken.
                 resolve(nil)

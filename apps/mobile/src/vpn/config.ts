@@ -1,65 +1,73 @@
-export type VpnServerConfig = {
-  endpoint: {
-    host: string;
-    port: number;
+export type DeviceRegistration = {
+  device_id: string;
+  address: string;
+  expires_at: string;
+  lifetime_seconds: number;
+  wireguard: {
+    server_public_key: string;
+    endpoint: string;
+    allowed_ips: string[];
+    persistent_keepalive_seconds: number;
   };
-  publicKey: string;
-  tunnelAddress: string;
-  allowedIPs: readonly [`${string}/32`];
 };
 
-// Call before configuring the native tunnel, not during module initialization.
-export function getVpnServerConfig(): VpnServerConfig {
-  // Expo requires direct process.env.EXPO_PUBLIC_* references for inlining.
-  const host = requireIPv4(process.env.EXPO_PUBLIC_WG_SERVER_HOST, "EXPO_PUBLIC_WG_SERVER_HOST");
-  const portValue = process.env.EXPO_PUBLIC_WG_SERVER_PORT?.trim();
-  const port = Number(portValue);
-  if (
-    !portValue ||
-    !/^\d+$/.test(portValue) ||
-    !Number.isInteger(port) ||
-    port < 1 ||
-    port > 65535
-  ) {
-    throw new Error("EXPO_PUBLIC_WG_SERVER_PORT must be an integer from 1 to 65535");
+export function getRegistrationUrl(): string {
+  // Expo requires a direct reference for build-time inlining.
+  const value = process.env.EXPO_PUBLIC_VPN_API_URL?.trim();
+  if (!value) {
+    throw new Error("Set EXPO_PUBLIC_VPN_API_URL to the VPN server's HTTPS base URL.");
   }
-
-  const publicKey = process.env.EXPO_PUBLIC_WG_SERVER_PUBLIC_KEY?.trim();
-  if (!publicKey || !/^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(publicKey)) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
     throw new Error(
-      "EXPO_PUBLIC_WG_SERVER_PUBLIC_KEY must be a base64-encoded 32-byte WireGuard key",
+      "EXPO_PUBLIC_VPN_API_URL must be an HTTPS base URL without credentials, query or fragment.",
     );
   }
-
-  const tunnelAddress = requireIPv4(
-    process.env.EXPO_PUBLIC_WG_SERVER_TUNNEL_IP ?? "10.77.0.1",
-    "EXPO_PUBLIC_WG_SERVER_TUNNEL_IP",
-  );
-  if (host === tunnelAddress) {
-    throw new Error("The WireGuard endpoint must differ from the server's tunnel address");
-  }
-
-  return {
-    endpoint: { host, port },
-    publicKey,
-    tunnelAddress,
-    // Intentionally one host only: never a subnet or a default route.
-    allowedIPs: [`${tunnelAddress}/32`],
-  } satisfies VpnServerConfig;
+  return `${url.toString().replace(/\/$/, "")}/v1/devices`;
 }
 
-function requireIPv4(value: string | undefined, name: string): string {
-  const address = value?.trim();
-  const octets = address?.split(".");
-  if (
-    !address ||
-    octets?.length !== 4 ||
-    !octets.every((octet) => /^(0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255)
-  ) {
-    throw new Error(`${name} must be an IPv4 address without a port or CIDR prefix`);
+export async function registerDevice(publicKey: string): Promise<DeviceRegistration> {
+  const response = await fetch(getRegistrationUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wireguard_public_key: publicKey }),
+  });
+  if (response.status !== 201) {
+    throw new Error(`Device registration failed (HTTP ${response.status}).`);
   }
-  if (Number(octets[0]) === 0 || Number(octets[0]) === 127 || Number(octets[0]) >= 224) {
-    throw new Error(`${name} must be a unicast address reachable from the iPhone`);
+  const data: unknown = await response.json();
+  if (!isRegistration(data)) {
+    throw new Error("The VPN server returned an invalid device registration.");
   }
-  return address;
+  return data;
+}
+
+function isRegistration(value: unknown): value is DeviceRegistration {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const data = value as Partial<DeviceRegistration>;
+  const wg = data.wireguard;
+  return (
+    typeof data.device_id === "string" &&
+    data.device_id.length > 0 &&
+    typeof data.address === "string" &&
+    /^.+\/32$/.test(data.address) &&
+    typeof data.expires_at === "string" &&
+    Date.parse(data.expires_at) > Date.now() &&
+    typeof data.lifetime_seconds === "number" &&
+    Number.isInteger(data.lifetime_seconds) &&
+    data.lifetime_seconds > 0 &&
+    !!wg &&
+    typeof wg.server_public_key === "string" &&
+    /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(wg.server_public_key) &&
+    typeof wg.endpoint === "string" &&
+    /^[^:\s]+:\d+$/.test(wg.endpoint) &&
+    Array.isArray(wg.allowed_ips) &&
+    wg.allowed_ips.length > 0 &&
+    wg.allowed_ips.every((ip: unknown) => typeof ip === "string" && /^.+\/\d+$/.test(ip)) &&
+    Number.isInteger(wg.persistent_keepalive_seconds) &&
+    wg.persistent_keepalive_seconds >= 0 &&
+    wg.persistent_keepalive_seconds <= 65535
+  );
 }

@@ -1,6 +1,6 @@
 import { NativeModules, Platform } from "react-native";
 
-import type { VpnServerConfig } from "./config";
+import type { DeviceRegistration } from "./config";
 
 export const vpnStatuses = [
   "disconnected",
@@ -12,7 +12,7 @@ export const vpnStatuses = [
 ] as const;
 
 export type VpnStatus = (typeof vpnStatuses)[number];
-export type VpnIdentity = { publicKey: string; clientAddress: string };
+export type VpnIdentity = { publicKey: string };
 
 type NativeVpnModule = {
   getIdentity(): Promise<VpnIdentity>;
@@ -21,8 +21,9 @@ type NativeVpnModule = {
     host: string;
     port: number;
     publicKey: string;
-    serverAddress: string;
     clientAddress: string;
+    allowedIPs: string[];
+    persistentKeepaliveSeconds: number;
   }): Promise<void>;
   disconnect(): Promise<void>;
 };
@@ -42,13 +43,17 @@ function requireNative(): NativeVpnModule {
 export const vpn = {
   getIdentity: () => requireNative().getIdentity(),
   getStatus: () => requireNative().getStatus(),
-  connect: (server: VpnServerConfig, clientAddress: string) =>
-    requireNative().connect({
-      host: server.endpoint.host,
-      port: server.endpoint.port,
-      publicKey: server.publicKey,
-      serverAddress: server.tunnelAddress,
-      clientAddress: clientAddress.trim(),
-    }),
+  connect: (registration: DeviceRegistration) => {
+    const { wireguard } = registration;
+    const [host, port] = wireguard.endpoint.split(":");
+    return requireNative().connect({
+      host: host!,
+      port: Number(port),
+      publicKey: wireguard.server_public_key,
+      clientAddress: registration.address,
+      allowedIPs: wireguard.allowed_ips,
+      persistentKeepaliveSeconds: wireguard.persistent_keepalive_seconds,
+    });
+  },
   disconnect: () => requireNative().disconnect(),
 };
