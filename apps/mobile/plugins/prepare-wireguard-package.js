@@ -55,4 +55,14 @@ module.exports = function prepareWireGuardPackage(projectRoot, destination) {
     manifestPath,
     manifest.replace("// swift-tools-version:5.3", "// swift-tools-version:5.5"),
   );
+
+  // Explicit Clang modules require the header to import its Darwin typedefs
+  // itself instead of relying on transitive imports from a Swift compilation.
+  const headerPath = path.join(destination, "Sources/WireGuardKitC/WireGuardKitC.h");
+  const header = fs.readFileSync(headerPath, "utf8");
+  const include = '#include "key.h"';
+  if (header.split(include).length !== 2) {
+    throw new Error("Unexpected pinned WireGuardKit C header; review the compatibility patch");
+  }
+  fs.writeFileSync(headerPath, header.replace(include, `#include <sys/types.h>\n\n${include}`));
 };
