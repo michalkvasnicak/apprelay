@@ -34,8 +34,15 @@ struct CodeRow {
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) enum NotificationContent {
+    Started,
+    Code(ActiveCode),
+    Success,
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) struct Notification {
-    pub code: Option<ActiveCode>,
+    pub content: NotificationContent,
     pub expires_at: DateTime<Utc>,
     pub device_id: Uuid,
     pub token: Vec<u8>,
@@ -149,7 +156,9 @@ impl PairingCodeRepository {
                started_at = EXCLUDED.started_at, expires_at = EXCLUDED.expires_at,
                ended_at = NULL, code_id = NULL, nonce = NULL, ciphertext = NULL,
                notification_queued_at = NULL, notification_sent_at = NULL,
-               started_notification_queued_at = NULL, started_notification_sent_at = NULL
+               started_notification_queued_at = NULL, started_notification_sent_at = NULL,
+               success_notification_id = NULL, success_notification_expires_at = NULL,
+               success_notification_queued_at = NULL, success_notification_sent_at = NULL
              WHERE pairing_attempts.started_at <= EXCLUDED.started_at",
         ).bind(id).bind(device_id).bind(device_expiry).bind(started_at).bind(expires_at)
             .execute(&mut *tx).await.map_err(storage_error)?;
@@ -229,12 +238,16 @@ impl PairingCodeRepository {
              JOIN devices d ON d.id = a.device_id
              JOIN device_push_tokens t ON t.device_id = d.id
              CROSS JOIN LATERAL (VALUES
-                 (a.id, a.started_notification_queued_at, a.started_notification_sent_at),
-                 (a.code_id, a.notification_queued_at, a.notification_sent_at)
-             ) AS notification(id, queued_at, sent_at)
-             WHERE notification.id IS NOT NULL AND a.ended_at IS NULL
+                 (a.id, a.started_notification_queued_at, a.started_notification_sent_at,
+                     a.expires_at, a.ended_at IS NULL),
+                 (a.code_id, a.notification_queued_at, a.notification_sent_at,
+                     a.expires_at, a.ended_at IS NULL),
+                 (a.success_notification_id, a.success_notification_queued_at,
+                     a.success_notification_sent_at, a.success_notification_expires_at, TRUE)
+             ) AS notification(id, queued_at, sent_at, expires_at, active)
+             WHERE notification.id IS NOT NULL AND notification.active
                AND notification.queued_at IS NULL AND notification.sent_at IS NULL
-               AND a.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
+               AND notification.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
                AND d.expires_at = a.device_expires_at
              ORDER BY a.expires_at LIMIT 100",
         )
@@ -249,8 +262,10 @@ impl PairingCodeRepository {
                  started_notification_queued_at = CASE WHEN id = $1
                      THEN clock_timestamp() ELSE started_notification_queued_at END,
                  notification_queued_at = CASE WHEN code_id = $1
-                     THEN clock_timestamp() ELSE notification_queued_at END
-             WHERE id = $1 OR code_id = $1",
+                     THEN clock_timestamp() ELSE notification_queued_at END,
+                 success_notification_queued_at = CASE WHEN success_notification_id = $1
+                     THEN clock_timestamp() ELSE success_notification_queued_at END
+             WHERE id = $1 OR code_id = $1 OR success_notification_id = $1",
         )
         .bind(notification_id)
         .execute(&self.pool)
@@ -264,13 +279,18 @@ impl PairingCodeRepository {
         notification_id: Uuid,
     ) -> io::Result<Option<Notification>> {
         let mut tx = self.pool.begin().await.map_err(storage_error)?;
-        let attempt = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>)>(
-            "SELECT a.id, a.device_id, a.expires_at
+        let attempt = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, bool)>(
+            "SELECT a.id, a.device_id, notification.expires_at,
+                    COALESCE(a.success_notification_id = $1, FALSE)
              FROM pairing_attempts a JOIN devices d ON d.id = a.device_id
-             WHERE ((a.id = $1 AND a.started_notification_sent_at IS NULL)
-                 OR (a.code_id = $1 AND a.notification_sent_at IS NULL))
-               AND a.ended_at IS NULL
-               AND a.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
+             CROSS JOIN LATERAL (VALUES
+                 (a.id, a.started_notification_sent_at, a.expires_at, a.ended_at IS NULL),
+                 (a.code_id, a.notification_sent_at, a.expires_at, a.ended_at IS NULL),
+                 (a.success_notification_id, a.success_notification_sent_at,
+                     a.success_notification_expires_at, TRUE)
+             ) AS notification(id, sent_at, expires_at, active)
+             WHERE notification.id = $1 AND notification.sent_at IS NULL AND notification.active
+               AND notification.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
                AND d.expires_at = a.device_expires_at
              FOR SHARE OF a, d",
         )
@@ -278,11 +298,13 @@ impl PairingCodeRepository {
         .fetch_optional(&mut *tx)
         .await
         .map_err(storage_error)?;
-        let Some((attempt_id, device_id, expires_at)) = attempt else {
+        let Some((attempt_id, device_id, expires_at, success)) = attempt else {
             return Ok(None);
         };
-        let code = if notification_id == attempt_id {
-            None
+        let content = if success {
+            NotificationContent::Success
+        } else if notification_id == attempt_id {
+            NotificationContent::Started
         } else {
             let row = sqlx::query_as::<_, CodeRow>(
                 "SELECT id, device_id, code_id, nonce, ciphertext, expires_at
@@ -293,7 +315,7 @@ impl PairingCodeRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(storage_error)?;
-            Some(self.decrypt(row)?)
+            NotificationContent::Code(self.decrypt(row)?)
         };
         let token = sqlx::query_as::<_, (Vec<u8>, String, DateTime<Utc>)>(
             "SELECT token, environment, updated_at FROM device_push_tokens WHERE device_id = $1",
@@ -307,7 +329,7 @@ impl PairingCodeRepository {
         };
         let notification = Notification {
             device_id,
-            code,
+            content,
             expires_at,
             token,
             environment,
@@ -323,8 +345,10 @@ impl PairingCodeRepository {
                  started_notification_sent_at = CASE WHEN id = $1
                      THEN clock_timestamp() ELSE started_notification_sent_at END,
                  notification_sent_at = CASE WHEN code_id = $1
-                     THEN clock_timestamp() ELSE notification_sent_at END
-             WHERE id = $1 OR code_id = $1",
+                     THEN clock_timestamp() ELSE notification_sent_at END,
+                 success_notification_sent_at = CASE WHEN success_notification_id = $1
+                     THEN clock_timestamp() ELSE success_notification_sent_at END
+             WHERE id = $1 OR code_id = $1 OR success_notification_id = $1",
         )
         .bind(notification_id)
         .execute(&self.pool)

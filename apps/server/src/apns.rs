@@ -15,7 +15,7 @@ use serde_json::json;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::db::pairing_codes::Notification;
+use crate::db::pairing_codes::{Notification, NotificationContent};
 
 pub(crate) struct ApnsClient {
     http: Client,
@@ -129,14 +129,21 @@ impl ApnsClient {
             write!(&mut token, "{byte:02x}")
                 .map_err(|_| io::Error::other("could not encode APNs token"))?;
         }
-        let (title, body) = match &notification.code {
-            Some(code) => (
+        let (kind, title, body) = match &notification.content {
+            NotificationContent::Code(code) => (
+                "code",
                 "Pair with AppRelay",
                 format!("Enter {} to pair your device.", code.code),
             ),
-            None => (
+            NotificationContent::Started => (
+                "started",
                 "Pairing started",
                 "You have 60 seconds to finish pairing your device.".to_owned(),
+            ),
+            NotificationContent::Success => (
+                "success",
+                "Pairing successful",
+                "Your device has been paired with AppRelay.".to_owned(),
             ),
         };
         let response = self
@@ -154,15 +161,7 @@ impl ApnsClient {
             .header("apns-id", notification_id.to_string())
             .header(
                 "apns-collapse-id",
-                format!(
-                    "pairing-{}-{}",
-                    if notification.code.is_some() {
-                        "code"
-                    } else {
-                        "started"
-                    },
-                    notification.device_id,
-                ),
+                format!("pairing-{kind}-{}", notification.device_id),
             )
             .timeout(remaining.min(Duration::from_secs(5)))
             .json(&json!({

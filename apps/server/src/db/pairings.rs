@@ -59,6 +59,7 @@ impl PairingStore {
     pub(crate) async fn save(
         &self,
         device_id: Uuid,
+        attempt_id: Uuid,
         expected_expiry: DateTime<Utc>,
         attempt_started_at: DateTime<Utc>,
         record: &PairingRecord,
@@ -137,6 +138,29 @@ impl PairingStore {
         if saved.rows_affected() != 1 {
             return Err(io::Error::other(
                 "a newer pairing attempt has already been saved",
+            ));
+        }
+        // Commit the success notification together with the saved credentials.
+        let completed = sqlx::query(
+            "UPDATE pairing_attempts SET
+                 ended_at = clock_timestamp(), code_id = NULL, nonce = NULL, ciphertext = NULL,
+                 success_notification_id = $2,
+                 success_notification_expires_at = LEAST(
+                     device_expires_at, clock_timestamp() + INTERVAL '60 seconds'),
+                 success_notification_queued_at = NULL, success_notification_sent_at = NULL
+             WHERE id = $1 AND device_id = $3 AND device_expires_at = $4
+               AND ended_at IS NULL AND expires_at > clock_timestamp()",
+        )
+        .bind(attempt_id)
+        .bind(Uuid::new_v4())
+        .bind(device_id)
+        .bind(expected_expiry)
+        .execute(&mut *transaction)
+        .await
+        .map_err(io::Error::other)?;
+        if completed.rows_affected() != 1 {
+            return Err(io::Error::other(
+                "pairing attempt changed or expired before completion",
             ));
         }
         transaction.commit().await.map_err(io::Error::other)

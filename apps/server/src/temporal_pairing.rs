@@ -170,7 +170,13 @@ impl PairingActivities {
                 .await?;
             // Persist inside the activity: credentials must not enter Temporal history.
             self.pairings
-                .save(device_id, expires_at, attempt_started_at, &record)
+                .save(
+                    device_id,
+                    attempt_id,
+                    expires_at,
+                    attempt_started_at,
+                    &record,
+                )
                 .await?;
             eprintln!(
                 "Encrypted pairing saved for device {device_id}; iOS completion is unverified"
