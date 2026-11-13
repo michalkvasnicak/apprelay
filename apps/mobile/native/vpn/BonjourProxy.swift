@@ -1,15 +1,16 @@
 import Darwin
+import dnssd
 import Foundation
 import Network
 import os
 
 // Bridge for the server's unicast DNS-SD pairing announcements.
-final class BonjourProxy: NSObject, NetServiceDelegate {
+final class BonjourProxy {
     private let queue = DispatchQueue(label: "AppRelay.BonjourProxy")
     private let logger = Logger(subsystem: "AppRelay", category: "BonjourProxy")
     private var receiver: DispatchSourceRead?
     private var listener: NWListener?
-    private var advertisement: NetService?
+    private var advertisement: DNSServiceRef?
     private var relays: [UUID: PairingRelay] = [:]
     private var expiry: DispatchWorkItem?
     private var current: PairingAnnouncement?
@@ -86,16 +87,44 @@ final class BonjourProxy: NSObject, NetServiceDelegate {
         }
     }
 
-    func netServiceDidPublish(_ sender: NetService) {
-        logger.info("Pairing proxy Bonjour advertisement published: type=\(sender.type, privacy: .public), domain=\(sender.domain, privacy: .public), local TCP port=\(sender.port)")
-    }
-
-    func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
-        logger.error("Bonjour publication failed: \(String(describing: errorDict), privacy: .public)")
-        queue.async { [weak self] in
-            guard let self, advertisement === sender else { return }
-            stopAdvertisement()
+    private func publish(_ announcement: PairingAnnouncement, port: UInt16) throws {
+        // NetService publishes on every interface. iOS was resolving our own
+        // service on en2, then stalling before the local TCP handshake. Scope
+        // discovery to iPhone Wi-Fi (en0), not USB/auxiliary interfaces or utun.
+        let interface = if_nametoindex("en0")
+        guard interface != 0 else { throw POSIXError(.ENXIO) }
+        var service: DNSServiceRef?
+        let result = announcement.txt.withUnsafeBytes { txt in
+            DNSServiceRegister(
+                &service, DNSServiceFlags(kDNSServiceFlagsNoAutoRename), interface,
+                announcement.name, "_remotepairing-pairable-host._tcp.", "local.", nil,
+                port.bigEndian, UInt16(txt.count), txt.baseAddress,
+                { service, _, error, name, type, domain, context in
+                    guard let context else { return }
+                    let proxy = Unmanaged<BonjourProxy>.fromOpaque(context).takeUnretainedValue()
+                    guard proxy.advertisement == service else { return }
+                    guard error == kDNSServiceErr_NoError else {
+                        proxy.logger.error("Bonjour publication failed: DNS-SD error=\(error)")
+                        proxy.stopAdvertisement()
+                        return
+                    }
+                    let publishedName = name.map { String(cString: $0) } ?? "unknown"
+                    let publishedType = type.map { String(cString: $0) } ?? "unknown"
+                    let publishedDomain = domain.map { String(cString: $0) } ?? "unknown"
+                    proxy.logger.info("Pairing proxy Bonjour advertisement published: name=\(publishedName, privacy: .public), type=\(publishedType, privacy: .public), domain=\(publishedDomain, privacy: .public), interface=en0, local TCP port=\(proxy.listener?.port?.rawValue ?? 0)")
+                }, Unmanaged.passUnretained(self).toOpaque()
+            )
         }
+        guard result == kDNSServiceErr_NoError, let service else {
+            if let service { DNSServiceRefDeallocate(service) }
+            throw NSError(domain: "AppRelay.BonjourProxy.DNSService", code: Int(result))
+        }
+        let scheduling = DNSServiceSetDispatchQueue(service, queue)
+        guard scheduling == kDNSServiceErr_NoError else {
+            DNSServiceRefDeallocate(service)
+            throw NSError(domain: "AppRelay.BonjourProxy.DNSService", code: Int(scheduling))
+        }
+        advertisement = service
     }
 
     private func stopAdvertisement() {
@@ -109,9 +138,10 @@ final class BonjourProxy: NSObject, NetServiceDelegate {
         current = nil
         for relay in relays.values { relay.stop() }
         relays.removeAll()
-        let service = advertisement
-        advertisement = nil
-        DispatchQueue.main.async { service?.stop() }
+        if let service = advertisement {
+            advertisement = nil
+            DNSServiceRefDeallocate(service)
+        }
     }
 
     private func received(_ announcement: PairingAnnouncement, address: String) {
@@ -132,6 +162,8 @@ final class BonjourProxy: NSObject, NetServiceDelegate {
             do {
                 let parameters = NWParameters.tcp
                 parameters.includePeerToPeer = false
+                // Do not require en0 on the listener: connections from this
+                // iPhone to its own Wi-Fi address can arrive through loopback.
                 let local = try NWListener(using: parameters)
                 local.newConnectionHandler = { [weak self, weak local] connection in
                     guard let self, listener === local else { connection.cancel(); return }
@@ -146,19 +178,17 @@ final class BonjourProxy: NSObject, NetServiceDelegate {
                 }
                 local.stateUpdateHandler = { [weak self, weak local] state in
                     guard let self, listener === local else { return }
+                    logger.info("Pairing listener state: \(String(describing: state), privacy: .public)")
                     switch state {
                     case .ready:
-                        guard let port = local?.port else { return }
-                        let service = NetService(domain: "local.", type: "_remotepairing-pairable-host._tcp.",
-                                                 name: announcement.name, port: Int32(port.rawValue))
-                        service.setTXTRecord(announcement.txt)
-                        advertisement = service
-                        DispatchQueue.main.async { [weak self] in
-                            service.delegate = self
-                            service.schedule(in: .main, forMode: .common)
-                            service.publish(options: .noAutoRename)
+                        guard let port = local?.port, advertisement == nil else { return }
+                        do {
+                            try publish(announcement, port: port.rawValue)
+                            logger.info("Publishing pairing proxy on en0: local TCP port=\(port.rawValue), upstream=\(announcement.address, privacy: .public):\(announcement.port), VPN IP=\(address, privacy: .public)")
+                        } catch {
+                            logger.error("Cannot publish pairing proxy: \(String(describing: error), privacy: .public)")
+                            stopAdvertisement()
                         }
-                        logger.info("Publishing pairing proxy: local TCP port=\(port.rawValue), upstream=\(announcement.address, privacy: .public):\(announcement.port), VPN IP=\(address, privacy: .public)")
                     case .failed(let error):
                         logger.error("Pairing listener failed: \(error.localizedDescription, privacy: .public)")
                         stopAdvertisement()
@@ -273,7 +303,10 @@ private final class PairingRelay {
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
                 switch state {
-                case .ready: readLocal(); readRemote()
+                case .ready:
+                    logger.info("Local pairing connection ready: endpoint=\(String(describing: self.connection.endpoint), privacy: .public), path=\(String(describing: self.connection.currentPath), privacy: .public)")
+                    readLocal()
+                    readRemote()
                 case .failed(let error):
                     logger.error("Local pairing connection failed: \(error.localizedDescription, privacy: .public)")
                     finish()
