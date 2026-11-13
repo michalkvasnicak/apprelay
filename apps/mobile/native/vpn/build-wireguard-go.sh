@@ -18,9 +18,9 @@ case "$("$go_binary" version)" in
   *) echo "error: The pinned WireGuard bridge requires Go 1.19.13." >&2; exit 1 ;;
 esac
 
-bridge="${BUILD_DIR%Build/*}SourcePackages/checkouts/wireguard-apple/Sources/WireGuardKitGo"
+bridge="${SRCROOT}/AppRelayVPN/WireGuardKit/Sources/WireGuardKitGo"
 if [ ! -f "$bridge/Makefile" ]; then
-  echo "error: Resolve the WireGuardKit Swift package in Xcode before building." >&2
+  echo "error: Run Expo prebuild to prepare the patched WireGuardKit package before building." >&2
   exit 1
 fi
 # The upstream Makefile invokes 'go'. Keep the selected Go version local to

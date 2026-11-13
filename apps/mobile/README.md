@@ -47,7 +47,16 @@ pnpm ios
 
 The script uses `expo run:ios --device`. Prebuild invokes `plugins/with-wireguard.js`, which adds the native bridge, the embedded packet-tunnel target, its shared keychain/signing configuration, a revision-pinned WireGuardKit Swift package, and a Go bridge build phase. No edits to generated `ios/` files are required. After changing plugin settings or bundle identifiers, regenerate with a clean Expo prebuild before building. The plugin also declares the extension to EAS for credential provisioning; EAS/custom CI must separately install the pinned Go toolchain before the Xcode build.
 
-The official WireGuard Apple sources are pinned to revision `2fec12a6e1f6e3460b6ee483aa00ad29cddadab1`. Its upstream Go toolchain is old; upgrading/auditing the native dependencies is a separate production-readiness task.
+The official WireGuard Apple sources are pinned to revision `2fec12a6e1f6e3460b6ee483aa00ad29cddadab1`. Prebuild fetches that exact revision into `.expo/wireguard-apple/` (Git and network access are required on the first run), then copies the package sources and license into generated `ios/AppRelayVPN/WireGuardKit/`. The plugin raises the package's `swift-tools-version` from 5.3 to 5.5: upstream uses `.macOS(.v12)` and `.iOS(.v15)`, which are unavailable in PackageDescription 5.3. Xcode uses this patched local package, and the Go build uses the same source tree. No Xcode dependency-cache edits are needed. Its upstream Go toolchain is old; upgrading/auditing the native dependencies is a separate production-readiness task.
+
+After pulling this manifest fix with an existing generated iOS project, run from the repository root:
+
+```sh
+pnpm --filter @apprelay/mobile exec expo prebuild --platform ios --no-install
+pnpm ios
+```
+
+The incremental prebuild replaces the previous remote package reference with the patched local package and refreshes the Go build script. `expo run:ios` alone does not necessarily rerun prebuild when `ios/` already exists.
 
 ### Register the device on the Mac
 

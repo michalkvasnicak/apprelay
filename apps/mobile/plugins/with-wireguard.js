@@ -1,11 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { withEntitlementsPlist, withInfoPlist, withXcodeProject } = require("expo/config-plugins");
+const prepareWireGuardPackage = require("./prepare-wireguard-package");
 
 const TARGET = "AppRelayPacketTunnel";
 const DIRECTORY = "AppRelayVPN";
-// Pin the reviewed upstream sources, including the matching Go bridge.
-const WIREGUARD_REVISION = "2fec12a6e1f6e3460b6ee483aa00ad29cddadab1";
+const WIREGUARD_PACKAGE_PATH = `${DIRECTORY}/WireGuardKit`;
 const quote = (value) => JSON.stringify(value);
 
 module.exports = function withWireGuard(config) {
@@ -49,6 +49,7 @@ module.exports = function withWireGuard(config) {
     const destination = path.join(iosRoot, DIRECTORY);
     fs.mkdirSync(destination, { recursive: true });
     fs.cpSync(path.join(__dirname, "../native/vpn"), destination, { recursive: true });
+    prepareWireGuardPackage(mod.modRequest.projectRoot, path.join(iosRoot, WIREGUARD_PACKAGE_PATH));
     fs.writeFileSync(
       path.join(destination, "PacketTunnel.entitlements"),
       plist(`
@@ -72,12 +73,15 @@ module.exports = function withWireGuard(config) {
       </dict>`),
     );
 
-    // Source files are refreshed above on every prebuild; targets are added once.
-    if (
-      Object.values(project.pbxNativeTargetSection()).some(
-        (target) => target?.name?.replaceAll('"', "") === TARGET,
-      )
-    ) {
+    // Refresh sources and migrate the old remote package on incremental prebuilds.
+    const existingExtension = Object.entries(project.pbxNativeTargetSection()).find(
+      ([, target]) => target?.name?.replaceAll('"', "") === TARGET,
+    );
+    if (existingExtension) {
+      addWireGuardPackage(project, {
+        uuid: existingExtension[0],
+        pbxNativeTarget: existingExtension[1],
+      });
       return mod;
     }
     project.hash.project.objects.PBXTargetDependency ??= {};
@@ -192,26 +196,47 @@ function addSource(project, file, target, group) {
 
 function addWireGuardPackage(project, extension) {
   const objects = project.hash.project.objects;
-  const packageID = project.generateUuid();
-  objects.XCRemoteSwiftPackageReference ??= {};
-  objects.XCRemoteSwiftPackageReference[packageID] = {
-    isa: "XCRemoteSwiftPackageReference",
-    repositoryURL: quote("https://git.zx2c4.com/wireguard-apple"),
-    requirement: { kind: "revision", revision: quote(WIREGUARD_REVISION) },
-  };
   const root = project.getFirstProject().firstProject;
   root.packageReferences ??= [];
-  root.packageReferences.push({ value: packageID, comment: "WireGuardKit" });
-  const productID = project.generateUuid();
+  objects.XCLocalSwiftPackageReference ??= {};
+  const previousPackage = root.packageReferences.find(
+    ({ value }) =>
+      objects.XCRemoteSwiftPackageReference?.[value]?.repositoryURL?.replaceAll('"', "") ===
+        "https://git.zx2c4.com/wireguard-apple" ||
+      objects.XCLocalSwiftPackageReference[value]?.relativePath?.replaceAll('"', "") ===
+        WIREGUARD_PACKAGE_PATH,
+  );
+  const packageID = previousPackage?.value ?? project.generateUuid();
+  if (objects.XCRemoteSwiftPackageReference) {
+    delete objects.XCRemoteSwiftPackageReference[packageID];
+    delete objects.XCRemoteSwiftPackageReference[`${packageID}_comment`];
+  }
+  objects.XCLocalSwiftPackageReference[packageID] = {
+    isa: "XCLocalSwiftPackageReference",
+    relativePath: quote(WIREGUARD_PACKAGE_PATH),
+  };
+  if (!previousPackage) {
+    root.packageReferences.push({ value: packageID, comment: "WireGuardKit" });
+  }
   objects.XCSwiftPackageProductDependency ??= {};
+  const dependencies = (extension.pbxNativeTarget.packageProductDependencies ??= []);
+  const existingProduct = dependencies.find(
+    ({ value }) =>
+      objects.XCSwiftPackageProductDependency[value]?.productName?.replaceAll('"', "") ===
+      "WireGuardKit",
+  );
+  if (existingProduct) {
+    // Local package products are resolved by name, without a remote package ID.
+    delete objects.XCSwiftPackageProductDependency[existingProduct.value].package;
+    delete objects.XCSwiftPackageProductDependency[existingProduct.value].package_comment;
+    return;
+  }
+  const productID = project.generateUuid();
   objects.XCSwiftPackageProductDependency[productID] = {
     isa: "XCSwiftPackageProductDependency",
-    package: packageID,
     productName: "WireGuardKit",
   };
-  extension.pbxNativeTarget.packageProductDependencies = [
-    { value: productID, comment: "WireGuardKit" },
-  ];
+  dependencies.push({ value: productID, comment: "WireGuardKit" });
   const buildID = project.generateUuid();
   project.pbxBuildFileSection()[buildID] = {
     isa: "PBXBuildFile",
