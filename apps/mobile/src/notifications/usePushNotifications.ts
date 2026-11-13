@@ -42,14 +42,16 @@ async function hasNotificationPermission(): Promise<boolean> {
 export function usePushNotifications(device: DeviceRegistration | undefined, connected: boolean) {
   const [error, setError] = useState<string | null>(null);
   const deviceId = device?.device_id;
+  const bearerToken = device?.token;
   const expiresAt = device?.expires_at;
 
   useEffect(() => {
-    if (!isVpnAvailable || !connected || !deviceId || !expiresAt) {
+    if (!isVpnAvailable || !connected || !deviceId || !expiresAt || !bearerToken) {
       return;
     }
 
     const registrationId = deviceId;
+    const credential = bearerToken;
     const expiration = Date.parse(expiresAt);
     const controller = new AbortController();
     let queue = Promise.resolve();
@@ -86,7 +88,7 @@ export function usePushNotifications(device: DeviceRegistration | undefined, con
             if ((await vpn.getStatus()) !== "connected" || controller.signal.aborted) {
               return;
             }
-            await syncPushToken(registrationId, nextToken, controller.signal);
+            await syncPushToken(registrationId, credential, nextToken, controller.signal);
             syncedToken = nextToken;
           }
         } catch (cause) {
@@ -112,7 +114,7 @@ export function usePushNotifications(device: DeviceRegistration | undefined, con
       tokenSubscription.remove();
       appStateSubscription.remove();
     };
-  }, [deviceId, expiresAt, connected]);
+  }, [deviceId, expiresAt, bearerToken, connected]);
 
   return { error };
 }

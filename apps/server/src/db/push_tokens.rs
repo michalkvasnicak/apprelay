@@ -1,4 +1,4 @@
-use std::{io, net::Ipv4Addr};
+use std::io;
 
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -44,18 +44,18 @@ impl PushTokenRepository {
     pub async fn set_token(
         &self,
         device_id: Uuid,
-        source: Ipv4Addr,
+        credential_hash: &[u8; 32],
         token: Option<&[u8]>,
     ) -> Result<bool, sqlx::Error> {
         let mut transaction = self.pool.begin().await?;
         let device = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM devices
-             WHERE id = $1 AND address = $2::text::inet
+             WHERE id = $1 AND bearer_token_hash = $2
                AND expires_at > clock_timestamp()
              FOR UPDATE",
         )
         .bind(device_id)
-        .bind(source.to_string())
+        .bind(credential_hash.as_slice())
         .fetch_optional(&mut *transaction)
         .await?;
         if device.is_none() {

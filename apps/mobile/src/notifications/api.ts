@@ -2,6 +2,7 @@ import { getRegistrationUrl } from "../vpn/config";
 
 export async function syncPushToken(
   deviceId: string,
+  bearerToken: string,
   token: string | null,
   signal: AbortSignal,
 ): Promise<void> {
@@ -9,12 +10,11 @@ export async function syncPushToken(
     `${getRegistrationUrl()}/${encodeURIComponent(deviceId)}/push-token`,
     {
       method: token === null ? "DELETE" : "PUT",
-      ...(token === null
-        ? {}
-        : {
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token }),
-          }),
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        ...(token === null ? {} : { "Content-Type": "application/json" }),
+      },
+      ...(token === null ? {} : { body: JSON.stringify({ token }) }),
       signal,
     },
   );

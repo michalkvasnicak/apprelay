@@ -51,7 +51,7 @@ export function useVpn() {
         throw new Error("The device public key is unavailable.");
       }
       let device = registration.data;
-      if (!device || Date.parse(device.expires_at) <= Date.now()) {
+      if (!device?.token || Date.parse(device.expires_at) <= Date.now()) {
         device = await registration.mutateAsync(identity.data.publicKey);
       }
       await vpn.connect(device);

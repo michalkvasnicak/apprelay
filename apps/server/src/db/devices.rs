@@ -13,6 +13,12 @@ pub struct Device {
     pub address: String,
 }
 
+pub enum Registration {
+    Registered { device: Device, created: bool },
+    Unauthorized,
+    Exhausted,
+}
+
 #[derive(Clone)]
 pub struct DeviceRepository {
     pool: PgPool,
@@ -57,20 +63,27 @@ impl DeviceRepository {
 
     /// Durably reserves an address before any agent call. A failed/uncertain
     /// provisioning result must not release an address potentially in use.
-    /// Returns None if the pool is exhausted. Active retries preserve expiry.
+    /// Active authenticated retries preserve expiry; expired credentials may renew.
     pub async fn register(
         &self,
         public_key: &[u8; 32],
         subnet: Ipv4Net,
-    ) -> Result<Option<Device>, sqlx::Error> {
+        credential_hash: Option<&[u8; 32]>,
+        new_credential_hash: &[u8; 32],
+    ) -> Result<Registration, sqlx::Error> {
         let mut transaction = self.pool.begin().await?;
         // Serialize address reservations across server instances. Cleanup uses
         // row locks and only frees an address after the agent confirms removal.
         sqlx::query("SELECT pg_advisory_xact_lock(71827901)")
             .execute(&mut *transaction)
             .await?;
-        // Existing devices keep their reserved address, even when the pool is
-        // full. Updating also locks the row against concurrent cleanup.
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM devices WHERE wireguard_public_key = $1)",
+        )
+        .bind(public_key.as_slice())
+        .fetch_one(&mut *transaction)
+        .await?;
+        // Authenticate before changing expiry. Legacy rows with no hash cannot renew.
         let existing = sqlx::query_as::<_, Device>(
             "UPDATE devices
              SET expires_at = CASE
@@ -78,16 +91,23 @@ impl DeviceRepository {
                  THEN statement_timestamp() + $2::bigint * INTERVAL '1 second'
                  ELSE expires_at
              END
-             WHERE wireguard_public_key = $1
+             WHERE wireguard_public_key = $1 AND bearer_token_hash = $3
              RETURNING id, wireguard_public_key, created_at, expires_at, host(address) AS address",
         )
         .bind(public_key.as_slice())
         .bind(i64::from(self.lifetime_seconds.get()))
+        .bind(credential_hash.map(|hash| hash.as_slice()))
         .fetch_optional(&mut *transaction)
         .await?;
         if let Some(device) = existing {
             transaction.commit().await?;
-            return Ok(Some(device));
+            return Ok(Registration::Registered {
+                device,
+                created: false,
+            });
+        }
+        if exists {
+            return Ok(Registration::Unauthorized);
         }
 
         // Find the first gap without enumerating every address in a large
@@ -111,21 +131,25 @@ impl DeviceRepository {
         .fetch_optional(&mut *transaction)
         .await?;
         let Some(address) = address else {
-            return Ok(None);
+            return Ok(Registration::Exhausted);
         };
         let device = sqlx::query_as::<_, Device>(
-            "INSERT INTO devices (id, wireguard_public_key, expires_at, address)
-             VALUES ($1, $2, statement_timestamp() + $3::bigint * INTERVAL '1 second', $4::text::inet)
+            "INSERT INTO devices (id, wireguard_public_key, expires_at, address, bearer_token_hash)
+             VALUES ($1, $2, statement_timestamp() + $3::bigint * INTERVAL '1 second', $4::text::inet, $5)
              RETURNING id, wireguard_public_key, created_at, expires_at, host(address) AS address",
         )
         .bind(Uuid::new_v4())
         .bind(public_key.as_slice())
         .bind(i64::from(self.lifetime_seconds.get()))
         .bind(address)
+        .bind(new_credential_hash.as_slice())
         .fetch_one(&mut *transaction)
         .await?;
         transaction.commit().await?;
-        Ok(Some(device))
+        Ok(Registration::Registered {
+            device,
+            created: true,
+        })
     }
 
     pub async fn lock_for_provisioning(

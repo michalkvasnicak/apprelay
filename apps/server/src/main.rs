@@ -61,18 +61,14 @@ async fn main() -> std::io::Result<()> {
     eprintln!("HTTP server listening on {}", listener.local_addr()?);
 
     let cleanup = tokio::spawn(cleanup::run(pool, agent.clone()));
-    let result = axum::serve(
-        listener,
-        http::router(devices, agent, push_tokens, codes)
-            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        tokio::select! {
-            _ = interrupt.recv() => {},
-            _ = terminate.recv() => {},
-        }
-    })
-    .await;
+    let result = axum::serve(listener, http::router(devices, agent, push_tokens, codes))
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = interrupt.recv() => {},
+                _ = terminate.recv() => {},
+            }
+        })
+        .await;
     cleanup.abort();
     let _ = cleanup.await;
     result

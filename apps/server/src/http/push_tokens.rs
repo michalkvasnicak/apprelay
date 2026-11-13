@@ -1,14 +1,12 @@
-use std::net::SocketAddr;
-
 use axum::{
     Json,
-    extract::{ConnectInfo, Path, State, rejection::JsonRejection},
-    http::StatusCode,
+    extract::{Path, State, rejection::JsonRejection},
+    http::{HeaderMap, StatusCode},
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::{ApiError, AppState};
+use super::{ApiError, AppState, auth::Credential};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,7 +16,7 @@ pub(super) struct PushTokenRequest {
 
 pub(super) async fn put(
     State(state): State<AppState>,
-    ConnectInfo(source): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(device_id): Path<Uuid>,
     request: Result<Json<PushTokenRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
@@ -30,15 +28,15 @@ pub(super) async fn put(
         status: StatusCode::BAD_REQUEST,
         message: "token must be a nonempty, even-length hexadecimal string",
     })?;
-    update(&state, source, device_id, Some(&token)).await
+    update(&state, &headers, device_id, Some(&token)).await
 }
 
 pub(super) async fn delete(
     State(state): State<AppState>,
-    ConnectInfo(source): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(device_id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    update(&state, source, device_id, None).await
+    update(&state, &headers, device_id, None).await
 }
 
 fn decode_token(token: &str) -> Option<Vec<u8>> {
@@ -59,14 +57,14 @@ fn decode_token(token: &str) -> Option<Vec<u8>> {
 
 async fn update(
     state: &AppState,
-    source: SocketAddr,
+    headers: &HeaderMap,
     device_id: Uuid,
     token: Option<&[u8]>,
 ) -> Result<StatusCode, ApiError> {
-    let source = super::vpn_source(state, source).await?;
+    let credential = Credential::required(headers)?;
     let authorized = state
         .push_tokens
-        .set_token(device_id, source, token)
+        .set_token(device_id, &credential.hash, token)
         .await
         .map_err(|_| {
             // Do not print SQL errors: constraint details may include the token.
@@ -74,7 +72,7 @@ async fn update(
             ApiError::unavailable("push token storage is unavailable")
         })?;
     if !authorized {
-        return Err(super::vpn_required());
+        return Err(ApiError::unauthorized());
     }
     Ok(StatusCode::NO_CONTENT)
 }

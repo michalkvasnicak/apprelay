@@ -1,15 +1,13 @@
+mod auth;
 mod pairing_codes;
 mod push_tokens;
 
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    time::Instant,
-};
+use std::{net::Ipv4Addr, time::Instant};
 
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Request, State, rejection::JsonRejection},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header::CACHE_CONTROL},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -23,7 +21,8 @@ use uuid::Uuid;
 use crate::{
     agent::{Client, VpnState},
     db::{
-        devices::DeviceRepository, pairing_codes::PairingCodeRepository,
+        devices::{DeviceRepository, Registration},
+        pairing_codes::PairingCodeRepository,
         push_tokens::PushTokenRepository,
     },
 };
@@ -50,6 +49,7 @@ struct RegistrationRequest {
 #[derive(Serialize)]
 struct RegistrationResponse {
     device_id: Uuid,
+    token: String,
     address: String,
     expires_at: DateTime<Utc>,
     lifetime_seconds: i64,
@@ -109,8 +109,10 @@ async fn health() -> Json<Health> {
 
 async fn register_device(
     State(state): State<AppState>,
+    headers: HeaderMap,
     request: Result<Json<RegistrationRequest>, JsonRejection>,
-) -> Result<(StatusCode, Json<RegistrationResponse>), ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
+    let credential = auth::Credential::optional(&headers)?;
     let Json(request) = request.map_err(|error| ApiError {
         status: error.status(),
         message: "invalid registration JSON; expected wireguard_public_key",
@@ -151,12 +153,31 @@ async fn register_device(
         ));
     }
 
-    let device = state
+    let new_credential = auth::Credential::generate()?;
+    let (device, token) = match state
         .devices
-        .register(&public_key, subnet)
+        .register(
+            &public_key,
+            subnet,
+            credential.as_ref().map(|credential| &credential.hash),
+            &new_credential.hash,
+        )
         .await
         .map_err(ApiError::database)?
-        .ok_or_else(|| ApiError::unavailable("VPN address pool is exhausted"))?;
+    {
+        Registration::Registered { device, created } => {
+            let token = if created {
+                new_credential.token
+            } else {
+                credential.ok_or_else(ApiError::unauthorized)?.token
+            };
+            (device, token)
+        }
+        Registration::Unauthorized => return Err(ApiError::unauthorized()),
+        Registration::Exhausted => {
+            return Err(ApiError::unavailable("VPN address pool is exhausted"));
+        }
+    };
     // The reservation above is already committed. If the agent times out or
     // this request is cancelled, cleanup must remove the peer before IP reuse.
     let locked = state
@@ -207,8 +228,10 @@ async fn register_device(
     }
     Ok((
         StatusCode::CREATED,
+        [(CACHE_CONTROL, "no-store")],
         Json(RegistrationResponse {
             device_id: device.id,
+            token,
             address: format!("{address}/32"),
             expires_at: device.expires_at,
             lifetime_seconds,
@@ -221,40 +244,19 @@ async fn register_device(
     ))
 }
 
-fn vpn_required() -> ApiError {
-    ApiError {
-        status: StatusCode::FORBIDDEN,
-        message: "an active VPN connection for this device is required",
-    }
-}
-
-async fn vpn_source(state: &AppState, source: SocketAddr) -> Result<Ipv4Addr, ApiError> {
-    // Only the actual TCP peer is trusted, never forwarding headers.
-    let IpAddr::V4(source) = source.ip() else {
-        return Err(vpn_required());
-    };
-    let status = state.agent.status().await.map_err(ApiError::agent)?;
-    if status.state != VpnState::Running {
-        return Err(ApiError::unavailable("VPN is not running"));
-    }
-    let subnet = Ipv4Net::new(status.address, status.prefix_len)
-        .map_err(|_| ApiError::unavailable("invalid VPN subnet"))?;
-    if !subnet.contains(&source)
-        || source == status.address
-        || source == subnet.network()
-        || source == subnet.broadcast()
-    {
-        return Err(vpn_required());
-    }
-    Ok(source)
-}
-
 struct ApiError {
     status: StatusCode,
     message: &'static str,
 }
 
 impl ApiError {
+    fn unauthorized() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: "a valid device bearer token is required",
+        }
+    }
+
     fn unavailable(message: &'static str) -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -262,8 +264,8 @@ impl ApiError {
         }
     }
 
-    fn database(error: sqlx::Error) -> Self {
-        eprintln!("Device registration database error: {error}");
+    fn database(_: sqlx::Error) -> Self {
+        eprintln!("Device registration database operation failed");
         Self::unavailable("device database is unavailable")
     }
 
