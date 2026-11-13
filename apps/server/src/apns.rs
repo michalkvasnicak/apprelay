@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, io, os::unix::fs::PermissionsExt, sync::Mutex, time::Duration};
+use std::{fmt::Write as _, io, sync::Mutex, time::Duration};
 
 use base64::{
     Engine as _,
@@ -49,12 +49,6 @@ fn required(name: &str) -> io::Result<String> {
 impl ApnsClient {
     pub(crate) fn from_env() -> io::Result<Self> {
         let path = required("APPRELAY_APNS_SIGNING_KEY_FILE")?;
-        let metadata = std::fs::metadata(&path)?;
-        if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
-            return Err(io::Error::other(
-                "APNs signing key must be a regular file without group/other permissions",
-            ));
-        }
         let pem = Zeroizing::new(std::fs::read_to_string(path)?);
         let body = pem
             .trim()
