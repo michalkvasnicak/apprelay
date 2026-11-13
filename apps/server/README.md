@@ -40,6 +40,34 @@ The native listener defaults to `127.0.0.1:8080`. Override it with the exported 
 
 This is process liveness only: it does not verify PostgreSQL, VPN connectivity or WireGuard handshakes. An unavailable VPN agent is logged at startup but does not prevent HTTP serving.
 
+## Production Linux firewall
+
+Linux VPN agent support is still pending. The intended production policy is default-deny inbound and forwarded traffic, with only these exceptions:
+
+| Source          | Destination | Purpose                                               |
+| --------------- | ----------- | ----------------------------------------------------- |
+| Public internet | TCP 443     | Caddy HTTPS, proxied to the HTTP service on port 8080 |
+| Public internet | UDP 51820   | WireGuard tunnel (adjust if configured differently)   |
+| VPN interface   | TCP 8080    | HTTP service on the server's VPN address              |
+
+For example, on a dedicated host using UFW (replace `wg0` with the actual VPN interface):
+
+```sh
+sudo ufw default deny incoming
+sudo ufw default deny routed
+sudo ufw default allow outgoing
+sudo ufw allow 443/tcp
+sudo ufw allow 51820/udp
+sudo ufw allow in on wg0 to 10.77.0.1 port 8080 proto tcp
+sudo ufw enable
+```
+
+Before enabling, ensure console access or add a restricted SSH rule for your administrator IP to avoid locking yourself out. Apply the policy to IPv4 and IPv6 (`IPV6=yes` in `/etc/default/ufw`), and mirror public-port restrictions in the hosting provider's firewall. Preserve essential ICMP/ICMPv6 traffic for network operation.
+
+Do not publicly expose TCP 8080 or PostgreSQL's TCP 5432. Bind PostgreSQL to loopback/private container networking and expose the HTTP listener only where Caddy and the VPN interface can reach it. Keep forwarding denied: VPN devices must not reach one another, private networks, or the internet through this server. Firewall ports do not provide HTTP route authorization.
+
+Docker-published ports can bypass UFW's input rules; do not publish database/backend ports publicly, and enforce equivalent restrictions in Docker's forwarding path if using containers. Configure Caddy certificate issuance without inbound TCP 80 (for example, TLS-ALPN-01 or DNS-01) if keeping only the two public ports above.
+
 ## Configuration
 
 Configuration comes from exported environment variables, not `.env` files. VPN settings below belong to the agent:
