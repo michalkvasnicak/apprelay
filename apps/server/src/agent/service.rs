@@ -124,6 +124,17 @@ async fn handle(
                 Ok(())
             }
         }
+        Request::EnsurePeer {
+            public_key,
+            address,
+            expires_at,
+        } => match vpn.as_ref() {
+            Some(vpn) => {
+                vpn.ensure_peer(config, &public_key, address, expires_at)
+                    .await
+            }
+            None => Err(io::Error::other("VPN is stopped")),
+        },
         Request::RemovePeer { public_key } => match vpn.as_ref() {
             Some(vpn) => vpn.remove_peer(&public_key).await,
             None => Ok(()),
@@ -157,5 +168,6 @@ fn status(config: &VpnConfig, vpn: Option<&Vpn>) -> VpnStatus {
         address: config.address,
         prefix_len: config.prefix_len,
         listen_port: config.listen_port,
+        public_key: vpn.map(|vpn| vpn.public_key().to_owned()),
     }
 }

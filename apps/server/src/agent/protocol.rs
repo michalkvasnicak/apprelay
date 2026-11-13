@@ -11,7 +11,14 @@ pub(super) enum Request {
     Status,
     Start,
     Stop,
-    RemovePeer { public_key: [u8; 32] },
+    RemovePeer {
+        public_key: [u8; 32],
+    },
+    EnsurePeer {
+        public_key: [u8; 32],
+        address: Ipv4Addr,
+        expires_at: i64,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -29,6 +36,7 @@ pub struct VpnStatus {
     pub address: Ipv4Addr,
     pub prefix_len: u8,
     pub listen_port: u16,
+    pub public_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]

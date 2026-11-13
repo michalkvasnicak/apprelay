@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf, time::Duration};
+use std::{io, net::Ipv4Addr, path::PathBuf, time::Duration};
 
 use tokio::{net::UnixStream, time::timeout};
 
@@ -7,6 +7,7 @@ use super::{
     socket_path,
 };
 
+#[derive(Clone)]
 pub struct Client {
     socket: PathBuf,
 }
@@ -28,6 +29,20 @@ impl Client {
 
     pub async fn stop(&self) -> io::Result<VpnStatus> {
         self.request(Request::Stop).await
+    }
+
+    pub async fn ensure_peer(
+        &self,
+        public_key: [u8; 32],
+        address: Ipv4Addr,
+        expires_at: i64,
+    ) -> io::Result<VpnStatus> {
+        self.request(Request::EnsurePeer {
+            public_key,
+            address,
+            expires_at,
+        })
+        .await
     }
 
     /// Removing an already absent peer succeeds, making retries safe.

@@ -83,6 +83,11 @@ Configuration comes from exported environment variables, not `.env` files.
 | `APPRELAY_VPN_AGENT_UID`           | Agent            | `SUDO_UID`                                | Permitted non-root server user's UID.                                                                                                                                                                                                                                            |
 | `APPRELAY_VPN_AGENT_SOCKET`        | Server and agent | `/var/db/apprelay/vpn-agent.sock` (macOS) | Unix socket path. Set for both processes when overriding, including explicitly in `sudo env`. Its directory must be root-owned and not group/world-writable.                                                                                                                     |
 
-## Current scope
+## HTTP endpoints
 
-The socket API supports status/start/stop; the server queries status on startup and serves `GET /health`. HTTP shuts down gracefully on SIGINT or SIGTERM. Peer provisioning, iOS client configuration, forwarding, and NAT are not implemented yet.
+| Endpoint           | Request                                                                             | Response                                                                                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`      | None                                                                                | `200` with `{"status":"ok"}` (process liveness).                                                                                                                     |
+| `POST /v1/devices` | JSON: `{"wireguard_public_key":"<base64-encoded-32-byte-key>"}`; no authentication. | `201` with `device_id`, `address`, `expires_at`, remaining `lifetime_seconds`, and `wireguard` (`server_public_key`, `allowed_ips`, `persistent_keepalive_seconds`). |
+
+Registration configures the peer before returning. Active retries preserve the IP and expiry. The client supplies the public WireGuard endpoint. Invalid requests return `4xx`; database, VPN, or address-pool unavailability returns `503`.

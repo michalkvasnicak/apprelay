@@ -2,6 +2,27 @@ use std::{io, process::Stdio, time::Duration};
 
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
+pub async fn output(program: &str, args: &[&str]) -> io::Result<Vec<u8>> {
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, format!("{program} timed out")))??;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "{program} failed with {}",
+            output.status
+        )));
+    }
+    Ok(output.stdout)
+}
+
 pub async fn run(program: &str, args: &[&str], input: Option<&[u8]>) -> io::Result<()> {
     timeout(Duration::from_secs(5), async {
         let mut child = Command::new(program)

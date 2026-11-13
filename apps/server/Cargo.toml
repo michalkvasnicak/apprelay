@@ -14,10 +14,11 @@ path = "src/bin/vpn-agent.rs"
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+ipnet = "2"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "migrate", "macros", "uuid", "chrono"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "signal", "time"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }

@@ -5,6 +5,7 @@ pub mod agent;
 pub mod cleanup;
 
 pub mod db;
+#[cfg(unix)]
 pub mod http;
 
 #[cfg(target_os = "macos")]

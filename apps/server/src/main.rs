@@ -50,8 +50,8 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(&address).await?;
     eprintln!("HTTP server listening on {}", listener.local_addr()?);
 
-    let cleanup = tokio::spawn(cleanup::run(pool, agent));
-    let result = axum::serve(listener, http::router(devices))
+    let cleanup = tokio::spawn(cleanup::run(pool, agent.clone()));
+    let result = axum::serve(listener, http::router(devices, agent))
         .with_graceful_shutdown(async move {
             tokio::select! {
                 _ = interrupt.recv() => {},
