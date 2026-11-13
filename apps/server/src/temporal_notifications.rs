@@ -25,10 +25,13 @@ pub struct PairingNotificationWorkflow;
 #[workflow_methods]
 impl PairingNotificationWorkflow {
     #[run]
-    pub async fn run(ctx: &mut WorkflowContext<Self>, code_id: String) -> WorkflowResult<()> {
+    pub async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        notification_id: String,
+    ) -> WorkflowResult<()> {
         ctx.execute_activity(
             NotificationActivities::send,
-            code_id,
+            notification_id,
             ActivityOptions::with_schedule_to_close_timeout(Duration::from_secs(60))
                 .retry_policy(
                     RetryPolicy::builder()
@@ -55,16 +58,16 @@ impl NotificationActivities {
     pub async fn send(
         self: Arc<Self>,
         ctx: ActivityContext,
-        code_id: String,
+        notification_id: String,
     ) -> Result<(), ActivityError> {
-        let code_id = Uuid::parse_str(&code_id)?;
+        let notification_id = Uuid::parse_str(&notification_id)?;
         let operation = async {
             // All credentials and the PIN stay in this activity, never in history.
-            let Some(notification) = self.codes.notification(code_id).await? else {
+            let Some(notification) = self.codes.notification(notification_id).await? else {
                 return Ok(());
             };
-            match self.apns.send(code_id, &notification).await? {
-                SendOutcome::Accepted => self.codes.mark_sent(code_id).await?,
+            match self.apns.send(notification_id, &notification).await? {
+                SendOutcome::Accepted => self.codes.mark_sent(notification_id).await?,
                 SendOutcome::Expired => {}
                 SendOutcome::InvalidToken(invalidated_at) => {
                     if invalidated_at
@@ -109,18 +112,21 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
                 continue;
             }
         };
-        for code_id in pending {
+        for notification_id in pending {
             let start = temporal.start_workflow(
                 PairingNotificationWorkflow::run,
-                code_id.to_string(),
-                WorkflowStartOptions::new(TASK_QUEUE, format!("pairing-notification-{code_id}"))
-                    .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
-                    .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
-                    .build(),
+                notification_id.to_string(),
+                WorkflowStartOptions::new(
+                    TASK_QUEUE,
+                    format!("pairing-notification-{notification_id}"),
+                )
+                .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
+                .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
+                .build(),
             );
             match tokio::time::timeout(Duration::from_secs(2), start).await {
                 Ok(Ok(_)) => {
-                    if codes.mark_queued(code_id).await.is_err() {
+                    if codes.mark_queued(notification_id).await.is_err() {
                         eprintln!("Could not mark pairing notification queued; will retry");
                     }
                 }

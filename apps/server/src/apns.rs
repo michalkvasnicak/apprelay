@@ -109,7 +109,7 @@ impl ApnsClient {
 
     pub(crate) async fn send(
         &self,
-        code_id: Uuid,
+        notification_id: Uuid,
         notification: &Notification,
     ) -> io::Result<SendOutcome> {
         let host = match notification.environment.as_str() {
@@ -117,10 +117,10 @@ impl ApnsClient {
             "production" => "api.push.apple.com",
             _ => return Err(io::Error::other("invalid stored APNs environment")),
         };
-        if notification.code.expires_at.timestamp() <= Utc::now().timestamp() {
+        if notification.expires_at.timestamp() <= Utc::now().timestamp() {
             return Ok(SendOutcome::Expired);
         }
-        let remaining = (notification.code.expires_at - Utc::now()).to_std().ok();
+        let remaining = (notification.expires_at - Utc::now()).to_std().ok();
         let Some(remaining) = remaining.filter(|duration| !duration.is_zero()) else {
             return Ok(SendOutcome::Expired);
         };
@@ -129,6 +129,16 @@ impl ApnsClient {
             write!(&mut token, "{byte:02x}")
                 .map_err(|_| io::Error::other("could not encode APNs token"))?;
         }
+        let (title, body) = match &notification.code {
+            Some(code) => (
+                "Pair with AppRelay",
+                format!("Enter {} to pair your device.", code.code),
+            ),
+            None => (
+                "Pairing started",
+                "You have 60 seconds to finish pairing your device.".to_owned(),
+            ),
+        };
         let response = self
             .http
             .post(format!("https://{host}/3/device/{token}"))
@@ -139,21 +149,29 @@ impl ApnsClient {
             .header("apns-priority", "10")
             .header(
                 "apns-expiration",
-                notification.code.expires_at.timestamp().to_string(),
+                notification.expires_at.timestamp().to_string(),
             )
-            .header("apns-id", code_id.to_string())
+            .header("apns-id", notification_id.to_string())
             .header(
                 "apns-collapse-id",
-                format!("pairing-{}", notification.device_id),
+                format!(
+                    "pairing-{}-{}",
+                    if notification.code.is_some() {
+                        "code"
+                    } else {
+                        "started"
+                    },
+                    notification.device_id,
+                ),
             )
             .timeout(remaining.min(Duration::from_secs(5)))
             .json(&json!({
                 "aps": {"alert": {
-                    "title": "Pair with AppRelay",
-                    "body": format!("Enter {} to pair your device.", notification.code.code)
+                    "title": title,
+                    "body": body
                 }, "sound": "default"},
-                "pairing_attempt_id": code_id,
-                "expires_at": notification.code.expires_at,
+                "pairing_attempt_id": notification_id,
+                "expires_at": notification.expires_at,
             }))
             .send()
             .await
