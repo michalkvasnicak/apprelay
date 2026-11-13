@@ -145,6 +145,11 @@ impl ApnsClient {
                 "Pairing successful",
                 "Your device has been paired with AppRelay.".to_owned(),
             ),
+            NotificationContent::Timeout => (
+                "timeout",
+                "Pairing failed",
+                "Pairing wasn't completed within one minute.".to_owned(),
+            ),
         };
         let response = self
             .http

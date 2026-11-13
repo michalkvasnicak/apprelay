@@ -136,7 +136,7 @@ impl PairingActivities {
                 .map_err(io::Error::other)?;
             let lease_deadline = Instant::now() + remaining;
             let session = Session::new(&status, peer).await?;
-            let code_expiry = attempt_started_at
+            let code_expiry = Utc::now()
                 + chrono::Duration::from_std(
                     deadline
                         .min(lease_deadline)

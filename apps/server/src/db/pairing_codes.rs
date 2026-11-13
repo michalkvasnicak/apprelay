@@ -38,6 +38,7 @@ pub(crate) enum NotificationContent {
     Started,
     Code(ActiveCode),
     Success,
+    Timeout,
 }
 
 #[cfg(target_os = "macos")]
@@ -149,8 +150,9 @@ impl PairingCodeRepository {
             return Err(io::Error::other("device registration changed or expired"));
         }
         let saved = sqlx::query(
-            "INSERT INTO pairing_attempts (id, device_id, device_expires_at, started_at, expires_at)
-             VALUES ($1, $2, $3, $4, LEAST($3, $5))
+            "INSERT INTO pairing_attempts
+                 (id, device_id, device_expires_at, started_at, expires_at, timeout_notification_id)
+             VALUES ($1, $2, $3, $4, LEAST($3, $5), $6)
              ON CONFLICT (device_id) DO UPDATE SET
                id = EXCLUDED.id, device_expires_at = EXCLUDED.device_expires_at,
                started_at = EXCLUDED.started_at, expires_at = EXCLUDED.expires_at,
@@ -158,10 +160,20 @@ impl PairingCodeRepository {
                notification_queued_at = NULL, notification_sent_at = NULL,
                started_notification_queued_at = NULL, started_notification_sent_at = NULL,
                success_notification_id = NULL, success_notification_expires_at = NULL,
-               success_notification_queued_at = NULL, success_notification_sent_at = NULL
+               success_notification_queued_at = NULL, success_notification_sent_at = NULL,
+               timeout_notification_id = EXCLUDED.timeout_notification_id,
+               timeout_notification_queued_at = NULL, timeout_notification_sent_at = NULL
              WHERE pairing_attempts.started_at <= EXCLUDED.started_at",
-        ).bind(id).bind(device_id).bind(device_expiry).bind(started_at).bind(expires_at)
-            .execute(&mut *tx).await.map_err(storage_error)?;
+        )
+        .bind(id)
+        .bind(device_id)
+        .bind(device_expiry)
+        .bind(started_at)
+        .bind(expires_at)
+        .bind(Uuid::new_v4())
+        .execute(&mut *tx)
+        .await
+        .map_err(storage_error)?;
         if saved.rows_affected() != 1 {
             return Err(io::Error::other(
                 "a newer pairing attempt is already active",
@@ -243,7 +255,11 @@ impl PairingCodeRepository {
                  (a.code_id, a.notification_queued_at, a.notification_sent_at,
                      a.expires_at, a.ended_at IS NULL),
                  (a.success_notification_id, a.success_notification_queued_at,
-                     a.success_notification_sent_at, a.success_notification_expires_at, TRUE)
+                     a.success_notification_sent_at, a.success_notification_expires_at, TRUE),
+                 (a.timeout_notification_id, a.timeout_notification_queued_at,
+                     a.timeout_notification_sent_at,
+                     LEAST(a.expires_at + INTERVAL '60 seconds', d.expires_at),
+                     a.expires_at <= clock_timestamp() AND a.success_notification_id IS NULL)
              ) AS notification(id, queued_at, sent_at, expires_at, active)
              WHERE notification.id IS NOT NULL AND notification.active
                AND notification.queued_at IS NULL AND notification.sent_at IS NULL
@@ -264,8 +280,11 @@ impl PairingCodeRepository {
                  notification_queued_at = CASE WHEN code_id = $1
                      THEN clock_timestamp() ELSE notification_queued_at END,
                  success_notification_queued_at = CASE WHEN success_notification_id = $1
-                     THEN clock_timestamp() ELSE success_notification_queued_at END
-             WHERE id = $1 OR code_id = $1 OR success_notification_id = $1",
+                     THEN clock_timestamp() ELSE success_notification_queued_at END,
+                 timeout_notification_queued_at = CASE WHEN timeout_notification_id = $1
+                     THEN clock_timestamp() ELSE timeout_notification_queued_at END
+             WHERE id = $1 OR code_id = $1 OR success_notification_id = $1
+                OR timeout_notification_id = $1",
         )
         .bind(notification_id)
         .execute(&self.pool)
@@ -279,15 +298,19 @@ impl PairingCodeRepository {
         notification_id: Uuid,
     ) -> io::Result<Option<Notification>> {
         let mut tx = self.pool.begin().await.map_err(storage_error)?;
-        let attempt = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, bool)>(
+        let attempt = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, bool, bool)>(
             "SELECT a.id, a.device_id, notification.expires_at,
-                    COALESCE(a.success_notification_id = $1, FALSE)
+                    COALESCE(a.success_notification_id = $1, FALSE),
+                    COALESCE(a.timeout_notification_id = $1, FALSE)
              FROM pairing_attempts a JOIN devices d ON d.id = a.device_id
              CROSS JOIN LATERAL (VALUES
                  (a.id, a.started_notification_sent_at, a.expires_at, a.ended_at IS NULL),
                  (a.code_id, a.notification_sent_at, a.expires_at, a.ended_at IS NULL),
                  (a.success_notification_id, a.success_notification_sent_at,
-                     a.success_notification_expires_at, TRUE)
+                     a.success_notification_expires_at, TRUE),
+                 (a.timeout_notification_id, a.timeout_notification_sent_at,
+                     LEAST(a.expires_at + INTERVAL '60 seconds', d.expires_at),
+                     a.expires_at <= clock_timestamp() AND a.success_notification_id IS NULL)
              ) AS notification(id, sent_at, expires_at, active)
              WHERE notification.id = $1 AND notification.sent_at IS NULL AND notification.active
                AND notification.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
@@ -298,11 +321,13 @@ impl PairingCodeRepository {
         .fetch_optional(&mut *tx)
         .await
         .map_err(storage_error)?;
-        let Some((attempt_id, device_id, expires_at, success)) = attempt else {
+        let Some((attempt_id, device_id, expires_at, success, timed_out)) = attempt else {
             return Ok(None);
         };
         let content = if success {
             NotificationContent::Success
+        } else if timed_out {
+            NotificationContent::Timeout
         } else if notification_id == attempt_id {
             NotificationContent::Started
         } else {
@@ -347,8 +372,11 @@ impl PairingCodeRepository {
                  notification_sent_at = CASE WHEN code_id = $1
                      THEN clock_timestamp() ELSE notification_sent_at END,
                  success_notification_sent_at = CASE WHEN success_notification_id = $1
-                     THEN clock_timestamp() ELSE success_notification_sent_at END
-             WHERE id = $1 OR code_id = $1 OR success_notification_id = $1",
+                     THEN clock_timestamp() ELSE success_notification_sent_at END,
+                 timeout_notification_sent_at = CASE WHEN timeout_notification_id = $1
+                     THEN clock_timestamp() ELSE timeout_notification_sent_at END
+             WHERE id = $1 OR code_id = $1 OR success_notification_id = $1
+                OR timeout_notification_id = $1",
         )
         .bind(notification_id)
         .execute(&self.pool)
