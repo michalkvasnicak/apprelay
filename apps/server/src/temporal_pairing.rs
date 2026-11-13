@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     agent::{Client, VpnState},
-    db::{self, pairings::PairingStore},
+    db::{self, pairing_codes::PairingCodeRepository, pairings::PairingStore},
     pairing::Session,
 };
 
@@ -30,7 +30,7 @@ const SESSION_LIMIT: Duration = Duration::from_secs(60);
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
-async fn client() -> Result<TemporalClient, Error> {
+pub(crate) async fn client() -> Result<TemporalClient, Error> {
     let address = setting("APPRELAY_TEMPORAL_ADDRESS", "http://127.0.0.1:7233")?;
     let namespace = setting("APPRELAY_TEMPORAL_NAMESPACE", "default")?;
     let address = address.parse::<temporalio_client::Url>()?;
@@ -92,6 +92,7 @@ pub struct PairingActivities {
     pool: PgPool,
     agent: Client,
     pairings: PairingStore,
+    codes: PairingCodeRepository,
 }
 
 #[activities]
@@ -135,18 +136,38 @@ impl PairingActivities {
                 .map_err(io::Error::other)?;
             let lease_deadline = Instant::now() + remaining;
             let session = Session::new(&status, peer).await?;
+            let code_expiry = attempt_started_at
+                + chrono::Duration::from_std(
+                    deadline
+                        .min(lease_deadline)
+                        .saturating_duration_since(Instant::now()),
+                )
+                .map_err(io::Error::other)?;
+            let attempt_id = self
+                .codes
+                .begin(device_id, expires_at, attempt_started_at, code_expiry)
+                .await?;
             eprintln!("Starting pairing activity for device {device_id} at {peer}");
             Ok((
                 session,
                 deadline.min(lease_deadline),
                 expires_at,
                 attempt_started_at,
+                attempt_id,
             ))
         };
-        let (mut session, deadline, expires_at, attempt_started_at) =
+        let (mut session, deadline, expires_at, attempt_started_at, attempt_id) =
             wait(&ctx, prepare, deadline).await?;
         let operation = async {
-            let record = session.run().await?;
+            let codes = &self.codes;
+            let record = session
+                .run(move |pin| async move {
+                    match pin {
+                        Some(pin) => codes.publish(attempt_id, device_id, pin).await,
+                        None => codes.clear(attempt_id).await,
+                    }
+                })
+                .await?;
             // Persist inside the activity: credentials must not enter Temporal history.
             self.pairings
                 .save(device_id, expires_at, attempt_started_at, &record)
@@ -160,6 +181,11 @@ impl PairingActivities {
         // Normal completion, cancellation, and timeout all withdraw the proxy service.
         // A crash still expires its last announcement after the ten-second DNS TTL.
         session.stop().await;
+        // Best effort on cancellation as well; expiry also handles process crashes.
+        let ended = tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id)).await;
+        if !matches!(ended, Ok(Ok(()))) {
+            eprintln!("Could not invalidate pairing code; it will expire at the session deadline");
+        }
         result
     }
 }
@@ -190,6 +216,7 @@ pub async fn run_worker() -> Result<(), Error> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let pool = db::connect(&std::env::var("DATABASE_URL")?).await?;
     let pairings = PairingStore::from_env(pool.clone())?;
+    let codes = PairingCodeRepository::from_env(pool.clone())?;
     db::MIGRATOR.run(&pool).await?;
     let agent = Client::from_env()?;
     let runtime = Runtime::from_current_tokio(Default::default())?;
@@ -205,6 +232,7 @@ pub async fn run_worker() -> Result<(), Error> {
             pool,
             agent,
             pairings,
+            codes,
         })
         .tuner(tuner)
         .graceful_shutdown_period(Duration::from_secs(1))

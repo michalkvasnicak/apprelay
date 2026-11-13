@@ -1,4 +1,5 @@
 pub mod devices;
+pub mod pairing_codes;
 #[cfg(target_os = "macos")]
 pub(crate) mod pairings;
 pub mod push_tokens;

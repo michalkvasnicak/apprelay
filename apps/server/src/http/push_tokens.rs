@@ -1,16 +1,14 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
 use axum::{
     Json,
     extract::{ConnectInfo, Path, State, rejection::JsonRejection},
     http::StatusCode,
 };
-use ipnet::Ipv4Net;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use super::{ApiError, AppState};
-use crate::agent::VpnState;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,27 +63,7 @@ async fn update(
     device_id: Uuid,
     token: Option<&[u8]>,
 ) -> Result<StatusCode, ApiError> {
-    let forbidden = || ApiError {
-        status: StatusCode::FORBIDDEN,
-        message: "an active VPN connection for this device is required",
-    };
-    // Only the TCP peer address is trusted, never Forwarded/X-Forwarded-For.
-    let IpAddr::V4(source) = source.ip() else {
-        return Err(forbidden());
-    };
-    let status = state.agent.status().await.map_err(ApiError::agent)?;
-    if status.state != VpnState::Running {
-        return Err(ApiError::unavailable("VPN is not running"));
-    }
-    let subnet = Ipv4Net::new(status.address, status.prefix_len)
-        .map_err(|_| ApiError::unavailable("invalid VPN subnet"))?;
-    if !subnet.contains(&source)
-        || source == status.address
-        || source == subnet.network()
-        || source == subnet.broadcast()
-    {
-        return Err(forbidden());
-    }
+    let source = super::vpn_source(state, source).await?;
     let authorized = state
         .push_tokens
         .set_token(device_id, source, token)
@@ -96,7 +74,7 @@ async fn update(
             ApiError::unavailable("push token storage is unavailable")
         })?;
     if !authorized {
-        return Err(forbidden());
+        return Err(super::vpn_required());
     }
     Ok(StatusCode::NO_CONTENT)
 }

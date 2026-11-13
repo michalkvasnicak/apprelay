@@ -23,6 +23,9 @@ pub async fn run(pool: PgPool, agent: Client) {
 }
 
 async fn cleanup_batch(pool: &PgPool, agent: &Client) -> Result<u32, Box<dyn Error + Send + Sync>> {
+    sqlx::query("DELETE FROM pairing_attempts WHERE expires_at <= clock_timestamp()")
+        .execute(pool)
+        .await?;
     let mut removed = 0;
     // Bound each sweep so a large backlog cannot monopolize the agent.
     for _ in 0..100 {

@@ -1,6 +1,10 @@
+mod pairing_codes;
 mod push_tokens;
 
-use std::{net::Ipv4Addr, time::Instant};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::Instant,
+};
 
 use axum::{
     Json, Router,
@@ -18,7 +22,10 @@ use uuid::Uuid;
 
 use crate::{
     agent::{Client, VpnState},
-    db::{devices::DeviceRepository, push_tokens::PushTokenRepository},
+    db::{
+        devices::DeviceRepository, pairing_codes::PairingCodeRepository,
+        push_tokens::PushTokenRepository,
+    },
 };
 
 #[derive(Clone)]
@@ -26,6 +33,7 @@ struct AppState {
     devices: DeviceRepository,
     agent: Client,
     push_tokens: PushTokenRepository,
+    codes: PairingCodeRepository,
 }
 
 #[derive(Serialize)]
@@ -59,6 +67,7 @@ pub fn router(
     devices: DeviceRepository,
     agent: Client,
     push_tokens: PushTokenRepository,
+    codes: PairingCodeRepository,
 ) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -67,12 +76,17 @@ pub fn router(
             "/v1/devices/{device_id}/push-token",
             put(push_tokens::put).delete(push_tokens::delete),
         )
+        .route(
+            "/v1/devices/{device_id}/pairing-code",
+            get(pairing_codes::get),
+        )
         .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn(log_request))
         .with_state(AppState {
             devices,
             agent,
             push_tokens,
+            codes,
         })
 }
 
@@ -205,6 +219,34 @@ async fn register_device(
             },
         }),
     ))
+}
+
+fn vpn_required() -> ApiError {
+    ApiError {
+        status: StatusCode::FORBIDDEN,
+        message: "an active VPN connection for this device is required",
+    }
+}
+
+async fn vpn_source(state: &AppState, source: SocketAddr) -> Result<Ipv4Addr, ApiError> {
+    // Only the actual TCP peer is trusted, never forwarding headers.
+    let IpAddr::V4(source) = source.ip() else {
+        return Err(vpn_required());
+    };
+    let status = state.agent.status().await.map_err(ApiError::agent)?;
+    if status.state != VpnState::Running {
+        return Err(ApiError::unavailable("VPN is not running"));
+    }
+    let subnet = Ipv4Net::new(status.address, status.prefix_len)
+        .map_err(|_| ApiError::unavailable("invalid VPN subnet"))?;
+    if !subnet.contains(&source)
+        || source == status.address
+        || source == subnet.network()
+        || source == subnet.broadcast()
+    {
+        return Err(vpn_required());
+    }
+    Ok(source)
 }
 
 struct ApiError {

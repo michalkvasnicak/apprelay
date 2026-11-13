@@ -4,7 +4,10 @@ async fn main() -> std::io::Result<()> {
     use apprelay_server::{
         agent::Client,
         cleanup, db,
-        db::{devices::DeviceRepository, push_tokens::PushTokenRepository},
+        db::{
+            devices::DeviceRepository, pairing_codes::PairingCodeRepository,
+            push_tokens::PushTokenRepository,
+        },
         http,
     };
     use tokio::{
@@ -35,6 +38,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .map_err(std::io::Error::other)?;
     let push_tokens = PushTokenRepository::from_env(pool.clone())?;
+    let codes = PairingCodeRepository::from_env(pool.clone())?;
     db::MIGRATOR
         .run(&pool)
         .await
@@ -59,7 +63,7 @@ async fn main() -> std::io::Result<()> {
     let cleanup = tokio::spawn(cleanup::run(pool, agent.clone()));
     let result = axum::serve(
         listener,
-        http::router(devices, agent, push_tokens)
+        http::router(devices, agent, push_tokens, codes)
             .into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(async move {

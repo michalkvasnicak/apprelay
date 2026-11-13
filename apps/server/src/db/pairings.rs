@@ -1,27 +1,21 @@
 //! Version 1: AES-256-GCM over a JSON envelope, bound to the device UUID.
-//! Only this worker receives the key; neither plaintext nor key enters SQL/Temporal.
+//! Neither plaintext nor the encryption key enters SQL/Temporal.
 
 use std::io;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
-use ring::{
-    aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey},
-    rand::{SecureRandom, SystemRandom},
-};
 use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::pairing::PairingRecord;
+use crate::{pairing::PairingRecord, secrets::SecretKey};
 
 const FORMAT_VERSION: i16 = 1;
-const KEY_ENV: &str = "PAIRING_ENCRYPTION_KEY";
 
 pub(crate) struct PairingStore {
     pool: PgPool,
-    key: LessSafeKey,
+    key: SecretKey,
 }
 
 // Borrow the source data to avoid unnecessary copies of secrets. The plist and
@@ -56,20 +50,9 @@ struct StoredPeer<'a> {
 impl PairingStore {
     /// Fail startup on missing/malformed configuration; never print the value.
     pub(crate) fn from_env(pool: PgPool) -> io::Result<Self> {
-        let encoded = Zeroizing::new(std::env::var(KEY_ENV).map_err(|_| {
-            io::Error::other("PAIRING_ENCRYPTION_KEY is required and must be valid Unicode")
-        })?);
-        let bytes = Zeroizing::new(
-            STANDARD
-                .decode(encoded.as_bytes())
-                .map_err(|_| io::Error::other("PAIRING_ENCRYPTION_KEY must be Base64-encoded"))?,
-        );
-        let key = UnboundKey::new(&AES_256_GCM, &bytes).map_err(|_| {
-            io::Error::other("PAIRING_ENCRYPTION_KEY must decode to exactly 32 bytes")
-        })?;
         Ok(Self {
             pool,
-            key: LessSafeKey::new(key),
+            key: SecretKey::from_env()?,
         })
     }
 
@@ -103,26 +86,14 @@ impl PairingStore {
                 remotepairing_udid: &peer.remotepairing_udid,
             },
         };
-        let mut ciphertext = Zeroizing::new(
-            serde_json::to_vec(&stored)
-                .map_err(|_| io::Error::other("could not serialize pairing credentials"))?,
-        );
-        let mut nonce = [0u8; 12];
-        SystemRandom::new()
-            .fill(&mut nonce)
-            .map_err(|_| io::Error::other("could not generate pairing encryption nonce"))?;
+        let plaintext = serde_json::to_vec(&stored)
+            .map_err(|_| io::Error::other("could not serialize pairing credentials"))?;
         // Domain separation + format version + device ID prevents moving a
         // ciphertext to a different device or interpreting it as another format.
         let mut associated_data = b"apprelay/device-pairing/".to_vec();
         associated_data.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
         associated_data.extend_from_slice(device_id.as_bytes());
-        self.key
-            .seal_in_place_append_tag(
-                Nonce::assume_unique_for_key(nonce),
-                Aad::from(associated_data),
-                &mut *ciphertext,
-            )
-            .map_err(|_| io::Error::other("could not encrypt pairing credentials"))?;
+        let (nonce, ciphertext) = self.key.seal(&associated_data, plaintext)?;
 
         let mut transaction = self.pool.begin().await.map_err(io::Error::other)?;
         // Coordinate with renewal/cleanup. A completed pairing must never be

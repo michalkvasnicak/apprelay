@@ -2,6 +2,7 @@
 
 use std::{
     ffi::CString,
+    future::Future,
     io,
     net::{Ipv4Addr, SocketAddr},
     os::fd::AsRawFd,
@@ -97,7 +98,11 @@ impl Session {
         }
     }
 
-    pub(crate) async fn run(&mut self) -> io::Result<PairingRecord> {
+    pub(crate) async fn run<F, Fut>(&mut self, mut on_code: F) -> io::Result<PairingRecord>
+    where
+        F: FnMut(Option<String>) -> Fut + Send,
+        Fut: Future<Output = io::Result<()>> + Send,
+    {
         let mut announcements = interval(Duration::from_secs(5));
         let destination = SocketAddr::from((self.peer, 5354));
         let mut receiving = [0u8; 1500];
@@ -130,21 +135,48 @@ impl Session {
                         RpPairingSocket::new_device(stream), self.host_info.clone());
                     // Drop the future (and its mutable borrow) before copying the record.
                     let result = {
-                        // Keep announcements running while the user enters the PIN.
+                        let (pin_sender, mut pin_receiver) = tokio::sync::oneshot::channel();
+                        let (resume_sender, resume_receiver) = tokio::sync::oneshot::channel();
+                        let mut resume_sender = Some(resume_sender);
+                        let mut pin_received = false;
+                        // Pause the handshake until the PIN is durably published.
                         let pairing = host.accept(
                             &mut self.pairing_file,
-                            |pin| async move { eprintln!("Pairing: enter {pin} on the iPhone"); },
+                            |pin| async move {
+                                let _ = pin_sender.send(pin);
+                                let _ = resume_receiver.await;
+                            },
                         );
                         tokio::pin!(pairing);
                         loop {
                             tokio::select! {
                                 result = &mut pairing => break result,
+                                pin = &mut pin_receiver, if !pin_received => {
+                                    pin_received = true;
+                                    if let Ok(pin) = pin {
+                                        let publication = on_code(Some(pin));
+                                        tokio::pin!(publication);
+                                        loop {
+                                            tokio::select! {
+                                                result = &mut publication => { result?; break; },
+                                                _ = announcements.tick() => {
+                                                    self.discovery.send_to(&self.announcement, destination).await?;
+                                                }
+                                            }
+                                        }
+                                        if let Some(sender) = resume_sender.take() {
+                                            let _ = sender.send(());
+                                        }
+                                    }
+                                }
                                 _ = announcements.tick() => {
                                     self.discovery.send_to(&self.announcement, destination).await?;
                                 }
                             }
                         }
                     };
+                    // Neither failed exchanges nor completed pairing retain a usable code.
+                    on_code(None).await?;
                     match result {
                         Ok(peer) => {
                             eprintln!("Pair-setup response sent; iOS completion is not yet confirmed.");
