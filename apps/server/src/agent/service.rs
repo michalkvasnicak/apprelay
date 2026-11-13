@@ -124,6 +124,10 @@ async fn handle(
                 Ok(())
             }
         }
+        Request::RemovePeer { public_key } => match vpn.as_ref() {
+            Some(vpn) => vpn.remove_peer(&public_key).await,
+            None => Ok(()),
+        },
         Request::Stop => match vpn.take() {
             Some(vpn) => vpn.shutdown().await,
             None => Ok(()),

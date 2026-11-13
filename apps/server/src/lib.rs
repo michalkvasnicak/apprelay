@@ -1,6 +1,9 @@
 #[cfg(unix)]
 pub mod agent;
 
+#[cfg(unix)]
+pub mod cleanup;
+
 pub mod db;
 pub mod http;
 

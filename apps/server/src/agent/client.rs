@@ -30,6 +30,13 @@ impl Client {
         self.request(Request::Stop).await
     }
 
+    /// Removing an already absent peer succeeds, making retries safe.
+    pub async fn remove_peer(&self, public_key: [u8; 32]) -> io::Result<()> {
+        self.request(Request::RemovePeer { public_key })
+            .await
+            .map(|_| ())
+    }
+
     async fn request(&self, request: Request) -> io::Result<VpnStatus> {
         timeout(Duration::from_secs(30), async {
             let mut stream = UnixStream::connect(&self.socket).await.map_err(|error| {

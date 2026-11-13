@@ -1,7 +1,7 @@
 #[cfg(unix)]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
-    use apprelay_server::{agent::Client, db, db::devices::DeviceRepository, http};
+    use apprelay_server::{agent::Client, cleanup, db, db::devices::DeviceRepository, http};
     use tokio::{
         net::TcpListener,
         signal::unix::{SignalKind, signal},
@@ -33,7 +33,7 @@ async fn main() -> std::io::Result<()> {
         .run(&pool)
         .await
         .map_err(std::io::Error::other)?;
-    let devices = DeviceRepository::new(pool, lifetime_seconds);
+    let devices = DeviceRepository::new(pool.clone(), lifetime_seconds);
 
     let agent = Client::from_env()?;
     match agent.status().await {
@@ -50,14 +50,18 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(&address).await?;
     eprintln!("HTTP server listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, http::router(devices))
+    let cleanup = tokio::spawn(cleanup::run(pool, agent));
+    let result = axum::serve(listener, http::router(devices))
         .with_graceful_shutdown(async move {
             tokio::select! {
                 _ = interrupt.recv() => {},
                 _ = terminate.recv() => {},
             }
         })
-        .await
+        .await;
+    cleanup.abort();
+    let _ = cleanup.await;
+    result
 }
 
 #[cfg(not(unix))]

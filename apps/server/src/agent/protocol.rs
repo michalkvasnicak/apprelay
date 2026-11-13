@@ -11,6 +11,7 @@ pub(super) enum Request {
     Status,
     Start,
     Stop,
+    RemovePeer { public_key: [u8; 32] },
 }
 
 #[derive(Deserialize, Serialize)]
