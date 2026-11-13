@@ -1,9 +1,10 @@
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, time::Instant};
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Request, State, rejection::JsonRejection},
     http::StatusCode,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -56,7 +57,21 @@ pub fn router(devices: DeviceRepository, agent: Client) -> Router {
         .route("/health", get(health))
         .route("/v1/devices", post(register_device))
         .layer(DefaultBodyLimit::max(1024))
+        .layer(middleware::from_fn(log_request))
         .with_state(AppState { devices, agent })
+}
+
+async fn log_request(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    eprintln!(
+        "HTTP {method} {path:?} -> {} ({} ms)",
+        response.status().as_u16(),
+        started.elapsed().as_millis(),
+    );
+    response
 }
 
 async fn health() -> Json<Health> {
