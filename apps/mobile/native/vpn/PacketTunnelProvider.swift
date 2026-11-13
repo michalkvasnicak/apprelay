@@ -25,12 +25,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             var interface = InterfaceConfiguration(privateKey: privateKey)
             interface.addresses = [clientAddress]
             // No DNS override and no IPv6 configuration.
+            // Temporarily route IPv4 mDNS through the tunnel for discovery.
+            var allowedIPs = settings.allowedIPs
+            if !allowedIPs.contains("224.0.0.251/32") {
+                allowedIPs.append("224.0.0.251/32")
+            }
             var peer = PeerConfiguration(publicKey: publicKey)
             peer.endpoint = endpoint
-            peer.allowedIPs = settings.allowedIPs.compactMap { IPAddressRange(from: $0) }
-            guard peer.allowedIPs.count == settings.allowedIPs.count else { throw VpnError.invalidConfiguration }
+            peer.allowedIPs = allowedIPs.compactMap { IPAddressRange(from: $0) }
+            guard peer.allowedIPs.count == allowedIPs.count else { throw VpnError.invalidConfiguration }
             peer.persistentKeepAlive = keepalive
-            allowedRoutes = try settings.allowedIPs.map { cidr in
+            allowedRoutes = try allowedIPs.map { cidr in
                 let parts = cidr.split(separator: "/", omittingEmptySubsequences: false)
                 guard parts.count == 2, IPv4Address(String(parts[0])) != nil,
                       let prefix = Int(parts[1]), (0...32).contains(prefix) else {
@@ -54,8 +59,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch { completionHandler(error) }
     }
 
-    // Replace generated interface routes with the API's split routes, including
-    // on network-path reconfiguration.
+    // Replace generated interface routes with the API routes plus temporary mDNS,
+    // including on network-path reconfiguration.
     override func setTunnelNetworkSettings(_ tunnelNetworkSettings: NETunnelNetworkSettings?,
                                           completionHandler: ((Error?) -> Void)? = nil) {
         guard let settings = tunnelNetworkSettings as? NEPacketTunnelNetworkSettings else {
