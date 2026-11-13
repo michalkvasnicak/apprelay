@@ -120,7 +120,7 @@ module.exports = function withWireGuard(config) {
         SWIFT_VERSION: "5.0",
         PRODUCT_MODULE_NAME: TARGET,
         IPHONEOS_DEPLOYMENT_TARGET: config.ios?.deploymentTarget ?? "15.0",
-        TARGETED_DEVICE_FAMILY: quote("1,2"),
+        TARGETED_DEVICE_FAMILY: quote(config.ios?.supportsTablet ? "1,2" : "1"),
         APPLICATION_EXTENSION_API_ONLY: "YES",
         ENABLE_BITCODE: "NO",
         ENABLE_USER_SCRIPT_SANDBOXING: "NO",

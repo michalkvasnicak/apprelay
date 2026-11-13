@@ -6,7 +6,9 @@ The UI provides Connect/Disconnect, system tunnel status, an editable device VPN
 
 ### Build configuration
 
-Copy `.env.example` to `.env.local` in this directory. Supply the Mac's Wi-Fi IPv4 address, UDP port and existing WireGuard **public** key. Expo embeds `EXPO_PUBLIC_*` values in the JavaScript bundle; they are not secrets. Never put server or device private keys in these variables.
+Copy `.env.example` to `.env.local` in this directory. Set `APPLE_TEAM_ID` to your Apple Developer Team ID. Optionally set `APPLE_BUNDLE_IDENTIFIER` to your own app identifier; otherwise it defaults to `sk.brosoft.apprelay` from `app.json`. `app.config.ts` reads these native build settings without an `EXPO_PUBLIC_` prefix. If `APPLE_TEAM_ID` is empty, no team is configured by the app config.
+
+Also supply the Mac's Wi-Fi IPv4 address, UDP port and existing WireGuard **public** key. Expo embeds `EXPO_PUBLIC_*` values in the JavaScript bundle; they are not secrets. Never put server or device private keys in these variables. `.env.local` is ignored by Git; provide the same signing settings in your CI/build environment when building there.
 
 Obtain the server public key on the Mac using its existing private-key file:
 
@@ -26,7 +28,7 @@ Release builds need these variables in their bundling environment too. Restart E
 ### Native build prerequisites
 
 - Xcode and a physical iPhone supported by the deployment target in `app.json`.
-- An Apple Developer team with Network Extension provisioning enabled for both the app and extension. Set your own `ios.bundleIdentifier` and `ios.appleTeamId` in `app.json` before provisioning; the checked-in bundle identifier is `com.brosoft.apprelay`.
+- An Apple Developer team with Network Extension provisioning enabled for both the app and extension. Configure `APPLE_TEAM_ID` and, if needed, `APPLE_BUNDLE_IDENTIFIER` in `.env.local` before provisioning. The Expo config plugin uses these resolved settings for both targets.
 - Both targets need the `packet-tunnel-provider` entitlement and the same keychain access group. The plugin generates these. The extension bundle identifier is `<app bundle identifier>.PacketTunnel`.
 - Go **1.19.13**, matching the pinned upstream WireGuardKit bridge's runtime patch. With a host Go installation, install it once:
 

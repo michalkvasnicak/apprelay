@@ -10,8 +10,7 @@
     "ios": {
       "bundleIdentifier": "sk.brosoft.apprelay",
       "deploymentTarget": "27.0",
-      "supportsTablet": true,
-      "appleTeamId": "RZ6B3UWFHF"
+      "supportsTablet": false
     },
     "android": {
       "adaptiveIcon": {
