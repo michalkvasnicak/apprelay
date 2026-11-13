@@ -7,7 +7,7 @@ Two processes: a root `vpn-agent` owns WireGuard; the unprivileged application s
 | Platform        | Status                                                                         |
 | --------------- | ------------------------------------------------------------------------------ |
 | macOS           | Implemented using `wireguard-go` and a dynamically allocated `utun` interface. |
-| Linux           | VPN agent not implemented yet.                                                 |
+| Linux           | Implemented using kernel WireGuard and the dedicated `wg-apprelay` interface.  |
 | Other platforms | Not supported.                                                                 |
 
 On macOS, `wireguard-go` and `wg` (from `wireguard-tools`) must be on the agent's `PATH`.
@@ -28,6 +28,18 @@ sudo env PATH="$PATH" \
 
 Keep the agent running. In another terminal, run `pnpm start` from `apps/server` **without sudo**. Stopping the server does not stop the VPN; stopping the agent cleans it up.
 
+## Running on Linux
+
+The agent requires Linux kernel WireGuard support, with `ip` (from `iproute2`) and `wg` (from `wireguard-tools`) on its `PATH`. On Ubuntu, install them with `sudo apt-get install iproute2 wireguard-tools`. If WireGuard is a loadable module, load it on the host with `sudo modprobe wireguard` before starting a container. No `wireguard-go` process or `/dev/net/tun` device is needed.
+
+Use the same build and agent command as in the macOS section. The agent creates `wg-apprelay`, assigns `APPRELAY_VPN_ADDRESS`, and configures the connected subnet route and UDP listener. It refuses to take over an existing interface. Configuration failures roll back the newly created interface; graceful shutdown deletes it. An abrupt termination can leave the interface and agent socket behind: after confirming the old agent is no longer running, remove only its stale resources before restarting (`sudo ip link delete dev wg-apprelay` and `sudo rm /var/run/apprelay/vpn-agent.sock` for the default paths).
+
+The default agent socket on Linux is `/var/run/apprelay/vpn-agent.sock`. The server and pairing worker must run under the non-root UID selected by `APPRELAY_VPN_AGENT_UID`. They must share the agent's network namespace to access the VPN address/interface, and have access to its Unix socket.
+
+Linux pairing binds its TCP and unicast DNS-SD sockets to the VPN interface using `SO_BINDTODEVICE`, rather than macOS's `IP_BOUND_IF`. Provision `CAP_NET_RAW` for the non-root pairing worker; a binding failure aborts the session instead of falling back to another interface. For a native deployment, a service manager can grant this capability (for example, systemd `AmbientCapabilities=CAP_NET_RAW`). The API and notification worker do not need it. Pairing and notification workers and workflow dispatch are enabled on both platforms; their existing Temporal, PostgreSQL, encryption, and APNs settings still apply. No system Bonjour/Avahi service or USB access is used by this pairing flow.
+
+For a future container deployment, the agent must run as root with `NET_ADMIN` and sufficient permissions to prepare/chown the Unix socket. Do not grant `SYS_MODULE` or full privileged mode: the kernel module belongs to the host. Docker packaging is not included here. Active database registrations are not yet automatically restored into WireGuard after an agent restart; devices must register again to reprovision their peers.
+
 ## Local PostgreSQL and HTTPS
 
 See [local infrastructure](../../infra/README.md) for the root Docker Compose setup. PostgreSQL and Caddy run in containers; this server and the VPN agent remain native on the host. Caddy proxies HTTPS to this server on port 8080. PostgreSQL integration is not implemented yet.
@@ -42,15 +54,17 @@ This is process liveness only: it does not verify PostgreSQL, VPN connectivity o
 
 ## Production Linux firewall
 
-Linux VPN agent support is still pending. The intended production policy is default-deny inbound and forwarded traffic, with only these exceptions:
+The intended production policy is default-deny inbound and forwarded traffic, with only these exceptions:
 
 | Source          | Destination | Purpose                                               |
 | --------------- | ----------- | ----------------------------------------------------- |
 | Public internet | TCP 443     | Caddy HTTPS, proxied to the HTTP service on port 8080 |
 | Public internet | UDP 51820   | WireGuard tunnel (adjust if configured differently)   |
 | VPN interface   | TCP 8080    | HTTP service on the server's VPN address              |
+| VPN interface   | UDP 5354    | Device-specific unicast DNS-SD pairing discovery      |
+| VPN interface   | Dynamic TCP | Pairing listener bound to the server's VPN address    |
 
-For example, on a dedicated host using UFW (replace `wg0` with the actual VPN interface):
+For example, on a dedicated host using UFW, the following allows HTTPS, WireGuard, and VPN HTTP only. Pairing additionally requires inbound UDP 5354 and the dynamically assigned TCP listener ports on `wg-apprelay` to `10.77.0.1`; restrict any such rules to the VPN subnet and do not expose these ports publicly. The agent does not install firewall rules.
 
 ```sh
 sudo ufw default deny incoming
@@ -58,7 +72,7 @@ sudo ufw default deny routed
 sudo ufw default allow outgoing
 sudo ufw allow 443/tcp
 sudo ufw allow 51820/udp
-sudo ufw allow in on wg0 to 10.77.0.1 port 8080 proto tcp
+sudo ufw allow in on wg-apprelay to 10.77.0.1 port 8080 proto tcp
 sudo ufw enable
 ```
 
@@ -89,7 +103,7 @@ Configuration comes from exported environment variables, not `.env` files.
 | `APPRELAY_VPN_ADDRESS`             | Agent                   | `10.77.0.1/24`                            | Server IPv4 address and prefix length; the agent also adds a route for this subnet.                                                                                                                                                                                              |
 | `APPRELAY_VPN_PORT`                | Agent                   | `51820`                                   | WireGuard UDP listen port, between 1 and 65535.                                                                                                                                                                                                                                  |
 | `APPRELAY_VPN_AGENT_UID`           | Agent                   | `SUDO_UID`                                | Permitted non-root server user's UID.                                                                                                                                                                                                                                            |
-| `APPRELAY_VPN_AGENT_SOCKET`        | Server and agent        | `/var/db/apprelay/vpn-agent.sock` (macOS) | Unix socket path. Set for both processes when overriding, including explicitly in `sudo env`. Its directory must be root-owned and not group/world-writable.                                                                                                                     |
+| `APPRELAY_VPN_AGENT_SOCKET`        | Server and agent        | `/var/db/apprelay/vpn-agent.sock` (macOS) | Unix socket path; Linux defaults to `/var/run/apprelay/vpn-agent.sock`. Set for the server, pairing worker, and agent when overriding, including explicitly in `sudo env`. Its directory must be root-owned and not group/world-writable.                                        |
 
 ## HTTP endpoints
 

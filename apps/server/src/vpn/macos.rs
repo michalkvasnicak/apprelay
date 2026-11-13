@@ -1,8 +1,8 @@
 use std::{
-    fs::{self, DirBuilder, File},
-    io::{self, Read},
+    fs::{self, DirBuilder},
+    io,
     net::Ipv4Addr,
-    os::unix::fs::{DirBuilderExt, FileTypeExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, FileTypeExt},
     path::PathBuf,
     process::Stdio,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -23,7 +23,7 @@ pub struct Interface {
 
 impl Interface {
     pub async fn start(config: &VpnConfig) -> io::Result<Self> {
-        let private_key = read_private_key(config)?;
+        let private_key = config.read_private_key()?;
         let runtime = RuntimeDirectory::create()?;
         let child = Command::new("wireguard-go")
             .args(["-f", "utun"])
@@ -174,27 +174,6 @@ impl Interface {
 
         Ok(())
     }
-}
-
-fn read_private_key(config: &VpnConfig) -> io::Result<Vec<u8>> {
-    let file = File::open(&config.private_key_file)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "VPN private key must be a regular file accessible only by its owner",
-        ));
-    }
-
-    let mut key = Vec::new();
-    file.take(128).read_to_end(&mut key)?;
-    if key.is_empty() || key.len() >= 128 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "VPN private key file is empty or too large",
-        ));
-    }
-    Ok(key)
 }
 
 fn socket_path(name: &str) -> PathBuf {

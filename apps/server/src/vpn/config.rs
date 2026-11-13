@@ -1,4 +1,13 @@
-use std::{env, io, net::Ipv4Addr, path::PathBuf};
+use std::{
+    env,
+    fs::File,
+    io::{self, Read},
+    net::Ipv4Addr,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+};
+
+use zeroize::Zeroizing;
 
 pub struct VpnConfig {
     pub address: Ipv4Addr,
@@ -8,6 +17,27 @@ pub struct VpnConfig {
 }
 
 impl VpnConfig {
+    pub(super) fn read_private_key(&self) -> io::Result<Zeroizing<Vec<u8>>> {
+        let file = File::open(&self.private_key_file)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "VPN private key must be a regular file accessible only by its owner",
+            ));
+        }
+
+        let mut key = Zeroizing::new(Vec::new());
+        file.take(128).read_to_end(&mut key)?;
+        if key.is_empty() || key.len() >= 128 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "VPN private key file is empty or too large",
+            ));
+        }
+        Ok(key)
+    }
+
     pub fn from_env() -> io::Result<Self> {
         let address = setting("APPRELAY_VPN_ADDRESS", "10.77.0.1/24")?;
         let (address, prefix) = address.split_once('/').ok_or_else(|| {

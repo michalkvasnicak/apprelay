@@ -1,16 +1,16 @@
 mod client;
 mod protocol;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod service;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod socket;
 
 use std::{env, io, path::PathBuf};
 
 pub use client::Client;
 pub use protocol::{VpnState, VpnStatus};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use service::run;
 
 fn socket_path() -> io::Result<PathBuf> {

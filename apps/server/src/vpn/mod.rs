@@ -1,6 +1,14 @@
 mod command;
 mod config;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
 mod macos;
+
+#[cfg(target_os = "linux")]
+use linux::Interface;
+#[cfg(target_os = "macos")]
+use macos::Interface;
 
 use std::{io, net::Ipv4Addr};
 
@@ -12,13 +20,13 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 pub use config::VpnConfig;
 
 pub struct Vpn {
-    interface: macos::Interface,
+    interface: Interface,
     public_key: String,
 }
 
 impl Vpn {
     pub async fn start(config: &VpnConfig) -> io::Result<Self> {
-        let interface = macos::Interface::start(config).await?;
+        let interface = Interface::start(config).await?;
         let result = async {
             let name = interface
                 .name()

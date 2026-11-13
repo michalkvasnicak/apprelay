@@ -2,7 +2,7 @@ use std::{io, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use ring::rand::{SecureRandom, SystemRandom};
 use zeroize::Zeroizing;
 
@@ -25,7 +25,7 @@ impl SecretKey {
         Ok(Self(Arc::new(LessSafeKey::new(key))))
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) fn seal(&self, aad: &[u8], plaintext: Vec<u8>) -> io::Result<([u8; 12], Vec<u8>)> {
         let mut buffer = Zeroizing::new(plaintext);
         let mut nonce = [0u8; 12];

@@ -33,7 +33,7 @@ struct CodeRow {
     expires_at: DateTime<Utc>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) enum NotificationContent {
     Started,
     Code(ActiveCode),
@@ -41,7 +41,7 @@ pub(crate) enum NotificationContent {
     Timeout,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) struct Notification {
     pub content: NotificationContent,
     pub expires_at: DateTime<Utc>,
@@ -126,7 +126,7 @@ impl PairingCodeRepository {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl PairingCodeRepository {
     pub(crate) async fn begin(
         &self,

@@ -240,6 +240,33 @@ fn announcement(
     message.to_vec().map_err(io::Error::other)
 }
 
+#[cfg(target_os = "linux")]
+fn bind_interface(socket: &impl AsRawFd, interface: &str) -> io::Result<()> {
+    let interface = CString::new(interface).map_err(io::Error::other)?;
+    // Fail closed if binding fails: announcements must never escape over LAN.
+    // Setting SO_BINDTODEVICE requires CAP_NET_RAW on Linux.
+    let result = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_BINDTODEVICE,
+            interface.as_ptr().cast(),
+            interface.as_bytes_with_nul().len() as libc::socklen_t,
+        )
+    };
+    if result == -1 {
+        let error = io::Error::last_os_error();
+        return Err(io::Error::new(
+            error.kind(),
+            format!(
+                "could not bind pairing socket to VPN interface (CAP_NET_RAW required): {error}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn bind_interface(socket: &impl AsRawFd, interface: &str) -> io::Result<()> {
     let interface = CString::new(interface).map_err(io::Error::other)?;
     // IP_BOUND_IF prevents route changes from sending announcements over LAN.
