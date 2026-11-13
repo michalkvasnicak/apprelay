@@ -1,0 +1,88 @@
+use std::{io, net::Ipv4Addr};
+
+use sqlx::PgPool;
+use uuid::Uuid;
+
+#[derive(Clone, Copy)]
+enum ApnsEnvironment {
+    Sandbox,
+    Production,
+}
+
+impl ApnsEnvironment {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Sandbox => "sandbox",
+            Self::Production => "production",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct PushTokenRepository {
+    pool: PgPool,
+    environment: ApnsEnvironment,
+}
+
+impl PushTokenRepository {
+    pub fn from_env(pool: PgPool) -> io::Result<Self> {
+        let environment = match std::env::var("APPRELAY_APNS_ENVIRONMENT").as_deref() {
+            Ok("sandbox") => ApnsEnvironment::Sandbox,
+            Ok("production") => ApnsEnvironment::Production,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "APPRELAY_APNS_ENVIRONMENT must be sandbox or production",
+                ));
+            }
+        };
+        Ok(Self { pool, environment })
+    }
+
+    /// None removes the token. False means the caller does not own an active
+    /// registration. Authorization and mutation share a row lock with cleanup.
+    pub async fn set_token(
+        &self,
+        device_id: Uuid,
+        source: Ipv4Addr,
+        token: Option<&[u8]>,
+    ) -> Result<bool, sqlx::Error> {
+        let mut transaction = self.pool.begin().await?;
+        let device = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM devices
+             WHERE id = $1 AND address = $2::text::inet
+               AND expires_at > clock_timestamp()
+             FOR UPDATE",
+        )
+        .bind(device_id)
+        .bind(source.to_string())
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if device.is_none() {
+            return Ok(false);
+        }
+
+        if let Some(token) = token {
+            sqlx::query(
+                "INSERT INTO device_push_tokens (device_id, token, environment)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (device_id) DO UPDATE SET
+                     token = EXCLUDED.token,
+                     environment = EXCLUDED.environment,
+                     updated_at = clock_timestamp()",
+            )
+            .bind(device_id)
+            .bind(token)
+            .bind(self.environment.as_str())
+            .execute(&mut *transaction)
+            .await?;
+        } else {
+            sqlx::query("DELETE FROM device_push_tokens WHERE device_id = $1")
+                .bind(device_id)
+                .execute(&mut *transaction)
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(true)
+    }
+}

@@ -1,7 +1,12 @@
 #[cfg(unix)]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
-    use apprelay_server::{agent::Client, cleanup, db, db::devices::DeviceRepository, http};
+    use apprelay_server::{
+        agent::Client,
+        cleanup, db,
+        db::{devices::DeviceRepository, push_tokens::PushTokenRepository},
+        http,
+    };
     use tokio::{
         net::TcpListener,
         signal::unix::{SignalKind, signal},
@@ -29,6 +34,7 @@ async fn main() -> std::io::Result<()> {
     let pool = db::connect(&database_url)
         .await
         .map_err(std::io::Error::other)?;
+    let push_tokens = PushTokenRepository::from_env(pool.clone())?;
     db::MIGRATOR
         .run(&pool)
         .await
@@ -51,14 +57,18 @@ async fn main() -> std::io::Result<()> {
     eprintln!("HTTP server listening on {}", listener.local_addr()?);
 
     let cleanup = tokio::spawn(cleanup::run(pool, agent.clone()));
-    let result = axum::serve(listener, http::router(devices, agent))
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = interrupt.recv() => {},
-                _ = terminate.recv() => {},
-            }
-        })
-        .await;
+    let result = axum::serve(
+        listener,
+        http::router(devices, agent, push_tokens)
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {},
+            _ = terminate.recv() => {},
+        }
+    })
+    .await;
     cleanup.abort();
     let _ = cleanup.await;
     result

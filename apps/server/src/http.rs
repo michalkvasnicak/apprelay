@@ -1,3 +1,5 @@
+mod push_tokens;
+
 use std::{net::Ipv4Addr, time::Instant};
 
 use axum::{
@@ -6,7 +8,7 @@ use axum::{
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
@@ -16,13 +18,14 @@ use uuid::Uuid;
 
 use crate::{
     agent::{Client, VpnState},
-    db::devices::DeviceRepository,
+    db::{devices::DeviceRepository, push_tokens::PushTokenRepository},
 };
 
 #[derive(Clone)]
 struct AppState {
     devices: DeviceRepository,
     agent: Client,
+    push_tokens: PushTokenRepository,
 }
 
 #[derive(Serialize)]
@@ -52,13 +55,25 @@ struct WireguardConfiguration {
     persistent_keepalive_seconds: u16,
 }
 
-pub fn router(devices: DeviceRepository, agent: Client) -> Router {
+pub fn router(
+    devices: DeviceRepository,
+    agent: Client,
+    push_tokens: PushTokenRepository,
+) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/devices", post(register_device))
+        .route(
+            "/v1/devices/{device_id}/push-token",
+            put(push_tokens::put).delete(push_tokens::delete),
+        )
         .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn(log_request))
-        .with_state(AppState { devices, agent })
+        .with_state(AppState {
+            devices,
+            agent,
+            push_tokens,
+        })
 }
 
 async fn log_request(request: Request, next: Next) -> Response {

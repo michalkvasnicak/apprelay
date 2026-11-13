@@ -1,6 +1,7 @@
 pub mod devices;
 #[cfg(target_os = "macos")]
 pub(crate) mod pairings;
+pub mod push_tokens;
 
 use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use std::time::Duration;
