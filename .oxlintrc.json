@@ -1,0 +1,8 @@
+{
+  "jsPlugins": ["@stylistic/eslint-plugin"],
+  "rules": {
+    "curly": ["error", "all"],
+    "no-nested-ternary": "error",
+    "@stylistic/semi": ["error", "always"]
+  }
+}

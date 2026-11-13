@@ -1,0 +1,27 @@
+{
+  "name": "apprelay",
+  "private": true,
+  "scripts": {
+    "start": "pnpm --filter @apprelay/mobile start",
+    "android": "pnpm --filter @apprelay/mobile android",
+    "ios": "pnpm --filter @apprelay/mobile ios",
+    "web": "pnpm --filter @apprelay/mobile web",
+    "prepare": "husky",
+    "lint": "pnpm -r lint",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "oxfmt": "^0.78.0",
+    "oxlint": "^1.93.0",
+    "typescript": "~6.0.3"
+  },
+  "lint-staged": {
+    "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,json5,css,scss,less,html,vue,md,mdx,yaml,yml}": "oxfmt --write"
+  },
+  "packageManager": "pnpm@10.33.2"
+}

@@ -1,0 +1,34 @@
+{
+  "agent_before_settle": {
+    "failFast": true,
+    "maxRetries": 5,
+    "checks": [
+      {
+        "name": "mobile: lint",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/mobile lint",
+        "inputs": [
+          "apps/mobile/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}",
+          "apps/mobile/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml",
+          ".oxlintrc.json"
+        ]
+      },
+      {
+        "name": "mobile: typecheck",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/mobile typecheck",
+        "inputs": [
+          "apps/mobile/**/*.{ts,tsx,mts,cts}",
+          "apps/mobile/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml",
+          "apps/mobile/**/tsconfig*.json"
+        ]
+      }
+    ]
+  }
+}
