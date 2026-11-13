@@ -36,8 +36,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 futures = "0.3"
+ring = "0.17"
 temporalio-client = "=1.2.0"
 temporalio-common = "=1.2.0"
 temporalio-macros = "=1.2.0"
 temporalio-sdk = "=1.2.0"
 temporalio-workflow = "=1.2.0"
+zeroize = "1"

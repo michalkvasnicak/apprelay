@@ -16,7 +16,8 @@ use hickory_proto::{
     },
 };
 use idevice::remote_pairing::{
-    PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket,
+    PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, PeerDevice, RpPairingFile,
+    RpPairingSocket,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::{
@@ -25,6 +26,13 @@ use tokio::{
 };
 
 use crate::agent::VpnStatus;
+
+/// Credentials stay inside the activity and are never a Temporal payload.
+pub(crate) struct PairingRecord {
+    pub pairing_file: RpPairingFile,
+    pub host_info: PairableHostInfo,
+    pub peer: PeerDevice,
+}
 
 pub(crate) struct Session {
     listener: TcpListener,
@@ -62,7 +70,7 @@ impl Session {
         let goodbye = announcement(&host_info, &pairing_file, status.address, port, 0)?;
         let announcement = announcement(&host_info, &pairing_file, status.address, port, 10)?;
         eprintln!(
-            "Pairing: VPN interface {interface}, TCP {}, unicast mDNS only to {peer}:5354. Identity is ephemeral.",
+            "Pairing: VPN interface {interface}, TCP {}, unicast mDNS only to {peer}:5354. Identity is new for this pairing attempt.",
             listener.local_addr()?
         );
         Ok(Self {
@@ -89,7 +97,7 @@ impl Session {
         }
     }
 
-    pub(crate) async fn run(&mut self) -> io::Result<()> {
+    pub(crate) async fn run(&mut self) -> io::Result<PairingRecord> {
         let mut announcements = interval(Duration::from_secs(5));
         let destination = SocketAddr::from((self.peer, 5354));
         let mut receiving = [0u8; 1500];
@@ -120,25 +128,31 @@ impl Session {
                     eprintln!("Pairing: selected iPhone connected from {source}");
                     let mut host = PairableHost::new(
                         RpPairingSocket::new_device(stream), self.host_info.clone());
-                    // Keep announcements running while the user enters the PIN.
-                    let pairing = host.accept(
-                        &mut self.pairing_file,
-                        |pin| async move { eprintln!("Pairing: enter {pin} on the iPhone"); },
-                    );
-                    tokio::pin!(pairing);
-                    let result = loop {
-                        tokio::select! {
-                            result = &mut pairing => break result,
-                            _ = announcements.tick() => {
-                                self.discovery.send_to(&self.announcement, destination).await?;
+                    // Drop the future (and its mutable borrow) before copying the record.
+                    let result = {
+                        // Keep announcements running while the user enters the PIN.
+                        let pairing = host.accept(
+                            &mut self.pairing_file,
+                            |pin| async move { eprintln!("Pairing: enter {pin} on the iPhone"); },
+                        );
+                        tokio::pin!(pairing);
+                        loop {
+                            tokio::select! {
+                                result = &mut pairing => break result,
+                                _ = announcements.tick() => {
+                                    self.discovery.send_to(&self.announcement, destination).await?;
+                                }
                             }
                         }
                     };
                     match result {
                         Ok(peer) => {
-                            eprintln!("Pair-setup response sent: {} ({}, UDID {}). iOS completion is not confirmed; pairing keys are not yet persisted.",
-                                peer.name, peer.model, peer.remotepairing_udid);
-                            return Ok(());
+                            eprintln!("Pair-setup response sent; iOS completion is not yet confirmed.");
+                            return Ok(PairingRecord {
+                                pairing_file: self.pairing_file.clone(),
+                                host_info: self.host_info.clone(),
+                                peer,
+                            });
                         },
                         Err(error) => eprintln!("Pairing failed: {error}"),
                     }

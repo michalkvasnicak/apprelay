@@ -139,9 +139,8 @@ async fn register_device(
     let address = locked
         .device
         .address
-        .as_deref()
-        .and_then(|address| address.parse::<Ipv4Addr>().ok())
-        .ok_or_else(|| ApiError::unavailable("device address is unavailable"))?;
+        .parse::<Ipv4Addr>()
+        .map_err(|_| ApiError::unavailable("device address is invalid"))?;
     if !subnet.contains(&address)
         || address == subnet.addr()
         || address == subnet.network()

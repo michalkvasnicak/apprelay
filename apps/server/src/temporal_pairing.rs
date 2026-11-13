@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     agent::{Client, VpnState},
-    db,
+    db::{self, pairings::PairingStore},
     pairing::Session,
 };
 
@@ -91,6 +91,7 @@ impl PairDeviceWorkflow {
 pub struct PairingActivities {
     pool: PgPool,
     agent: Client,
+    pairings: PairingStore,
 }
 
 #[activities]
@@ -105,15 +106,16 @@ impl PairingActivities {
         let deadline = Instant::now() + SESSION_LIMIT;
         let prepare = async {
             // Resolve the address at execution time, never from a queued IP payload.
-            let (address, expires_at) = sqlx::query_as::<_, (String, DateTime<Utc>)>(
-                "SELECT host(address), expires_at FROM devices
-                 WHERE id = $1 AND address IS NOT NULL AND expires_at > statement_timestamp()",
-            )
-            .bind(device_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(io::Error::other)?
-            .ok_or_else(|| io::Error::other("device is missing, expired, or has no VPN address"))?;
+            let (address, expires_at, attempt_started_at) =
+                sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>)>(
+                    "SELECT host(address), expires_at, statement_timestamp() FROM devices
+                     WHERE id = $1 AND expires_at > statement_timestamp()",
+                )
+                .bind(device_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(io::Error::other)?
+                .ok_or_else(|| io::Error::other("device is missing or expired"))?;
             let peer = address.parse::<Ipv4Addr>().map_err(io::Error::other)?;
             let status = self.agent.status().await?;
             let subnet =
@@ -134,10 +136,27 @@ impl PairingActivities {
             let lease_deadline = Instant::now() + remaining;
             let session = Session::new(&status, peer).await?;
             eprintln!("Starting pairing activity for device {device_id} at {peer}");
-            Ok((session, deadline.min(lease_deadline)))
+            Ok((
+                session,
+                deadline.min(lease_deadline),
+                expires_at,
+                attempt_started_at,
+            ))
         };
-        let (mut session, deadline) = wait(&ctx, prepare, deadline).await?;
-        let result = wait(&ctx, session.run(), deadline).await;
+        let (mut session, deadline, expires_at, attempt_started_at) =
+            wait(&ctx, prepare, deadline).await?;
+        let operation = async {
+            let record = session.run().await?;
+            // Persist inside the activity: credentials must not enter Temporal history.
+            self.pairings
+                .save(device_id, expires_at, attempt_started_at, &record)
+                .await?;
+            eprintln!(
+                "Encrypted pairing saved for device {device_id}; iOS completion is unverified"
+            );
+            Ok(())
+        };
+        let result = wait(&ctx, operation, deadline).await;
         // Normal completion, cancellation, and timeout all withdraw the proxy service.
         // A crash still expires its last announcement after the ten-second DNS TTL.
         session.stop().await;
@@ -170,6 +189,7 @@ pub async fn run_worker() -> Result<(), Error> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let pool = db::connect(&std::env::var("DATABASE_URL")?).await?;
+    let pairings = PairingStore::from_env(pool.clone())?;
     db::MIGRATOR.run(&pool).await?;
     let agent = Client::from_env()?;
     let runtime = Runtime::from_current_tokio(Default::default())?;
@@ -181,7 +201,11 @@ pub async fn run_worker() -> Result<(), Error> {
         .build();
     let options = WorkerOptions::new(TASK_QUEUE)
         .register_workflow::<PairDeviceWorkflow>()?
-        .register_activities(PairingActivities { pool, agent })
+        .register_activities(PairingActivities {
+            pool,
+            agent,
+            pairings,
+        })
         .tuner(tuner)
         .graceful_shutdown_period(Duration::from_secs(1))
         .build();
