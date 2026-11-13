@@ -66,10 +66,6 @@ function VpnScreen() {
             Registration expires: {device.expires_at}
           </Text>
         )}
-        <Text style={styles.label}>Device public key</Text>
-        <Text selectable style={styles.key}>
-          {identity.data?.publicKey || "Unavailable until the native module initializes."}
-        </Text>
         {!isVpnAvailable && (
           <Text style={styles.error}>
             Install a signed custom build on an iPhone. Expo Go, Android, web and the iOS simulator
@@ -102,8 +98,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 30, fontWeight: "700", color: "#15243b" },
   status: { fontSize: 20, fontWeight: "600", color: "#2456a6" },
   description: { fontSize: 15, lineHeight: 22, color: "#475569" },
-  label: { fontSize: 15, fontWeight: "600", color: "#15243b" },
-  key: { fontSize: 14, fontFamily: "monospace", color: "#15243b" },
   error: { color: "#b42318", fontSize: 14, lineHeight: 21 },
   button: {
     flexDirection: "row",
