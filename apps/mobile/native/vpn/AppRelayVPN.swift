@@ -1,10 +1,12 @@
 import Foundation
+import Network
 import NetworkExtension
 import React
 
 @objc(AppRelayVPN)
 final class AppRelayVPN: NSObject {
     private var operationInProgress = false
+    private var pairingDiscovery: NWBrowser?
     private var providerIdentifier: String { Bundle.main.bundleIdentifier! + ".PacketTunnel" }
 
     @objc static func requiresMainQueueSetup() -> Bool { true }
@@ -66,6 +68,12 @@ final class AppRelayVPN: NSObject {
                 try await save(manager)
                 try await reload(manager)
                 try manager.connection.startVPNTunnel()
+                // Request local-network access from the foreground app, not the extension.
+                pairingDiscovery?.cancel()
+                let browser = NWBrowser(for: .bonjour(type: "_remotepairing-pairable-host._tcp", domain: "local."),
+                                        using: .tcp)
+                pairingDiscovery = browser
+                browser.start(queue: .main)
                 // This means startup was requested, not that the peer has handshaken.
                 resolve(nil)
                 #endif
@@ -85,6 +93,8 @@ final class AppRelayVPN: NSObject {
             do {
                 let manager = try await loadManager()
                 manager?.connection.stopVPNTunnel()
+                pairingDiscovery?.cancel()
+                pairingDiscovery = nil
                 resolve(nil)
             } catch { reject("VPN_DISCONNECT", error.localizedDescription, error) }
         }

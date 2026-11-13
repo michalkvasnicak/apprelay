@@ -7,6 +7,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // Do not log WireGuard configuration or runtime output (it contains keys).
     private lazy var adapter = WireGuardAdapter(with: self) { _, _ in }
     private var allowedRoutes: [NEIPv4Route] = []
+    private let bonjourProxy = BonjourProxy()
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         do {
@@ -47,8 +48,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             adapter.start(tunnelConfiguration: TunnelConfiguration(
                 name: "AppRelay", interface: interface, peers: [peer]
-            )) { error in
-                guard let error else { completionHandler(nil); return }
+            )) { [weak self] error in
+                guard let error else {
+                    self?.bonjourProxy.start(address: String(settings.clientAddress.split(separator: "/")[0]))
+                    completionHandler(nil)
+                    return
+                }
                 if case .setNetworkSettings(let underlying) = error {
                     completionHandler(underlying)
                 } else {
@@ -83,6 +88,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        bonjourProxy.stop()
         adapter.stop { _ in completionHandler() }
     }
 }

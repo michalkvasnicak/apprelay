@@ -40,6 +40,14 @@ module.exports = function withWireGuard(config) {
   });
   config = withInfoPlist(config, (mod) => {
     mod.modResults.AppRelayKeychainGroup = keychainGroup;
+    mod.modResults.NSLocalNetworkUsageDescription =
+      "Advertise the experimental pairing proxy on your local network while the VPN is connected.";
+    mod.modResults.NSBonjourServices = [
+      ...new Set([
+        ...(mod.modResults.NSBonjourServices ?? []),
+        "_remotepairing-pairable-host._tcp",
+      ]),
+    ];
     return mod;
   });
 
@@ -67,6 +75,8 @@ module.exports = function withWireGuard(config) {
       <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
       <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
       <key>AppRelayKeychainGroup</key><string>${keychainGroup}</string>
+      <key>NSLocalNetworkUsageDescription</key><string>Advertise the experimental pairing proxy on your local network while the VPN is connected.</string>
+      <key>NSBonjourServices</key><array><string>_remotepairing-pairable-host._tcp</string></array>
       <key>NSExtension</key><dict>
         <key>NSExtensionPointIdentifier</key><string>com.apple.networkextension.packet-tunnel</string>
         <key>NSExtensionPrincipalClass</key><string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>
@@ -83,6 +93,8 @@ module.exports = function withWireGuard(config) {
       ([, target]) => target?.name?.replaceAll('"', "") === TARGET,
     );
     if (existingExtension) {
+      addSource(project, `${DIRECTORY}/BonjourProxy.swift`, existingExtension[0], group.uuid);
+      normalizeVpnFileReferences(project);
       addWireGuardPackage(project, {
         uuid: existingExtension[0],
         pbxNativeTarget: existingExtension[1],
@@ -104,7 +116,12 @@ module.exports = function withWireGuard(config) {
     ]) {
       addSource(project, `${DIRECTORY}/${file}`, app.uuid, group.uuid);
     }
-    for (const file of ["VpnSettings.swift", "VpnKeychain.swift", "PacketTunnelProvider.swift"]) {
+    for (const file of [
+      "VpnSettings.swift",
+      "VpnKeychain.swift",
+      "PacketTunnelProvider.swift",
+      "BonjourProxy.swift",
+    ]) {
       addSource(project, `${DIRECTORY}/${file}`, extension.uuid, group.uuid);
     }
 
@@ -216,6 +233,12 @@ function addSource(project, file, target, group) {
   );
   if (!reference) {
     reference = project.addFile(file, group).fileRef;
+  }
+  const sources = project.pbxSourcesBuildPhaseObj(target);
+  if (
+    sources.files.some(({ value }) => project.pbxBuildFileSection()[value]?.fileRef === reference)
+  ) {
+    return;
   }
   const uuid = project.generateUuid();
   project.pbxBuildFileSection()[uuid] = {
