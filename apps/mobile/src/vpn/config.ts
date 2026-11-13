@@ -5,7 +5,6 @@ export type DeviceRegistration = {
   lifetime_seconds: number;
   wireguard: {
     server_public_key: string;
-    endpoint: string;
     allowed_ips: string[];
     persistent_keepalive_seconds: number;
   };
@@ -61,8 +60,6 @@ function isRegistration(value: unknown): value is DeviceRegistration {
     !!wg &&
     typeof wg.server_public_key === "string" &&
     /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(wg.server_public_key) &&
-    typeof wg.endpoint === "string" &&
-    /^[^:\s]+:\d+$/.test(wg.endpoint) &&
     Array.isArray(wg.allowed_ips) &&
     wg.allowed_ips.length > 0 &&
     wg.allowed_ips.every((ip: unknown) => typeof ip === "string" && /^.+\/\d+$/.test(ip)) &&

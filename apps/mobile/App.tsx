@@ -61,8 +61,6 @@ function VpnScreen() {
             {"\n"}
             Address: {device.address}
             {"\n"}
-            Server: {device.wireguard.endpoint}
-            {"\n"}
             Private routes: {device.wireguard.allowed_ips.join(", ")}
             {"\n"}
             Registration expires: {device.expires_at}

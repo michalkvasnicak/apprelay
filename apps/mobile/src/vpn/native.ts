@@ -1,6 +1,6 @@
 import { NativeModules, Platform } from "react-native";
 
-import type { DeviceRegistration } from "./config";
+import { getRegistrationUrl, type DeviceRegistration } from "./config";
 
 export const vpnStatuses = [
   "disconnected",
@@ -45,10 +45,10 @@ export const vpn = {
   getStatus: () => requireNative().getStatus(),
   connect: (registration: DeviceRegistration) => {
     const { wireguard } = registration;
-    const [host, port] = wireguard.endpoint.split(":");
+    const host = new URL(getRegistrationUrl()).hostname;
     return requireNative().connect({
-      host: host!,
-      port: Number(port),
+      host,
+      port: 51820,
       publicKey: wireguard.server_public_key,
       clientAddress: registration.address,
       allowedIPs: wireguard.allowed_ips,

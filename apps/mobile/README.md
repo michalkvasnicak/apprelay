@@ -47,7 +47,7 @@ The incremental prebuild replaces the previous remote package reference with the
 
 ### Device registration and connection
 
-Connect posts the device's base64 WireGuard public key to `POST /v1/devices` over HTTPS and requires `201 Created`. The private key stays in the shared Keychain and is never sent to JavaScript or the API. The response supplies the device ID, IPv4 `/32` address, expiry, server key, DNS/IPv4 UDP endpoint, IPv4 allowed routes and keepalive interval. The device address is no longer manually editable.
+Connect posts the device's base64 WireGuard public key to `POST /v1/devices` over HTTPS and requires `201 Created`. The private key stays in the shared Keychain and is never sent to JavaScript or the API. The response supplies the device ID, IPv4 `/32` address, expiry, server key, IPv4 allowed routes and keepalive interval. There is no `wireguard.endpoint` response field: WireGuard uses the registration URL's hostname with fixed UDP port `51820`, independently of the HTTPS port. The device address is no longer manually editable.
 
 Registration uses a TanStack Query mutation with automatic retries disabled: the API contract does not guarantee idempotency. A successful response is reused in memory until `expires_at`, including after a tunnel-start failure. Reconnecting after expiry or restarting the app registers again. There is no persistent registration cache, background renewal or client-enforced expiry disconnect; server-side peer expiry must be enforced by the VPN server. `lifetime_seconds` is validated as metadata; `expires_at` determines reuse.
 
