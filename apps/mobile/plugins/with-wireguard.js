@@ -73,6 +73,11 @@ module.exports = function withWireGuard(config) {
       </dict>`),
     );
 
+    // Repair groups/references created by earlier plugin versions as well as
+    // creating a correctly rooted group for fresh native projects.
+    const group = ensureVpnGroup(project);
+    normalizeVpnFileReferences(project);
+
     // Refresh sources and migrate the old remote package on incremental prebuilds.
     const existingExtension = Object.entries(project.pbxNativeTargetSection()).find(
       ([, target]) => target?.name?.replaceAll('"', "") === TARGET,
@@ -91,9 +96,6 @@ module.exports = function withWireGuard(config) {
     project.addBuildPhase([], "PBXSourcesBuildPhase", "Sources", extension.uuid);
     project.addBuildPhase([], "PBXFrameworksBuildPhase", "Frameworks", extension.uuid);
     project.addBuildPhase([], "PBXResourcesBuildPhase", "Resources", extension.uuid);
-    const group = project.addPbxGroup([], DIRECTORY);
-    project.addToPbxGroup(group.uuid, project.getFirstProject().firstProject.mainGroup);
-
     for (const file of [
       "VpnSettings.swift",
       "VpnKeychain.swift",
@@ -105,6 +107,8 @@ module.exports = function withWireGuard(config) {
     for (const file of ["VpnSettings.swift", "VpnKeychain.swift", "PacketTunnelProvider.swift"]) {
       addSource(project, `${DIRECTORY}/${file}`, extension.uuid, group.uuid);
     }
+
+    normalizeVpnFileReferences(project);
 
     const appSettings = configurations(project, app.firstTarget).map(
       (entry) => entry.buildSettings,
@@ -172,6 +176,37 @@ function configurations(project, target) {
     [target.buildConfigurationList].buildConfigurations.map(
       ({ value }) => project.pbxXCBuildConfigurationSection()[value],
     );
+}
+
+function ensureVpnGroup(project) {
+  const existing = Object.entries(project.hash.project.objects.PBXGroup).find(
+    ([, group]) => group?.name?.replaceAll('"', "") === DIRECTORY,
+  );
+  if (existing) {
+    // Source references already contain AppRelayVPN/, so this group must be
+    // rooted at ios/, not ios/AppRelayVPN/ (or the old literal ios/undefined/).
+    existing[1].path = quote(".");
+    return { uuid: existing[0] };
+  }
+  const group = project.addPbxGroup([], DIRECTORY, ".");
+  project.addToPbxGroup(group.uuid, project.getFirstProject().firstProject.mainGroup);
+  return group;
+}
+
+function normalizeVpnFileReferences(project) {
+  for (const reference of Object.values(project.pbxFileReferenceSection())) {
+    const file = reference?.path?.replaceAll('"', "");
+    if (!file?.startsWith(`${DIRECTORY}/`) && file !== `${TARGET}.appex`) {
+      continue;
+    }
+    // node-xcode can emit absent optional fields as the literal 'undefined'.
+    // Leave real type/encoding values intact and omit only invalid placeholders.
+    for (const [key, value] of Object.entries(reference)) {
+      if (value === undefined || value === "undefined") {
+        delete reference[key];
+      }
+    }
+  }
 }
 
 function addSource(project, file, target, group) {
