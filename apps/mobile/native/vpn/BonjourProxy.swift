@@ -84,6 +84,9 @@ final class BonjourProxy {
             receiver?.cancel()
             receiver = nil
             stopAdvertisement()
+            // VPN shutdown is a hard stop, unlike discovery withdrawal.
+            for relay in relays.values { relay.stop() }
+            relays.removeAll()
         }
     }
 
@@ -129,15 +132,16 @@ final class BonjourProxy {
 
     private func stopAdvertisement() {
         if listener != nil || advertisement != nil {
-            logger.info("Withdrawing pairing advertisement; closing listener and \(self.relays.count) relays")
+            logger.info("Withdrawing pairing advertisement; closing listener and draining \(self.relays.count) relays")
         }
         expiry?.cancel()
         expiry = nil
         listener?.cancel()
         listener = nil
         current = nil
-        for relay in relays.values { relay.stop() }
-        relays.removeAll()
+        // A goodbye may overtake the final TCP pairing response. Existing
+        // relays must deliver that response and EOF before being removed.
+        for relay in relays.values { relay.drain() }
         if let service = advertisement {
             advertisement = nil
             DNSServiceRefDeallocate(service)
@@ -252,6 +256,12 @@ private final class PairingRelay {
     private let logger = Logger(subsystem: "AppRelay", category: "BonjourProxy")
     private var channel: DispatchIO?
     private var finished = false
+    private var drainTimeout: DispatchWorkItem?
+    private var clientReadClosed = false
+    private var serverReadClosed = false
+    private var pendingClientSends = 0
+    private var sendingClientEOF = false
+    private var clientEOFSent = false
     private var bytesToServer = 0
     private var bytesToClient = 0
     private var completion: (() -> Void)?
@@ -300,6 +310,7 @@ private final class PairingRelay {
             logger.info("Pairing relay connected to \(self.destination, privacy: .public):\(self.port) through VPN \(self.tunnelAddress, privacy: .public)")
             channel = DispatchIO(type: .stream, fileDescriptor: fd, queue: queue) { _ in close(fd) }
             channel?.setLimit(lowWater: 1)
+            channel?.setLimit(highWater: 65536)
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
                 switch state {
@@ -320,9 +331,26 @@ private final class PairingRelay {
 
     func stop() { queue.async { [self] in finish() } }
 
+    func drain() { queue.async { [self] in beginDraining() } }
+
+    private func beginDraining() {
+        guard !finished, drainTimeout == nil else { return }
+        // Bound cleanup if either endpoint never completes its half-close.
+        // Normal completion closes immediately, without waiting for this timer.
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            logger.error("Pairing relay drain timed out")
+            finish()
+        }
+        drainTimeout = timeout
+        queue.asyncAfter(deadline: .now() + 10, execute: timeout)
+    }
+
     private func finish() {
         guard !finished else { return }
         finished = true
+        drainTimeout?.cancel()
+        drainTimeout = nil
         logger.info("Closing relay to \(self.destination, privacy: .public):\(self.port): client-to-server=\(self.bytesToServer) bytes, server-to-client=\(self.bytesToClient) bytes")
         connection.cancel()
         channel?.close(flags: .stop)
@@ -334,51 +362,87 @@ private final class PairingRelay {
     private func readLocal() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, complete, error in
             guard let self, !finished, let channel else { return }
-            guard let data, !data.isEmpty else {
-                if let error { logger.error("Pairing client read failed: \(error.localizedDescription, privacy: .public)") }
-                else { logger.info("Pairing client closed its stream") }
+            if let error {
+                logger.error("Pairing client read failed: \(error.localizedDescription, privacy: .public)")
                 finish()
+                return
+            }
+            guard let data, !data.isEmpty else {
+                if complete { closeClientRead() }
+                else { readLocal() }
                 return
             }
             let bytes = data.withUnsafeBytes { DispatchData(bytes: $0) }
             channel.write(offset: 0, data: bytes, queue: queue) { [weak self] done, _, writeError in
-                guard let self, done else { return }
+                guard let self, !finished, done else { return }
                 if writeError != 0 {
                     logger.error("Pairing server write failed: errno=\(writeError)")
                     finish()
                 } else {
                     bytesToServer += data.count
-                    if let error { logger.error("Pairing client read failed: \(error.localizedDescription, privacy: .public)") }
-                    if error != nil || complete { finish() }
+                    if complete { closeClientRead() }
                     else { readLocal() }
                 }
             }
         }
     }
 
+    private func closeClientRead() {
+        clientReadClosed = true
+        logger.info("Pairing client closed its stream; draining server response")
+        if let channel { Darwin.shutdown(channel.fileDescriptor, SHUT_WR) }
+        beginDraining()
+        if clientEOFSent { finish() }
+    }
+
     private func readRemote() {
-        channel?.read(offset: 0, length: 65536, queue: queue) { [weak self] done, bytes, error in
+        // One streaming read, delivered in bounded chunks until EOF. DispatchIO
+        // can report EOF before NWConnection finishes processing earlier sends.
+        channel?.read(offset: 0, length: Int.max, queue: queue) { [weak self] done, bytes, error in
             guard let self, !finished else { return }
             guard error == 0 else {
                 logger.error("Pairing server read failed: errno=\(error)")
                 finish()
                 return
             }
-            guard let bytes, !bytes.isEmpty else {
-                if done { logger.info("Pairing server closed its stream"); finish() }
+            if let bytes, !bytes.isEmpty {
+                pendingClientSends += 1
+                connection.send(content: Data(bytes), completion: .contentProcessed { [weak self] error in
+                    guard let self, !finished else { return }
+                    pendingClientSends -= 1
+                    if let error {
+                        logger.error("Pairing client write failed: \(error.localizedDescription, privacy: .public)")
+                        finish()
+                    } else {
+                        bytesToClient += bytes.count
+                        sendClientEOFIfDrained()
+                    }
+                })
+            }
+            if done {
+                serverReadClosed = true
+                logger.info("Pairing server closed its stream; draining \(self.pendingClientSends) pending sends")
+                beginDraining()
+                sendClientEOFIfDrained()
+            }
+        }
+    }
+
+    private func sendClientEOFIfDrained() {
+        guard !finished, serverReadClosed, pendingClientSends == 0, !sendingClientEOF else { return }
+        sendingClientEOF = true
+        connection.send(content: nil, contentContext: .finalMessage, isComplete: true,
+                        completion: .contentProcessed { [weak self] error in
+            guard let self, !finished else { return }
+            if let error {
+                logger.error("Pairing client EOF failed: \(error.localizedDescription, privacy: .public)")
+                finish()
                 return
             }
-            connection.send(content: Data(bytes), completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
-                if let error {
-                    logger.error("Pairing client write failed: \(error.localizedDescription, privacy: .public)")
-                    finish()
-                } else {
-                    bytesToClient += bytes.count
-                    if done { readRemote() }
-                }
-            })
-        }
+            clientEOFSent = true
+            logger.info("Final pairing response forwarded; sent EOF to client")
+            if clientReadClosed { finish() }
+        })
     }
 }
 

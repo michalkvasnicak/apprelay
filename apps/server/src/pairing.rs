@@ -136,7 +136,7 @@ impl Session {
                     };
                     match result {
                         Ok(peer) => {
-                            eprintln!("Pairing SUCCEEDED: {} ({}, UDID {}). Session complete; pairing keys are not yet persisted.",
+                            eprintln!("Pair-setup response sent: {} ({}, UDID {}). iOS completion is not confirmed; pairing keys are not yet persisted.",
                                 peer.name, peer.model, peer.remotepairing_udid);
                             return Ok(());
                         },
