@@ -1,3 +1,4 @@
+use crate::db::devices::DeviceRepository;
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
 
@@ -6,8 +7,10 @@ struct Health {
     status: &'static str,
 }
 
-pub fn router() -> Router {
-    Router::new().route("/health", get(health))
+pub fn router(devices: DeviceRepository) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .with_state(devices)
 }
 
 async fn health() -> Json<Health> {

@@ -70,23 +70,18 @@ Docker-published ports can bypass UFW's input rules; do not publish database/bac
 
 ## Configuration
 
-Configuration comes from exported environment variables, not `.env` files. VPN settings below belong to the agent:
+Configuration comes from exported environment variables, not `.env` files.
 
-| Variable                        | Default        | Description                                                                          |
-| ------------------------------- | -------------- | ------------------------------------------------------------------------------------ |
-| `APPRELAY_VPN_PRIVATE_KEY_FILE` | Required       | Path to an existing WireGuard server private-key file.                               |
-| `APPRELAY_VPN_ADDRESS`          | `10.77.0.1/24` | Server IPv4 address and prefix length. The server also adds a route for this subnet. |
-| `APPRELAY_VPN_PORT`             | `51820`        | UDP listen port, between 1 and 65535.                                                |
-
-`APPRELAY_VPN_AGENT_UID` selects the permitted non-root server user (defaults to `SUDO_UID`). On macOS, both processes use `/var/db/apprelay/vpn-agent.sock`; to override it, set `APPRELAY_VPN_AGENT_SOCKET` for both, including explicitly in the `sudo env` command. Its directory must be root-owned and not group/world-writable.
-
-The private-key file must be a regular file with no group or other permissions, typically mode `600`. Generate it once and reuse it across restarts:
-
-```sh
-(umask 077; wg genkey > /path/to/server.key)
-```
-
-Keep the key outside version control. Only the agent needs access to it; it passes the key to `wg` through stdin.
+| Variable                           | Process          | Default                                   | Description                                                                                                                                                                                                                                                                      |
+| ---------------------------------- | ---------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                     | Server           | Required                                  | PostgreSQL connection URL, e.g. `postgres://apprelay:<URL-encoded-password>@127.0.0.1:5432/apprelay`.                                                                                                                                                                            |
+| `APPRELAY_HTTP_ADDRESS`            | Server           | `127.0.0.1:8080`                          | HTTP listener address; TLS is handled by Caddy.                                                                                                                                                                                                                                  |
+| `APPRELAY_DEVICE_LIFETIME_SECONDS` | Server           | `604800` (7 days)                         | Positive 32-bit integer lifetime for new or expired registrations. Active registrations keep their expiry; changing this does not alter existing deadlines.                                                                                                                      |
+| `APPRELAY_VPN_PRIVATE_KEY_FILE`    | Agent            | Required                                  | Existing regular private-key file with no group/other permissions (typically `600`). Generate once with `(umask 077; wg genkey > /path/to/server.key)` and reuse across restarts. Keep outside version control; only the agent needs access and passes it to `wg` through stdin. |
+| `APPRELAY_VPN_ADDRESS`             | Agent            | `10.77.0.1/24`                            | Server IPv4 address and prefix length; the agent also adds a route for this subnet.                                                                                                                                                                                              |
+| `APPRELAY_VPN_PORT`                | Agent            | `51820`                                   | WireGuard UDP listen port, between 1 and 65535.                                                                                                                                                                                                                                  |
+| `APPRELAY_VPN_AGENT_UID`           | Agent            | `SUDO_UID`                                | Permitted non-root server user's UID.                                                                                                                                                                                                                                            |
+| `APPRELAY_VPN_AGENT_SOCKET`        | Server and agent | `/var/db/apprelay/vpn-agent.sock` (macOS) | Unix socket path. Set for both processes when overriding, including explicitly in `sudo env`. Its directory must be root-owned and not group/world-writable.                                                                                                                     |
 
 ## Current scope
 

@@ -1,7 +1,7 @@
 #[cfg(unix)]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
-    use apprelay_server::{agent::Client, http};
+    use apprelay_server::{agent::Client, db, db::devices::DeviceRepository, http};
     use tokio::{
         net::TcpListener,
         signal::unix::{SignalKind, signal},
@@ -9,6 +9,32 @@ async fn main() -> std::io::Result<()> {
 
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
+    let lifetime_seconds = std::env::var("APPRELAY_DEVICE_LIFETIME_SECONDS")
+        .or_else(|error| match error {
+            std::env::VarError::NotPresent => Ok("604800".to_owned()),
+            error => Err(error),
+        })
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?
+        .parse::<std::num::NonZeroU32>()
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "APPRELAY_DEVICE_LIFETIME_SECONDS must be a positive 32-bit integer: {error}"
+                ),
+            )
+        })?;
+    let database_url = std::env::var("DATABASE_URL")
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    let pool = db::connect(&database_url)
+        .await
+        .map_err(std::io::Error::other)?;
+    db::MIGRATOR
+        .run(&pool)
+        .await
+        .map_err(std::io::Error::other)?;
+    let devices = DeviceRepository::new(pool, lifetime_seconds);
+
     let agent = Client::from_env()?;
     match agent.status().await {
         Ok(status) => eprintln!("Connected to VPN agent: {status:?}"),
@@ -24,7 +50,7 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(&address).await?;
     eprintln!("HTTP server listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, http::router())
+    axum::serve(listener, http::router(devices))
         .with_graceful_shutdown(async move {
             tokio::select! {
                 _ = interrupt.recv() => {},
