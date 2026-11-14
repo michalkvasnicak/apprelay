@@ -1,0 +1,164 @@
+# Coolify: Docker Compose build pack, repository-root base directory, and
+# /compose.coolify.yaml as the Compose location.
+# Assign the public HTTPS domain to vpn-agent, targeting INTERNAL port 8080.
+# Do not assign domains to api/workers or publish HTTP/pairing/database ports.
+# The external network must contain the proxy, PostgreSQL and Temporal.
+# Inspect Coolify's generated Compose: api/pairing-worker must NOT get networks.
+#
+# Recreate the whole stack on deployments (not rolling updates): api and the
+# pairing worker must be recreated when vpn-agent's network namespace changes.
+# Host prerequisite: kernel WireGuard support (modprobe wireguard if needed).
+# Open the UDP port in the host/provider firewall; no host networking or TUN mount.
+
+x-app: &app
+  image: ${APPRELAY_IMAGE:-apprelay-server:local}
+  build:
+    context: ./apps/server
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+  cap_drop:
+    - ALL
+  stop_grace_period: 30s
+
+x-database-environment: &database-environment
+  DATABASE_URL: ${DATABASE_URL:?Set the existing AppRelay PostgreSQL database URL}
+  PAIRING_ENCRYPTION_KEY: ${PAIRING_ENCRYPTION_KEY:?Set a persistent Base64-encoded 32-byte key}
+
+x-temporal-environment: &temporal-environment
+  APPRELAY_TEMPORAL_ADDRESS: ${APPRELAY_TEMPORAL_ADDRESS:?Set the existing Temporal URL}
+  APPRELAY_TEMPORAL_NAMESPACE: ${APPRELAY_TEMPORAL_NAMESPACE:-apprelay}
+
+services:
+  vpn-agent:
+    <<: *app
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/vpn-agent-entrypoint"]
+    cap_add:
+      - NET_ADMIN
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      APPRELAY_VPN_PRIVATE_KEY_FILE: /run/secrets/wireguard.key
+      APPRELAY_VPN_ADDRESS: ${APPRELAY_VPN_ADDRESS:-10.77.0.1/24}
+      APPRELAY_VPN_PORT: ${APPRELAY_VPN_PORT:-51820}
+      APPRELAY_VPN_AGENT_UID: "10001"
+      APPRELAY_VPN_AGENT_SOCKET: /run/apprelay/vpn-agent.sock
+    ports:
+      - "${APPRELAY_VPN_PORT:-51820}:${APPRELAY_VPN_PORT:-51820}/udp"
+    expose:
+      - "8080"
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv4.ip_local_port_range: "32768 60999"
+      net.ipv6.conf.all.forwarding: "0"
+    volumes:
+      - agent-socket:/run/apprelay
+      # Existing root-owned mode-0600 private key on the Ubuntu host.
+      - type: bind
+        source: ${APPRELAY_VPN_PRIVATE_KEY_HOST_FILE:?Set an absolute host path to the WireGuard private key}
+        target: /run/secrets/wireguard.key
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - shared
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "test -S /run/apprelay/vpn-agent.sock && wg show wg-apprelay public-key >/dev/null",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  api:
+    <<: *app
+    user: "10001:10001"
+    command: ["apprelay-server"]
+    network_mode: "service:vpn-agent"
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      vpn-agent:
+        condition: service_healthy
+        restart: true
+    environment:
+      <<: [*database-environment, *temporal-environment]
+      APPRELAY_HTTP_ADDRESS: 0.0.0.0:8080
+      APPRELAY_VPN_AGENT_SOCKET: /run/apprelay/vpn-agent.sock
+      APPRELAY_APNS_ENVIRONMENT: ${APPRELAY_APNS_ENVIRONMENT:?Set sandbox or production}
+      APPRELAY_DEVICE_LIFETIME_SECONDS: ${APPRELAY_DEVICE_LIFETIME_SECONDS:-604800}
+    volumes:
+      - agent-socket:/run/apprelay:ro
+    healthcheck:
+      # Process liveness only, not proof of database/Temporal/VPN readiness.
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "3", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  pairing-worker:
+    <<: *app
+    user: "10001:10001"
+    command: ["pairing-worker"]
+    network_mode: "service:vpn-agent"
+    # File capability on pairing-worker supplies NET_RAW to the non-root
+    # executable. Do not set no-new-privileges here: it blocks that acquisition.
+    cap_add:
+      - NET_RAW
+    depends_on:
+      vpn-agent:
+        condition: service_healthy
+        restart: true
+      api:
+        condition: service_healthy
+        restart: true
+    environment:
+      <<: [*database-environment, *temporal-environment]
+      APPRELAY_VPN_AGENT_SOCKET: /run/apprelay/vpn-agent.sock
+    volumes:
+      - agent-socket:/run/apprelay:ro
+
+  notification-worker:
+    <<: *app
+    user: "10001:10001"
+    command: ["notification-worker"]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      <<: [*database-environment, *temporal-environment]
+      APPRELAY_APNS_SIGNING_KEY_FILE: /run/secrets/apns.p8
+      APPRELAY_APNS_KEY_ID: ${APPRELAY_APNS_KEY_ID:?Set the APNs signing key ID}
+      APPRELAY_APNS_TEAM_ID: ${APPRELAY_APNS_TEAM_ID:?Set the Apple team ID}
+      APPRELAY_APNS_TOPIC: ${APPRELAY_APNS_TOPIC:?Set the app bundle ID}
+    volumes:
+      # Existing mode-0600 file owned by UID 10001 on the Ubuntu host.
+      - type: bind
+        source: ${APPRELAY_APNS_SIGNING_KEY_HOST_FILE:?Set an absolute host path to the APNs signing key}
+        target: /run/secrets/apns.p8
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - shared
+
+networks:
+  shared:
+    external: true
+    name: ${APPRELAY_DOCKER_NETWORK:-coolify}
+
+volumes:
+  agent-socket:
