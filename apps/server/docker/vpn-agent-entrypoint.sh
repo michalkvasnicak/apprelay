@@ -22,15 +22,16 @@ vpn_address="${APPRELAY_VPN_ADDRESS:-10.77.0.1/24}"
 vpn_address="${vpn_address%/*}"
 
 # Dynamic pairing listeners use the namespace's explicitly configured ephemeral
-# TCP range. Nothing on the VPN may reach other addresses, Docker services,
-# another peer, or the internet through forwarding.
+# TCP range. The HTTP API is reached through the HTTPS tunnel, not WireGuard.
+# Nothing on the VPN may reach other addresses, Docker services, another peer,
+# or the internet through forwarding.
 iptables -w -P FORWARD DROP
 iptables -w -N APPRELAY_VPN_INPUT 2>/dev/null \
     || iptables -w -F APPRELAY_VPN_INPUT
 iptables -w -A APPRELAY_VPN_INPUT -d "$vpn_address" \
     -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -w -A APPRELAY_VPN_INPUT -d "$vpn_address" \
-    -p tcp -m multiport --dports 8080,32768:60999 -j ACCEPT
+    -p tcp --dport 32768:60999 -j ACCEPT
 iptables -w -A APPRELAY_VPN_INPUT -d "$vpn_address" \
     -p udp --dport 5354 -j ACCEPT
 iptables -w -A APPRELAY_VPN_INPUT -j DROP
