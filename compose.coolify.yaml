@@ -1,8 +1,8 @@
 # Coolify: Docker Compose build pack, repository-root base directory, and
 # /compose.coolify.yaml as the Compose location.
-# Assign the public HTTPS domain to vpn-agent, targeting INTERNAL port 8080.
-# Do not assign domains to api/workers or publish HTTP/pairing/database ports.
-# The external network must contain the proxy, PostgreSQL and Temporal.
+# Host cloudflared targets http://127.0.0.1:18080; no Coolify domain is required.
+# Do not assign domains to api/workers or publicly publish HTTP/pairing/database ports.
+# The external network must contain PostgreSQL and Temporal.
 # Inspect Coolify's generated Compose: api/pairing-worker must NOT get networks.
 #
 # Recreate the whole stack on deployments (not rolling updates): api and the
@@ -52,6 +52,8 @@ services:
       APPRELAY_VPN_AGENT_SOCKET: /run/apprelay/vpn-agent.sock
     ports:
       - "${APPRELAY_VPN_PORT:-51820}:${APPRELAY_VPN_PORT:-51820}/udp"
+      # The API shares this namespace; only host cloudflared should reach this port.
+      - "127.0.0.1:18080:8080"
     expose:
       - "8080"
     sysctls:
