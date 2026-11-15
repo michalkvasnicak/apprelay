@@ -30,6 +30,7 @@ for (const key of Object.keys(env)) {
       "APPLE_TEAM_ID",
       "APPLE_BUNDLE_IDENTIFIER",
       "APPLE_BUILD_NUMBER",
+      "APPLE_ENCRYPTION_EXPORT_COMPLIANCE_CODE",
       "APPLE_API_KEY_ID",
       "APPLE_API_ISSUER_ID",
       "APPLE_API_KEY_PATH",
