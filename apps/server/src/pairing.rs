@@ -51,7 +51,7 @@ impl Session {
             .interface
             .as_deref()
             .ok_or_else(|| io::Error::other("pairing requires a running VPN"))?;
-        let listener = TcpListener::bind((status.address, 0)).await?;
+        let listener = bind_pairing_listener(status.address).await?;
         bind_interface(&listener, interface)?;
         // Use a dedicated announcement port, separate from system mDNS (5353).
         // Bind only the VPN IP and interface; never publish via system Bonjour.
@@ -192,6 +192,22 @@ impl Session {
             }
         }
     }
+}
+
+// Keep this dedicated pool in sync with the container's VPN firewall rules.
+// It is outside the container's outbound ephemeral range (32768–60999).
+async fn bind_pairing_listener(address: Ipv4Addr) -> io::Result<TcpListener> {
+    for port in 20000..=20049 {
+        match TcpListener::bind((address, port)).await {
+            Ok(listener) => return Ok(listener),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AddrInUse,
+        "all 50 pairing listener ports are in use",
+    ))
 }
 
 fn announcement(

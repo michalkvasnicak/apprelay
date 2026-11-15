@@ -58,6 +58,7 @@ services:
       - "8080"
     sysctls:
       net.ipv4.ip_forward: "0"
+      # Keep outbound ephemeral ports separate from pairing TCP 20000–20049.
       net.ipv4.ip_local_port_range: "32768 60999"
       net.ipv6.conf.all.forwarding: "0"
     volumes:

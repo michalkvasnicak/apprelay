@@ -56,15 +56,15 @@ This is process liveness only: it does not verify PostgreSQL, VPN connectivity o
 
 The intended production policy is default-deny inbound and forwarded traffic, with only these exceptions:
 
-| Source          | Destination | Purpose                                               |
-| --------------- | ----------- | ----------------------------------------------------- |
-| Public internet | TCP 443     | Caddy HTTPS, proxied to the HTTP service on port 8080 |
-| Public internet | UDP 51820   | WireGuard tunnel (adjust if configured differently)   |
-| VPN interface   | TCP 8080    | HTTP service on the server's VPN address              |
-| VPN interface   | UDP 5354    | Device-specific unicast DNS-SD pairing discovery      |
-| VPN interface   | Dynamic TCP | Pairing listener bound to the server's VPN address    |
+| Source          | Destination     | Purpose                                                      |
+| --------------- | --------------- | ------------------------------------------------------------ |
+| Public internet | TCP 443         | Caddy HTTPS, proxied to the HTTP service on port 8080        |
+| Public internet | UDP 51820       | WireGuard tunnel (adjust if configured differently)          |
+| VPN interface   | TCP 8080        | HTTP service on the server's VPN address                     |
+| VPN interface   | UDP 5354        | Device-specific unicast DNS-SD pairing discovery             |
+| VPN interface   | TCP 20000–20049 | Up to 50 pairing listeners bound to the server's VPN address |
 
-For example, on a dedicated host using UFW, the following allows HTTPS, WireGuard, and VPN HTTP only. Pairing additionally requires inbound UDP 5354 and the dynamically assigned TCP listener ports on `wg-apprelay` to `10.77.0.1`; restrict any such rules to the VPN subnet and do not expose these ports publicly. The agent does not install firewall rules.
+For example, on a dedicated host using UFW, the following allows HTTPS, WireGuard, and VPN HTTP only. Pairing additionally requires inbound UDP 5354 and TCP ports 20000–20049 on `wg-apprelay` to `10.77.0.1`; restrict any such rules to the VPN subnet and do not expose these ports publicly. The agent does not install firewall rules.
 
 ```sh
 sudo ufw default deny incoming

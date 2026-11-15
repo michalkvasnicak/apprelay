@@ -21,8 +21,8 @@ export XTABLES_LOCKFILE=/run/apprelay/xtables.lock
 vpn_address="${APPRELAY_VPN_ADDRESS:-10.77.0.1/24}"
 vpn_address="${vpn_address%/*}"
 
-# Dynamic pairing listeners use the namespace's explicitly configured ephemeral
-# TCP range. The HTTP API is reached through the HTTPS tunnel, not WireGuard.
+# Pairing listeners use the dedicated 50-port pool in src/pairing.rs, separate
+# from outbound ephemeral ports. The HTTP API uses HTTPS, not WireGuard.
 # Nothing on the VPN may reach other addresses, Docker services, another peer,
 # or the internet through forwarding.
 iptables -w -P FORWARD DROP
@@ -31,7 +31,7 @@ iptables -w -N APPRELAY_VPN_INPUT 2>/dev/null \
 iptables -w -A APPRELAY_VPN_INPUT -d "$vpn_address" \
     -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -w -A APPRELAY_VPN_INPUT -d "$vpn_address" \
-    -p tcp --dport 32768:60999 -j ACCEPT
+    -p tcp --dport 20000:20049 -j ACCEPT
 iptables -w -A APPRELAY_VPN_INPUT -d "$vpn_address" \
     -p udp --dport 5354 -j ACCEPT
 iptables -w -A APPRELAY_VPN_INPUT -j DROP
