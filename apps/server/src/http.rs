@@ -76,16 +76,25 @@ struct WireguardConfiguration {
     persistent_keepalive_seconds: u16,
 }
 
+pub struct RouterConfig {
+    pub app_key: AppKey,
+    pub registration_limiter: RegistrationRateLimiter,
+    pub https_proxy: HttpsProxy,
+}
+
 pub fn router(
     devices: DeviceRepository,
     agent: Client,
     push_tokens: PushTokenRepository,
     codes: PairingCodeRepository,
-    app_key: AppKey,
-    registration_limiter: RegistrationRateLimiter,
     attempts: crate::db::pairing_attempts::PairingAttemptRepository,
-    https_proxy: HttpsProxy,
+    config: RouterConfig,
 ) -> Router {
+    let RouterConfig {
+        app_key,
+        registration_limiter,
+        https_proxy,
+    } = config;
     Router::new()
         .route(
             "/v1/devices",

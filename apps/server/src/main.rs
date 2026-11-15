@@ -73,10 +73,12 @@ async fn main() -> std::io::Result<()> {
             agent,
             push_tokens,
             codes,
-            app_key,
-            registration_limiter,
             attempts,
-            https_proxy,
+            http::RouterConfig {
+                app_key,
+                registration_limiter,
+                https_proxy,
+            },
         )
         .into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
