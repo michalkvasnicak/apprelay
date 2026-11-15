@@ -17,10 +17,14 @@ Native iOS builds require iOS 27.0 or newer, configured through `expo.ios.deploy
 
 ```sh
 pnpm install
+cp apps/mobile/.env.local.example apps/mobile/.env.local
+# Fill in apps/mobile/.env.local before starting.
 pnpm start
 ```
 
 Root development commands forward to `apps/mobile`. Open the app in Expo Go, or use `pnpm ios` / `pnpm android` to launch a simulator or emulator. `pnpm web` starts the web app.
+
+For separate local/TestFlight configuration and local iOS publishing with `pnpm publish:ios:testflight`, see [the mobile README](apps/mobile/README.md).
 
 Use `pnpm --filter @apprelay/mobile <command>` to target the app directly. Add Expo dependencies with `pnpm --filter @apprelay/mobile exec expo install <package>`.
 

@@ -2,10 +2,14 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const teamId = process.env.APPLE_TEAM_ID?.trim();
+  const buildNumber = process.env.APPLE_BUILD_NUMBER?.trim();
+  if (buildNumber && !/^[1-9]\d{0,3}(?:\.\d{1,2}){0,2}$/.test(buildNumber)) {
+    throw new Error("APPLE_BUILD_NUMBER must be an Apple build version, for example 1 or 1.0.1.");
+  }
   const bundleIdentifier = process.env.APPLE_BUNDLE_IDENTIFIER?.trim();
   if (!bundleIdentifier || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundleIdentifier)) {
     throw new Error(
-      "Set APPLE_BUNDLE_IDENTIFIER to an explicit reverse-DNS app identifier for this build (for example sk.brosoft.apprelay.dev)",
+      "Set APPLE_BUNDLE_IDENTIFIER to an explicit reverse-DNS app identifier for this build (for example com.example.apprelay.dev)",
     );
   }
 
@@ -37,6 +41,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ios: {
       ...config.ios,
       bundleIdentifier,
+      ...(buildNumber ? { buildNumber } : {}),
       ...(teamId ? { appleTeamId: teamId } : {}),
     },
   };

@@ -20,18 +20,6 @@ module.exports = function withWireGuard(config) {
     "keychain-access-groups": [keychainGroup],
   };
 
-  // EAS needs this before prebuild in order to provision the extension target.
-  config.extra ??= {};
-  config.extra.eas ??= {};
-  config.extra.eas.build ??= {};
-  config.extra.eas.build.experimental ??= {};
-  config.extra.eas.build.experimental.ios ??= {};
-  const easIos = config.extra.eas.build.experimental.ios;
-  easIos.appExtensions = [
-    ...(easIos.appExtensions ?? []).filter((extension) => extension.targetName !== TARGET),
-    { targetName: TARGET, bundleIdentifier: extensionIdentifier, entitlements },
-  ];
-
   config = withEntitlementsPlist(config, (mod) => {
     for (const [key, values] of Object.entries(entitlements)) {
       mod.modResults[key] = [...new Set([...(mod.modResults[key] ?? []), ...values])];
