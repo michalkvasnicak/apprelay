@@ -3,7 +3,7 @@ FROM rust:1.92-bookworm AS build
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates clang cmake git libssl-dev pkg-config protobuf-compiler \
+        ca-certificates clang cmake git libprotobuf-dev libssl-dev pkg-config protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
