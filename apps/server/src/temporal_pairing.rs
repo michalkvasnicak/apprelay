@@ -130,13 +130,23 @@ impl PairingActivities {
                 .try_into()
                 .map_err(|_| io::Error::other("invalid device WireGuard public key"))?;
             eprintln!("Waiting for device {device_id} to establish its WireGuard connection");
+            let mut last_error = None;
             loop {
                 if Utc::now() >= expires_at {
                     return Err(io::Error::other("device expired while waiting for VPN"));
                 }
-                if self.agent.require_connected_peer(public_key).await.is_ok() {
-                    eprintln!("WireGuard connection confirmed for device {device_id}");
-                    return Ok(());
+                match self.agent.require_connected_peer(public_key).await {
+                    Ok(()) => {
+                        eprintln!("WireGuard connection confirmed for device {device_id}");
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        if last_error.as_ref() != Some(&message) {
+                            eprintln!("VPN readiness for device {device_id}: {message}");
+                            last_error = Some(message);
+                        }
+                    }
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
