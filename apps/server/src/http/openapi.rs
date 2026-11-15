@@ -12,6 +12,7 @@ use utoipa::{
     paths(
         super::health,
         super::register_device,
+        super::https_proxy::relay,
         super::pairing_codes::get,
         super::pairing_attempts::create,
         super::pairing_attempts::get,

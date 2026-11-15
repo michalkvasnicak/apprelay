@@ -16,6 +16,7 @@ async fn main() -> std::io::Result<()> {
     };
 
     let app_key = http::AppKey::from_env()?;
+    let https_proxy = http::HttpsProxy::new()?;
     let registration_limiter = http::RegistrationRateLimiter::from_env().await?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
@@ -75,6 +76,7 @@ async fn main() -> std::io::Result<()> {
             app_key,
             registration_limiter,
             attempts,
+            https_proxy,
         )
         .into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )

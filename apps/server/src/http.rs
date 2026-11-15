@@ -1,5 +1,6 @@
 mod app_key;
 mod auth;
+mod https_proxy;
 mod openapi;
 mod pairing_attempts;
 mod pairing_codes;
@@ -7,6 +8,7 @@ mod push_tokens;
 mod rate_limit;
 
 pub use app_key::AppKey;
+pub use https_proxy::HttpsProxy;
 pub use openapi::document;
 pub use rate_limit::RegistrationRateLimiter;
 
@@ -81,6 +83,7 @@ pub fn router(
     app_key: AppKey,
     registration_limiter: RegistrationRateLimiter,
     attempts: crate::db::pairing_attempts::PairingAttemptRepository,
+    https_proxy: HttpsProxy,
 ) -> Router {
     Router::new()
         .route(
@@ -115,6 +118,7 @@ pub fn router(
                     rate_limit::limit_pairing_attempts,
                 )),
         )
+        .merge(https_proxy::router(https_proxy))
         .route("/health", get(health))
         .route("/openapi.json", get(|| async { Json(document()) }))
         .layer(DefaultBodyLimit::max(1024))

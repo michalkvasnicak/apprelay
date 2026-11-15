@@ -16,6 +16,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/apple/proxy": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["relay"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/devices": {
     parameters: {
       query?: never;
@@ -156,6 +172,32 @@ export interface components {
       /** Format: date-time */
       expires_at: string;
     };
+    /** @enum {string} */
+    ProxyMethod: "GET" | "POST";
+    ProxyRequest: {
+      /** @description Standard base64-encoded bytes. Omit for an empty request body. */
+      body?: string;
+      /** @description Only protocol headers are allowed; never include the AppRelay API key. */
+      headers?: {
+        [key: string]: string;
+      };
+      method: components["schemas"]["ProxyMethod"];
+      /** @description HTTPS URL on an explicitly permitted Apple or anisette endpoint. */
+      url: string;
+    };
+    ProxyResponse: {
+      /** @description Standard base64-encoded upstream response bytes. */
+      body: string;
+      /** @description Only content-type, retry-after, and Apple routing info are returned. */
+      headers: {
+        [key: string]: string;
+      };
+      /**
+       * Format: int32
+       * @description Upstream HTTP status, including rejections and redirects (never followed).
+       */
+      status: number;
+    };
     PushTokenRequest: {
       token: string;
     };
@@ -206,6 +248,93 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Health"];
+        };
+      };
+    };
+  };
+  relay: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ProxyRequest"];
+      };
+    };
+    responses: {
+      /** @description Upstream response; inspect the envelope status */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProxyResponse"];
+        };
+      };
+      /** @description Invalid proxy request or destination/header policy */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Request too large */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Expected application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Invalid JSON fields */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Upstream TLS, DNS, transport, encoding or response-size failure */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Proxy concurrency limit reached */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Proxy timed out */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
         };
       };
     };
