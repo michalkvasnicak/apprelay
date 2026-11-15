@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import openapiTS, { astToString } from "openapi-typescript";
+import { format } from "oxfmt";
 
 const output = new URL("../src/api/schema.d.ts", import.meta.url);
 const server = fileURLToPath(new URL("../../server/", import.meta.url));
@@ -23,21 +24,13 @@ const generated = [
   "// Generated from the Rust API. Do not edit; run pnpm api:generate.",
   astToString(await openapiTS(schema)),
 ].join("\n");
-// Match the commit hook's formatting before writing or comparing generated types.
-const formatted = spawnSync("pnpm", ["exec", "oxfmt", "--stdin-filepath", fileURLToPath(output)], {
-  cwd: fileURLToPath(new URL("../../../", import.meta.url)),
-  input: generated,
-  encoding: "utf8",
-  maxBuffer: 10 * 1024 * 1024,
-  stdio: ["pipe", "pipe", "inherit"],
-});
-if (formatted.error) {
-  throw formatted.error;
+const formatConfig = JSON.parse(
+  await readFile(new URL("../../../.oxfmtrc.json", import.meta.url), "utf8"),
+);
+const { code: source, errors } = await format(fileURLToPath(output), generated, formatConfig);
+if (errors.length > 0) {
+  throw new Error("Could not format generated API types");
 }
-if (formatted.status !== 0) {
-  process.exit(formatted.status ?? 1);
-}
-const source = formatted.stdout;
 
 if (process.argv.includes("--check")) {
   const existing = await readFile(output, "utf8").catch((error) => {
