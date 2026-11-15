@@ -1,6 +1,6 @@
 import { NativeModules, Platform } from "react-native";
 
-import { getRegistrationUrl, type DeviceRegistration } from "./config";
+import type { DeviceRegistration } from "./config";
 
 export const vpnStatuses = [
   "disconnected",
@@ -45,10 +45,11 @@ export const vpn = {
   getStatus: () => requireNative().getStatus(),
   connect: (registration: DeviceRegistration) => {
     const { wireguard } = registration;
-    const host = new URL(getRegistrationUrl()).hostname;
+    // The HTTPS API may be proxied; WireGuard needs the direct UDP endpoint.
+    // These values are validated by app.config.ts before starting/building Expo.
     return requireNative().connect({
-      host,
-      port: 51820,
+      host: process.env.EXPO_PUBLIC_VPN_HOST!.trim(),
+      port: Number(process.env.EXPO_PUBLIC_VPN_PORT ?? "51820"),
       publicKey: wireguard.server_public_key,
       clientAddress: registration.address,
       allowedIPs: wireguard.allowed_ips,

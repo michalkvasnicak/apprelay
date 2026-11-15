@@ -36,6 +36,8 @@ If you already have `.env.local`, keep it; do not overwrite it. Fill in the foll
 | `APPLE_TEAM_ID`           | Your Apple Developer Team ID.                                                                                                                                                       |
 | `APPLE_BUNDLE_IDENTIFIER` | The app's bundle identifier. Required for every build.                                                                                                                              |
 | `EXPO_PUBLIC_VPN_API_URL` | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment.                                                       |
+| `EXPO_PUBLIC_VPN_HOST`    | Direct WireGuard hostname or IP, for example `vpn.example.com`. No scheme or port. Must resolve to the VPN server, not an HTTP proxy.                                               |
+| `EXPO_PUBLIC_VPN_PORT`    | Public WireGuard UDP port, matching the server and firewall configuration. Defaults to `51820`.                                                                                     |
 | `EXPO_PUBLIC_API_KEY`     | Required 64-character hexadecimal app key matching the server's `APPRELAY_API_KEY`. Sent as `X-App-Key` on API requests; embedded in the app and extractable, not a private secret. |
 
 Choose your own reverse-DNS bundle identifiers registered with your Apple Developer team. For example, replace `com.example.apprelay.dev` for local development and `com.example.apprelay` for distribution with identifiers you own. A separate local identifier lets both apps coexist; TestFlight and any future App Store release can share the same distribution identifier.

@@ -29,6 +29,32 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     );
   }
 
+  const vpnHost = process.env.EXPO_PUBLIC_VPN_HOST?.trim();
+  if (!vpnHost) {
+    throw new Error("Set EXPO_PUBLIC_VPN_HOST to the direct WireGuard server hostname or IP.");
+  }
+  let vpnUrl: URL;
+  try {
+    vpnUrl = new URL(`http://${vpnHost}`);
+  } catch {
+    throw new Error("EXPO_PUBLIC_VPN_HOST must be a hostname or IP, not a URL.");
+  }
+  if (
+    vpnUrl.hostname !== vpnHost.toLowerCase() ||
+    vpnUrl.port ||
+    vpnUrl.username ||
+    vpnUrl.password ||
+    vpnUrl.pathname !== "/" ||
+    vpnUrl.search ||
+    vpnUrl.hash
+  ) {
+    throw new Error("EXPO_PUBLIC_VPN_HOST must contain only a hostname or IP, without a port.");
+  }
+  const vpnPort = process.env.EXPO_PUBLIC_VPN_PORT ?? "51820";
+  if (!/^\d{1,5}$/.test(vpnPort) || Number(vpnPort) < 1 || Number(vpnPort) > 65535) {
+    throw new Error("EXPO_PUBLIC_VPN_PORT must be an integer between 1 and 65535.");
+  }
+
   const apiKey = process.env.EXPO_PUBLIC_API_KEY;
   if (!apiKey || !/^[a-fA-F0-9]{64}$/.test(apiKey)) {
     throw new Error("Set EXPO_PUBLIC_API_KEY to the server's 64-character hexadecimal app key.");
