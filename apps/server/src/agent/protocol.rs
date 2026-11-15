@@ -9,6 +9,9 @@ const MAX_MESSAGE_SIZE: usize = 4096;
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Request {
     Status,
+    RequireConnectedPeer {
+        public_key: [u8; 32],
+    },
     Start,
     Stop,
     RemovePeer {

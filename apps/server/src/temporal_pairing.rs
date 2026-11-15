@@ -26,6 +26,7 @@ use crate::{
 };
 
 const TASK_QUEUE: &str = "apprelay-pairing";
+const CONNECTION_LIMIT: Duration = Duration::from_secs(120);
 const SESSION_LIMIT: Duration = Duration::from_secs(60);
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -74,6 +75,17 @@ pub struct PairDeviceWorkflow;
 impl PairDeviceWorkflow {
     #[run]
     pub async fn run(ctx: &mut WorkflowContext<Self>, device_id: String) -> WorkflowResult<()> {
+        // Waiting for the tunnel is separate from the interactive pairing window.
+        // No listener, advertisement, PIN, or pairing identity exists yet.
+        ctx.execute_activity(
+            PairingActivities::wait_for_connection,
+            device_id.clone(),
+            ActivityOptions::with_start_to_close_timeout(CONNECTION_LIMIT)
+                .heartbeat_timeout(Duration::from_secs(10))
+                .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
+                .build(),
+        )
+        .await?;
         ctx.execute_activity(
             PairingActivities::pair_device,
             device_id,
@@ -98,6 +110,47 @@ pub struct PairingActivities {
 #[activities]
 impl PairingActivities {
     #[activity]
+    pub async fn wait_for_connection(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        device_id: String,
+    ) -> Result<(), ActivityError> {
+        let device_id = Uuid::parse_str(&device_id)?;
+        let operation = async {
+            let (public_key, expires_at) = sqlx::query_as::<_, (Vec<u8>, DateTime<Utc>)>(
+                "SELECT wireguard_public_key, expires_at FROM devices
+                     WHERE id = $1 AND expires_at > statement_timestamp()",
+            )
+            .bind(device_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(io::Error::other)?
+            .ok_or_else(|| io::Error::other("device is missing or expired"))?;
+            let public_key: [u8; 32] = public_key
+                .try_into()
+                .map_err(|_| io::Error::other("invalid device WireGuard public key"))?;
+            eprintln!("Waiting for device {device_id} to establish its WireGuard connection");
+            loop {
+                if Utc::now() >= expires_at {
+                    return Err(io::Error::other("device expired while waiting for VPN"));
+                }
+                if self.agent.require_connected_peer(public_key).await.is_ok() {
+                    eprintln!("WireGuard connection confirmed for device {device_id}");
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        };
+        wait(
+            &ctx,
+            operation,
+            Instant::now() + CONNECTION_LIMIT,
+            "VPN connection was not established within 120 seconds",
+        )
+        .await
+    }
+
+    #[activity]
     pub async fn pair_device(
         self: Arc<Self>,
         ctx: ActivityContext,
@@ -107,9 +160,9 @@ impl PairingActivities {
         let deadline = Instant::now() + SESSION_LIMIT;
         let prepare = async {
             // Resolve the address at execution time, never from a queued IP payload.
-            let (address, expires_at, attempt_started_at) =
-                sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>)>(
-                    "SELECT host(address), expires_at, statement_timestamp() FROM devices
+            let (address, expires_at, attempt_started_at, public_key) =
+                sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, Vec<u8>)>(
+                    "SELECT host(address), expires_at, statement_timestamp(), wireguard_public_key FROM devices
                      WHERE id = $1 AND expires_at > statement_timestamp()",
                 )
                 .bind(device_id)
@@ -135,6 +188,12 @@ impl PairingActivities {
                 .to_std()
                 .map_err(io::Error::other)?;
             let lease_deadline = Instant::now() + remaining;
+            // Recheck at activity execution time in case it was queued after the
+            // readiness activity completed. Do not create a session for a stale peer.
+            let public_key: [u8; 32] = public_key
+                .try_into()
+                .map_err(|_| io::Error::other("invalid device WireGuard public key"))?;
+            self.agent.require_connected_peer(public_key).await?;
             let session = Session::new(&status, peer).await?;
             let code_expiry = Utc::now()
                 + chrono::Duration::from_std(
@@ -157,7 +216,7 @@ impl PairingActivities {
             ))
         };
         let (mut session, deadline, expires_at, attempt_started_at, attempt_id) =
-            wait(&ctx, prepare, deadline).await?;
+            wait(&ctx, prepare, deadline, "pairing session expired").await?;
         let operation = async {
             let codes = &self.codes;
             let record = session
@@ -183,7 +242,7 @@ impl PairingActivities {
             );
             Ok(())
         };
-        let result = wait(&ctx, operation, deadline).await;
+        let result = wait(&ctx, operation, deadline, "pairing session expired").await;
         // Normal completion, cancellation, and timeout all withdraw the proxy service.
         // A crash still expires its last announcement after the ten-second DNS TTL.
         session.stop().await;
@@ -201,6 +260,7 @@ async fn wait<T>(
     ctx: &ActivityContext,
     operation: impl Future<Output = io::Result<T>>,
     deadline: Instant,
+    timeout_message: &'static str,
 ) -> Result<T, ActivityError> {
     let mut heartbeats = interval(Duration::from_secs(2));
     heartbeats.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -209,7 +269,7 @@ async fn wait<T>(
         tokio::select! {
             _ = ctx.cancelled() => return Err(ActivityError::cancelled()),
             _ = sleep_until(deadline) => return Err(io::Error::new(
-                io::ErrorKind::TimedOut, "pairing session expired",
+                io::ErrorKind::TimedOut, timeout_message,
             ).into()),
             result = &mut operation => return result.map_err(Into::into),
             _ = heartbeats.tick() => ctx.record_heartbeat(()).await?,
@@ -245,7 +305,7 @@ pub async fn run_worker() -> Result<(), Error> {
         .build();
     let worker = Worker::new(&runtime, client().await?, options)?;
     eprintln!(
-        "Pairing worker listening on {TASK_QUEUE}: at most 10 active sessions, 60 seconds each"
+        "Pairing worker listening on {TASK_QUEUE}: at most 10 activities, up to 120 seconds for VPN readiness, then 60 seconds for pairing"
     );
     worker
         .run_until(async {

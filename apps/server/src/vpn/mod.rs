@@ -112,6 +112,39 @@ impl Vpn {
         .await
     }
 
+    pub async fn require_connected_peer(&self, public_key: &[u8; 32]) -> io::Result<()> {
+        let interface = self
+            .interface_name()
+            .ok_or_else(|| io::Error::other("WireGuard interface name is unavailable"))?;
+        // Query only handshake timestamps, never the full configuration/private key.
+        // Supported by both kernel WireGuard and wireguard-go.
+        let output = command::output("wg", &["show", interface, "latest-handshakes"]).await?;
+        let output = std::str::from_utf8(&output).map_err(io::Error::other)?;
+        let public_key = STANDARD.encode(public_key);
+        let now = Utc::now().timestamp();
+        for line in output.lines() {
+            let mut fields = line.split_whitespace();
+            if fields.next() != Some(public_key.as_str()) {
+                continue;
+            }
+            let timestamp = fields
+                .next()
+                .ok_or_else(|| io::Error::other("missing WireGuard handshake timestamp"))?
+                .parse::<i64>()
+                .map_err(io::Error::other)?;
+            // WireGuard normally rekeys every two minutes with active traffic.
+            // Zero means this peer has never completed a handshake.
+            if timestamp > 0 && (0..=180).contains(&(now - timestamp)) {
+                return Ok(());
+            }
+            break;
+        }
+        Err(io::Error::new(
+            io::ErrorKind::NotConnected,
+            "WireGuard peer has no recent successful handshake",
+        ))
+    }
+
     pub async fn remove_peer(&self, public_key: &[u8; 32]) -> io::Result<()> {
         let interface = self
             .interface_name()

@@ -125,3 +125,20 @@ Push token and pairing-code requests must originate from the device's registered
 Registration is rate-limited per client IP using Redis-backed GCRA: burst capacity 10, replenishing one request every 6 seconds (10/minute sustained). Excess requests return `429` with `Retry-After` in seconds. Redis errors/timeouts return `503` without provisioning; the server requires an initial Redis connection at startup. Health, push-token, and pairing-code routes are not rate-limited.
 
 Registration configures the peer before returning. Active retries preserve the IP and expiry. The client supplies the public WireGuard endpoint. Invalid requests return `4xx`; database, VPN, or address-pool unavailability returns `503`.
+
+### Pairing readiness
+
+Registration queues orchestration, not an immediate pairing session. The workflow
+first waits up to 120 seconds for the VPN agent to confirm a successful WireGuard
+handshake for the registered device's public key. A handshake must be no more than
+180 seconds old; a configured peer or the app's local "connected" status alone is
+not sufficient. This works with Linux kernel WireGuard and macOS wireguard-go.
+
+Only after readiness succeeds does the separate 60-second pairing activity begin.
+It rechecks the handshake before creating a listener, identity, advertisement, or
+pairing code. Connection waiting heartbeats, honors cancellation and lease expiry,
+and does not consume the pairing window. The CLI uses the same workflow.
+
+Deploy the updated VPN agent and pairing worker together. Drain or terminate
+existing pairing workflows before replacing the worker: the workflow now schedules
+a readiness activity before pairing, which changes its Temporal history.

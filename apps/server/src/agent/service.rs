@@ -111,6 +111,10 @@ async fn handle(
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "VPN agent read timed out"))??;
     let result = match request {
         Request::Status => Ok(()),
+        Request::RequireConnectedPeer { public_key } => match vpn.as_ref() {
+            Some(vpn) => vpn.require_connected_peer(&public_key).await,
+            None => Err(io::Error::other("VPN is stopped")),
+        },
         Request::Start => {
             if vpn.is_none() {
                 match Vpn::start(config).await {

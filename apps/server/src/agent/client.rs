@@ -23,6 +23,13 @@ impl Client {
         self.request(Request::Status).await
     }
 
+    /// Succeeds only after WireGuard has a recent successful handshake for this peer.
+    pub async fn require_connected_peer(&self, public_key: [u8; 32]) -> io::Result<()> {
+        self.request(Request::RequireConnectedPeer { public_key })
+            .await
+            .map(|_| ())
+    }
+
     pub async fn start(&self) -> io::Result<VpnStatus> {
         self.request(Request::Start).await
     }
