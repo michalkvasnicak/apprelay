@@ -4,8 +4,7 @@ import { Linking } from "react-native";
 
 import { createApiClient } from "../api/client";
 import type { DeviceRegistration } from "../vpn/config";
-import { vpn } from "../vpn/native";
-import { ensureTunnel } from "../vpn/registration";
+import { vpn, type VpnStatus } from "../vpn/native";
 
 const pairingScheme = process.env.EXPO_PUBLIC_APP_SCHEME ?? "apprelay";
 
@@ -35,8 +34,9 @@ function pairingToken(value: string): string | null {
   }
 }
 
-export function usePairing(register: () => Promise<DeviceRegistration>) {
+export function usePairing(status: VpnStatus, register: () => Promise<DeviceRegistration>) {
   const token = useRef<string | null>(null);
+  const automaticallyStarted = useRef(false);
   const request = useRef<AbortController | null>(null);
   const retryAt = useRef(0);
   const [available, setAvailable] = useState(false);
@@ -54,6 +54,9 @@ export function usePairing(register: () => Promise<DeviceRegistration>) {
       request.current = controller;
       const timeout = setTimeout(() => controller.abort(), 90_000);
       try {
+        if ((await vpn.getStatus()) !== "connected") {
+          throw new PairingError("Connect the VPN before pairing.");
+        }
         const api = createApiClient();
         const { data: attempt, response: statusResponse } = await api.GET(
           "/v1/pairing-attempts/{token}",
@@ -83,8 +86,9 @@ export function usePairing(register: () => Promise<DeviceRegistration>) {
         }
         const device = await register();
         controller.signal.throwIfAborted();
-        await ensureTunnel(device);
-        controller.signal.throwIfAborted();
+        if ((await vpn.getStatus()) !== "connected") {
+          throw new PairingError("The VPN disconnected. Reconnect before retrying pairing.");
+        }
         await vpn.preparePairing();
         controller.signal.throwIfAborted();
         // The server waits for actual WireGuard readiness; native startup alone is not proof.
@@ -158,11 +162,20 @@ export function usePairing(register: () => Promise<DeviceRegistration>) {
     };
   }, []);
 
+  const { mutate: startPairing } = start;
+  useEffect(() => {
+    if (available && status === "connected" && !automaticallyStarted.current) {
+      automaticallyStarted.current = true;
+      startPairing();
+    }
+  }, [available, status, startPairing]);
+
   function dismiss() {
     if (start.isPending) {
       return;
     }
     token.current = null;
+    automaticallyStarted.current = false;
     setAvailable(false);
     setNotice(null);
     start.reset();

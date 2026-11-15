@@ -1,6 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { usePushNotifications } from "./src/notifications/usePushNotifications";
 import { usePairing } from "./src/pairing/usePairing";
@@ -8,12 +8,12 @@ import { isVpnAvailable, type VpnStatus } from "./src/vpn/native";
 import { queryClient, useVpn } from "./src/vpn/queries";
 
 const statusLabels = {
-  disconnected: "Disconnected",
-  connecting: "Starting tunnel…",
-  connected: "Tunnel active",
+  disconnected: "VPN is off",
+  connecting: "Connecting…",
+  connected: "VPN connected",
   reconnecting: "Reconnecting…",
   disconnecting: "Disconnecting…",
-  unknown: "Checking VPN status…",
+  unknown: "Checking connection…",
 } as const satisfies Record<VpnStatus, string>;
 
 export default function App() {
@@ -27,128 +27,116 @@ export default function App() {
 function VpnScreen() {
   const { identity, status: statusQuery, registration, connection } = useVpn();
   const status = statusQuery.isError ? "unknown" : (statusQuery.data ?? "unknown");
-  const active = status === "connected" || status === "connecting" || status === "reconnecting";
-  const pairing = usePairing(() => registration.mutateAsync());
-  const busy = connection.isPending || pairing.start.isPending;
-  const disabled =
-    !isVpnAvailable ||
-    busy ||
+  const pairing = usePairing(status, () => registration.mutateAsync());
+  const connected = status === "connected";
+  const transitioning =
     status === "unknown" ||
-    status === "disconnecting" ||
-    (!active && !identity.data);
-  const device = registration.data;
-  const notifications = usePushNotifications(device, status === "connected" && !busy);
-  const errors = [identity.error, statusQuery.error, connection.error].filter(Boolean);
-  let buttonLabel = "Connect";
-  if (registration.isPending) {
-    buttonLabel = "Registering device…";
-  } else if (active) {
-    buttonLabel = "Disconnect";
+    status === "connecting" ||
+    status === "reconnecting" ||
+    status === "disconnecting";
+  const busy = connection.isPending || pairing.start.isPending || transitioning;
+  const notifications = usePushNotifications(registration.data, connected && !busy);
+  const paired = pairing.available && pairing.start.isSuccess;
+  const waitingToPair = pairing.available && connected && !pairing.start.isError && !paired;
+  const disabled = !isVpnAvailable || busy || waitingToPair || (!connected && !identity.data);
+
+  let title: string = statusLabels[status];
+  let description = connected ? "You're ready to go." : "Connect to use AppRelay.";
+  let buttonLabel = connected ? "Disconnect" : "Connect VPN";
+  if (pairing.available) {
+    title = paired ? "Pairing started" : "Pair with your browser";
+    if (paired) {
+      description = "Return to your browser to finish. Keep the VPN connected.";
+      buttonLabel = "Done";
+    } else if (connected) {
+      description = pairing.start.isError
+        ? "Pairing couldn't start. Try again."
+        : "Starting pairing…";
+      buttonLabel = "Retry pairing";
+    } else {
+      description = "Connect the VPN to continue pairing.";
+      buttonLabel = "Connect VPN";
+    }
+  }
+  if (!isVpnAvailable) {
+    description = "Install AppRelay on an iPhone to connect.";
+  }
+
+  let progressLabel: string = statusLabels[status];
+  if (pairing.start.isPending || waitingToPair) {
+    progressLabel = "Starting pairing…";
+  } else if (connection.isPending) {
+    progressLabel = connected ? "Disconnecting…" : "Connecting…";
+  }
+
+  const error =
+    pairing.notice ??
+    pairing.start.error?.message ??
+    connection.error?.message ??
+    identity.error?.message ??
+    statusQuery.error?.message ??
+    notifications.error;
+
+  function handlePress() {
+    if (paired) {
+      pairing.dismiss();
+    } else if (pairing.available && connected) {
+      pairing.start.mutate();
+    } else {
+      connection.mutate(connected);
+    }
   }
 
   return (
     <View style={styles.screen}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>AppRelay VPN</Text>
-        <Text style={styles.status} accessibilityLiveRegion="polite">
-          {isVpnAvailable ? statusLabels[status] : "Native iOS build required"}
+      <View style={styles.content}>
+        <Text style={styles.brand}>AppRelay</Text>
+        <Text accessibilityLiveRegion="polite" style={styles.title}>
+          {title}
         </Text>
-        <Text style={styles.description}>
-          Connect registers this device securely with the VPN server. Only the returned private
-          routes use the tunnel; other destinations use your normal connection. Tunnel status does
-          not confirm a successful WireGuard handshake.
-        </Text>
-        {device && (
-          <Text selectable style={styles.description}>
-            Device: {device.device_id}
-            {"\n"}
-            Address: {device.address}
-            {"\n"}
-            Private routes: {device.wireguard.allowed_ips.join(", ")}
-            {"\n"}
-            Registration expires: {device.expires_at}
-          </Text>
-        )}
-        {!isVpnAvailable && (
-          <Text style={styles.error}>
-            Install a signed custom build on an iPhone. Expo Go, Android, web and the iOS simulator
-            cannot run this VPN.
-          </Text>
-        )}
-        {errors.length > 0 && (
+        <Text style={styles.description}>{description}</Text>
+        {error && (
           <Text accessibilityRole="alert" style={styles.error}>
-            {errors.map((error) => error?.message).join("\n")}
+            {error}
           </Text>
         )}
-        {notifications.error && (
-          <Text accessibilityRole="alert" style={styles.error}>
-            Notifications: {notifications.error} Will retry when the VPN reconnects or the app
-            returns to the foreground with the VPN connected.
-          </Text>
-        )}
-        {pairing.notice && <Text style={styles.error}>{pairing.notice}</Text>}
-        {pairing.available && (
-          <View style={{ gap: 12 }}>
-            <Text style={styles.status}>Browser pairing</Text>
-            <Text style={styles.description}>
-              Only continue if you started this request. AppRelay will register this device and
-              connect the VPN if needed. An existing connection will be reused.
-            </Text>
-            {pairing.start.isSuccess ? (
-              <Text accessibilityLiveRegion="polite" style={styles.description}>
-                Pairing request accepted. Return to the browser for progress and the final result.
-                Keep the VPN connected.
-              </Text>
-            ) : (
-              <Pressable
-                accessibilityRole="button"
-                disabled={busy || !isVpnAvailable}
-                onPress={() => pairing.start.mutate()}
-                style={[styles.button, (busy || !isVpnAvailable) && styles.disabledButton]}
-              >
-                <Text style={styles.buttonText}>
-                  {pairing.start.isPending ? "Preparing pairing…" : "Continue pairing"}
-                </Text>
-              </Pressable>
-            )}
-            {pairing.start.error && <Text style={styles.error}>{pairing.start.error.message}</Text>}
-            <Pressable accessibilityRole="button" disabled={busy} onPress={pairing.dismiss}>
-              <Text style={styles.description}>Dismiss link (does not cancel server pairing)</Text>
-            </Pressable>
+        {isVpnAvailable && (busy || waitingToPair) ? (
+          <View style={styles.progress}>
+            <ActivityIndicator color="#2456a6" />
+            <Text style={styles.description}>{progressLabel}</Text>
           </View>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled }}
+            disabled={disabled}
+            onPress={handlePress}
+            style={[styles.button, disabled && styles.disabledButton]}
+          >
+            <Text style={styles.buttonText}>{buttonLabel}</Text>
+          </Pressable>
         )}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled, busy }}
-          disabled={disabled}
-          onPress={() => connection.mutate(active)}
-          style={[styles.button, disabled && styles.disabledButton]}
-        >
-          {busy && <ActivityIndicator color="#fff" />}
-          <Text style={styles.buttonText}>{buttonLabel}</Text>
-        </Pressable>
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#f5f7fb" },
-  content: { flexGrow: 1, justifyContent: "center", padding: 24, paddingVertical: 72, gap: 16 },
+  screen: { flex: 1, backgroundColor: "#f5f7fb", justifyContent: "center", padding: 24 },
+  content: { width: "100%", maxWidth: 400, alignSelf: "center", gap: 20 },
+  brand: { fontSize: 16, fontWeight: "600", color: "#2456a6" },
   title: { fontSize: 30, fontWeight: "700", color: "#15243b" },
-  status: { fontSize: 20, fontWeight: "600", color: "#2456a6" },
-  description: { fontSize: 15, lineHeight: 22, color: "#475569" },
+  description: { fontSize: 16, lineHeight: 24, color: "#475569" },
   error: { color: "#b42318", fontSize: 14, lineHeight: 21 },
+  progress: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52 },
   button: {
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#2456a6",
-    borderRadius: 10,
-    minHeight: 52,
-    padding: 14,
+    borderRadius: 12,
+    minHeight: 54,
+    padding: 16,
   },
   disabledButton: { opacity: 0.45 },
   buttonText: { color: "#fff", fontSize: 18, fontWeight: "600" },
