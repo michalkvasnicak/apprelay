@@ -38,7 +38,7 @@ for (const key of Object.keys(env)) {
     delete env[key];
   }
 }
-Object.assign(env, values, { EXPO_NO_DOTENV: "1" });
+Object.assign(env, values, { EXPO_NO_DOTENV: "1", APPRELAY_ENV: environment });
 
 const result = spawnSync(command, args, { cwd: projectRoot, env, stdio: "inherit" });
 if (result.error) {

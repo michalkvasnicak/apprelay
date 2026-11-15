@@ -41,6 +41,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ios: {
       ...config.ios,
       bundleIdentifier,
+      infoPlist: {
+        ...config.ios?.infoPlist,
+        CFBundleDisplayName:
+          process.env.APPRELAY_ENV === "local" ? "AppRelay VPN (Local)" : "AppRelay VPN",
+      },
       ...(buildNumber ? { buildNumber } : {}),
       ...(teamId ? { appleTeamId: teamId } : {}),
     },
