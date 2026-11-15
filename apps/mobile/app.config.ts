@@ -9,6 +9,27 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     );
   }
 
+  const apiUrl = process.env.EXPO_PUBLIC_VPN_API_URL?.trim();
+  if (!apiUrl) {
+    throw new Error("Set EXPO_PUBLIC_VPN_API_URL to the VPN server's HTTPS base URL.");
+  }
+  let url: URL;
+  try {
+    url = new URL(apiUrl);
+  } catch {
+    throw new Error("EXPO_PUBLIC_VPN_API_URL must be a valid HTTPS base URL.");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+    throw new Error(
+      "EXPO_PUBLIC_VPN_API_URL must be an HTTPS base URL without credentials, query or fragment.",
+    );
+  }
+
+  const apiKey = process.env.EXPO_PUBLIC_API_KEY;
+  if (!apiKey || !/^[a-fA-F0-9]{64}$/.test(apiKey)) {
+    throw new Error("Set EXPO_PUBLIC_API_KEY to the server's 64-character hexadecimal app key.");
+  }
+
   return {
     ...config,
     name: config.name ?? "apprelay",
