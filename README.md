@@ -33,7 +33,9 @@ Use `pnpm --filter @apprelay/mobile <command>` to target the app directly. Add E
 
 Run `pnpm web:dev` to open the signing preview at `http://localhost:5173`.
 Vite proxies API requests to the Rust server at `127.0.0.1:8080`; start it separately with `pnpm server`.
-Apple authentication and signing are not implemented yet.
+Apple authentication, trusted-device 2FA, and basic certificate/profile preparation are experimental and not live-verified. IPA signing is not integrated yet.
+The device UDID is supplied through `VITE_DEVICE_UDID` (see `apps/server/web/.env.example`); the default placeholder blocks device provisioning.
+Optional sessions and signing assets use a passphrase-encrypted localStorage vault. Apple passwords and verification codes are never saved.
 
 `pnpm web:build` produces `apps/server/web/dist`, which Axum serves at `/`.
 Set `APPRELAY_WEB_DIR` to override the asset directory. The production Docker image builds and includes these assets; its build context is the repository root.
@@ -89,4 +91,4 @@ It also runs as part of `pnpm typecheck` and the automatic Pi checks.
 - Husky runs lint-staged before commits, formatting and re-staging supported staged files with oxfmt or rustfmt.
 - Pi runs lint and typecheck automatically before settling. See [`.pi/README.md`](.pi/README.md).
 
-The signing frontend is a single-page preview; Apple authentication, provisioning, signing, and installation are not yet implemented.
+The signing frontend is experimental. IPA signing, capability/extension handling, and installation are not yet implemented.

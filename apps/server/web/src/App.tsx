@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { AccountWorkspace } from "./account/AccountWorkspace";
 
 const steps = [
   {
@@ -8,71 +8,15 @@ const steps = [
   },
   {
     number: "02",
-    title: "App & device",
-    description: "Choose an IPA and your device’s hardware UDID.",
+    title: "Signing assets",
+    description: "Prepare a certificate and profile for the supplied device.",
   },
   {
     number: "03",
     title: "Sign & download",
-    description: "Review, sign locally, and download your IPA.",
+    description: "IPA signing and download are coming next.",
   },
 ] as const;
-
-const connectionLabels = {
-  pending: "Checking API",
-  success: "API connected",
-  error: "API unavailable",
-} as const;
-
-function ApiStatus() {
-  const health = useQuery({
-    queryKey: ["health"],
-    queryFn: async ({ signal }) => {
-      const response = await fetch("/health", {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
-        cache: "no-store",
-      });
-      const body: unknown = await response.json();
-      if (
-        !response.ok ||
-        typeof body !== "object" ||
-        body === null ||
-        !("status" in body) ||
-        body.status !== "ok"
-      ) {
-        throw new Error("API health check failed");
-      }
-      return body.status;
-    },
-    retry: false,
-  });
-  const status = health.isFetching ? "pending" : health.status;
-
-  return (
-    <div className="flex items-center gap-3 text-xs text-stone-500">
-      <span role="status" className="inline-flex items-center gap-2">
-        <span
-          aria-hidden="true"
-          className={
-            status === "success"
-              ? "size-1.5 rounded-full bg-emerald-600"
-              : "size-1.5 rounded-full bg-stone-400"
-          }
-        />
-        {connectionLabels[status]}
-      </span>
-      {status === "error" && (
-        <button
-          type="button"
-          onClick={() => void health.refetch()}
-          className="cursor-pointer underline decoration-stone-300 underline-offset-4 hover:text-stone-900"
-        >
-          Retry
-        </button>
-      )}
-    </div>
-  );
-}
 
 export function App() {
   return (
@@ -105,8 +49,8 @@ export function App() {
             A simpler way to sign.
           </h1>
           <p className="mt-5 text-base leading-7 text-stone-600">
-            A browser-local signing workflow for your iOS apps. Connect your Apple account, choose
-            an app and device, then sign and download.
+            Connect your Apple account and prepare signing assets for your preconfigured device.
+            Private signing keys stay in your browser.
           </p>
         </div>
 
@@ -121,27 +65,7 @@ export function App() {
               </h2>
             </div>
             <div className="px-6 py-8 sm:px-8">
-              <span className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900">
-                In development
-              </span>
-              <h3 className="mt-6 text-2xl font-semibold tracking-tight">
-                The foundation is ready.
-              </h3>
-              <p className="mt-3 max-w-lg text-sm leading-6 text-stone-600">
-                Apple sign-in, provisioning, and IPA signing are not connected yet. No credentials
-                or files are collected in this preview.
-              </p>
-              <button
-                type="button"
-                disabled
-                aria-describedby="sign-in-notice"
-                className="mt-8 w-full cursor-not-allowed rounded-lg bg-stone-100 px-5 py-3 text-sm font-medium text-stone-400 sm:w-auto"
-              >
-                Connect Apple account
-              </button>
-              <p id="sign-in-notice" className="mt-3 text-xs text-stone-500">
-                Available when Apple authentication is integrated.
-              </p>
+              <AccountWorkspace />
             </div>
           </section>
 
@@ -169,15 +93,14 @@ export function App() {
         </div>
 
         <p className="mt-6 max-w-2xl text-xs leading-6 text-stone-500">
-          Designed to keep private signing keys and IPA files in your browser. Apple authentication
-          will use an HTTPS relay. Installation is a separate, later step.
+          Signing keys are generated locally. Apple authentication uses an HTTPS relay; the relay
+          can read Apple tokens in transit. IPA signing and installation are separate, later steps.
         </p>
       </main>
 
       <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-stone-200 py-6">
         <p className="text-xs text-stone-500">AppRelay · Browser signing workspace</p>
         <div className="flex items-center gap-5">
-          <ApiStatus />
           <a
             href="/openapi.json"
             className="text-xs text-stone-500 underline decoration-stone-300 underline-offset-4 hover:text-stone-900"
