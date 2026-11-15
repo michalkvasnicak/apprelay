@@ -28,6 +28,15 @@ export function getRegistrationUrl(): string {
   return `${url.toString().replace(/\/$/, "")}/v1/devices`;
 }
 
+export function getAppKeyHeaders(): { "X-App-Key": string } {
+  // Expo requires a direct reference for build-time inlining. This is not a secret.
+  const value = process.env.EXPO_PUBLIC_API_KEY;
+  if (!value || !/^[a-fA-F0-9]{64}$/.test(value)) {
+    throw new Error("Set EXPO_PUBLIC_API_KEY to the server's 64-character hexadecimal app key.");
+  }
+  return { "X-App-Key": value };
+}
+
 export async function registerDevice(publicKey: string): Promise<DeviceRegistration> {
   const url = getRegistrationUrl();
   const scope = `${url}:${publicKey}`;
@@ -35,6 +44,7 @@ export async function registerDevice(publicKey: string): Promise<DeviceRegistrat
   const response = await fetch(url, {
     method: "POST",
     headers: {
+      ...getAppKeyHeaders(),
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },

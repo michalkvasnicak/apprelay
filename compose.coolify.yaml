@@ -97,6 +97,7 @@ services:
     environment:
       <<: [*database-environment, *temporal-environment]
       APPRELAY_HTTP_ADDRESS: 0.0.0.0:8080
+      APPRELAY_API_KEY: ${APPRELAY_API_KEY:?Set a random 64-character hexadecimal app key}
       APPRELAY_VPN_AGENT_SOCKET: /run/apprelay/vpn-agent.sock
       APPRELAY_APNS_ENVIRONMENT: ${APPRELAY_APNS_ENVIRONMENT:?Set sandbox or production}
       APPRELAY_DEVICE_LIFETIME_SECONDS: ${APPRELAY_DEVICE_LIFETIME_SECONDS:-604800}

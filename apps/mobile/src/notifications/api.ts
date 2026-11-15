@@ -1,4 +1,4 @@
-import { getRegistrationUrl } from "../vpn/config";
+import { getAppKeyHeaders, getRegistrationUrl } from "../vpn/config";
 
 export async function syncPushToken(
   deviceId: string,
@@ -11,6 +11,7 @@ export async function syncPushToken(
     {
       method: token === null ? "DELETE" : "PUT",
       headers: {
+        ...getAppKeyHeaders(),
         Authorization: `Bearer ${bearerToken}`,
         ...(token === null ? {} : { "Content-Type": "application/json" }),
       },

@@ -23,13 +23,14 @@ Requires a signed native build on a physical iPhone. Expo Go, the iOS simulator,
 
 Copy `apps/mobile/.env.example` to `apps/mobile/.env.local` and set:
 
-| Variable                  | Value                                                                                                                         |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `APPLE_TEAM_ID`           | Your Apple Developer Team ID.                                                                                                 |
-| `APPLE_BUNDLE_IDENTIFIER` | The app's bundle identifier. Required for every build.                                                                        |
-| `EXPO_PUBLIC_VPN_API_URL` | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment. |
+| Variable                  | Value                                                                                                                                                                               |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APPLE_TEAM_ID`           | Your Apple Developer Team ID.                                                                                                                                                       |
+| `APPLE_BUNDLE_IDENTIFIER` | The app's bundle identifier. Required for every build.                                                                                                                              |
+| `EXPO_PUBLIC_VPN_API_URL` | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment.                                                       |
+| `EXPO_PUBLIC_API_KEY`     | Required 64-character hexadecimal app key matching the server's `APPRELAY_API_KEY`. Sent as `X-App-Key` on API requests; embedded in the app and extractable, not a private secret. |
 
-Do not put secrets in `EXPO_PUBLIC_` variables. Keep `.env.local` out of version control.
+Do not put private secrets in `EXPO_PUBLIC_` variables. Keep `.env.local` out of version control.
 
 Provide these variables in the release build environment as well. Restart Expo after configuration changes and rebuild distributed apps to apply them.
 

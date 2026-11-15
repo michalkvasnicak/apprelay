@@ -1,6 +1,9 @@
+mod app_key;
 mod auth;
 mod pairing_codes;
 mod push_tokens;
+
+pub use app_key::AppKey;
 
 use std::{net::Ipv4Addr, time::Instant};
 
@@ -68,9 +71,9 @@ pub fn router(
     agent: Client,
     push_tokens: PushTokenRepository,
     codes: PairingCodeRepository,
+    app_key: AppKey,
 ) -> Router {
     Router::new()
-        .route("/health", get(health))
         .route("/v1/devices", post(register_device))
         .route(
             "/v1/devices/{device_id}/push-token",
@@ -80,6 +83,11 @@ pub fn router(
             "/v1/devices/{device_id}/pairing-code",
             get(pairing_codes::get),
         )
+        .route_layer(middleware::from_fn_with_state(
+            app_key,
+            app_key::require_app_key,
+        ))
+        .route("/health", get(health))
         .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn(log_request))
         .with_state(AppState {

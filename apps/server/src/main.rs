@@ -15,6 +15,7 @@ async fn main() -> std::io::Result<()> {
         signal::unix::{SignalKind, signal},
     };
 
+    let app_key = http::AppKey::from_env()?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     let lifetime_seconds = std::env::var("APPRELAY_DEVICE_LIFETIME_SECONDS")
@@ -62,14 +63,17 @@ async fn main() -> std::io::Result<()> {
 
     let cleanup = tokio::spawn(cleanup::run(pool.clone(), agent.clone()));
     let reconciliation = tokio::spawn(reconciliation::run(pool, agent.clone()));
-    let result = axum::serve(listener, http::router(devices, agent, push_tokens, codes))
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = interrupt.recv() => {},
-                _ = terminate.recv() => {},
-            }
-        })
-        .await;
+    let result = axum::serve(
+        listener,
+        http::router(devices, agent, push_tokens, codes, app_key),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {},
+            _ = terminate.recv() => {},
+        }
+    })
+    .await;
     cleanup.abort();
     reconciliation.abort();
     let _ = cleanup.await;
