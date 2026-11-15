@@ -12,5 +12,8 @@
 
 https://{$APPRELAY_HTTPS_HOST}:8443 {
 	tls internal
-	reverse_proxy {$APPRELAY_API_UPSTREAM}
+	reverse_proxy {$APPRELAY_API_UPSTREAM} {
+		# Overwrite any client-supplied value with the actual connecting IP.
+		header_up CF-Connecting-IP {remote_host}
+	}
 }

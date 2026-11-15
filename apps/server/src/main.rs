@@ -16,6 +16,7 @@ async fn main() -> std::io::Result<()> {
     };
 
     let app_key = http::AppKey::from_env()?;
+    let registration_limiter = http::RegistrationRateLimiter::from_env().await?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     let lifetime_seconds = std::env::var("APPRELAY_DEVICE_LIFETIME_SECONDS")
@@ -65,7 +66,15 @@ async fn main() -> std::io::Result<()> {
     let reconciliation = tokio::spawn(reconciliation::run(pool, agent.clone()));
     let result = axum::serve(
         listener,
-        http::router(devices, agent, push_tokens, codes, app_key),
+        http::router(
+            devices,
+            agent,
+            push_tokens,
+            codes,
+            app_key,
+            registration_limiter,
+        )
+        .into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
         tokio::select! {

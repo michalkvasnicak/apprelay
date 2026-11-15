@@ -2,8 +2,10 @@ mod app_key;
 mod auth;
 mod pairing_codes;
 mod push_tokens;
+mod rate_limit;
 
 pub use app_key::AppKey;
+pub use rate_limit::RegistrationRateLimiter;
 
 use std::{net::Ipv4Addr, time::Instant};
 
@@ -72,9 +74,16 @@ pub fn router(
     push_tokens: PushTokenRepository,
     codes: PairingCodeRepository,
     app_key: AppKey,
+    registration_limiter: RegistrationRateLimiter,
 ) -> Router {
     Router::new()
-        .route("/v1/devices", post(register_device))
+        .route(
+            "/v1/devices",
+            post(register_device).layer(middleware::from_fn_with_state(
+                registration_limiter,
+                rate_limit::limit_registration,
+            )),
+        )
         .route(
             "/v1/devices/{device_id}/push-token",
             put(push_tokens::put).delete(push_tokens::delete),

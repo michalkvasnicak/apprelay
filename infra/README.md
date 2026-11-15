@@ -1,6 +1,6 @@
 # Local infrastructure
 
-Docker Compose runs PostgreSQL, Temporal, and Caddy. The Rust API, pairing worker,
+Docker Compose runs PostgreSQL, Redis, Temporal, and Caddy. The Rust API, pairing worker,
 and root VPN agent stay native on macOS; containers need no VPN privileges or
 server private key.
 
@@ -25,7 +25,7 @@ docker compose ps
 docker compose logs -f
 ```
 
-The default HTTPS URL is `https://localhost:8443`. PostgreSQL is published only on `127.0.0.1:5432`. Only HTTPS TCP is published for Caddy; its administration port and HTTP/3 UDP are not exposed.
+The default HTTPS URL is `https://localhost:8443`. PostgreSQL is published only on `127.0.0.1:5432`; development Redis is published only on `127.0.0.1:6379`. Redis rate-limit counters are ephemeral. Only HTTPS TCP is published for Caddy; its administration port and HTTP/3 UDP are not exposed.
 
 Named volumes persist PostgreSQL data, Temporal's SQLite database, Caddy
 certificates and its local CA. Services are independent: Caddy does not need
