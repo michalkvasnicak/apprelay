@@ -38,8 +38,6 @@ If you already have `.env.local`, keep it; do not overwrite it. Fill in the foll
 | `EXPO_PUBLIC_VPN_API_URL` | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment.                                                       |
 | `EXPO_PUBLIC_API_KEY`     | Required 64-character hexadecimal app key matching the server's `APPRELAY_API_KEY`. Sent as `X-App-Key` on API requests; embedded in the app and extractable, not a private secret. |
 
-For TestFlight, `APPLE_ENCRYPTION_EXPORT_COMPLIANCE_CODE` optionally supplies Apple's approval code after completing **App Store Connect → App Information → App Encryption Documentation**. The app declares non-exempt encryption because it bundles WireGuard; the declaration alone does not clear compliance requirements. Confirm the applicable classification and documentation with Apple's assessment before distributing.
-
 Choose your own reverse-DNS bundle identifiers registered with your Apple Developer team. For example, replace `com.example.apprelay.dev` for local development and `com.example.apprelay` for distribution with identifiers you own. A separate local identifier lets both apps coexist; TestFlight and any future App Store release can share the same distribution identifier.
 
 Do not put private secrets in `EXPO_PUBLIC_` variables. Both env files are ignored by Git; only the examples are committed. The API URL and app key are validated when Expo evaluates the configuration, before building.
