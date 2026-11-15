@@ -26,6 +26,12 @@ async fn cleanup_batch(pool: &PgPool, agent: &Client) -> Result<u32, Box<dyn Err
     sqlx::query("DELETE FROM pairing_attempts WHERE expires_at <= clock_timestamp()")
         .execute(pool)
         .await?;
+    sqlx::query(
+        "DELETE FROM public_pairing_attempts
+        WHERE expires_at < clock_timestamp() - INTERVAL '24 hours'",
+    )
+    .execute(pool)
+    .await?;
     let mut removed = 0;
     // Bound each sweep so a large backlog cannot monopolize the agent.
     for _ in 0..100 {

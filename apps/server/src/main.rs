@@ -63,6 +63,7 @@ async fn main() -> std::io::Result<()> {
     eprintln!("HTTP server listening on {}", listener.local_addr()?);
 
     let cleanup = tokio::spawn(cleanup::run(pool.clone(), agent.clone()));
+    let attempts = db::pairing_attempts::PairingAttemptRepository::new(pool.clone());
     let reconciliation = tokio::spawn(reconciliation::run(pool, agent.clone()));
     let result = axum::serve(
         listener,
@@ -73,6 +74,7 @@ async fn main() -> std::io::Result<()> {
             codes,
             app_key,
             registration_limiter,
+            attempts,
         )
         .into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )

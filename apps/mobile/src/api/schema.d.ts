@@ -32,6 +32,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/devices/{device_id}/pairing": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["start_pairing_attempt"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/devices/{device_id}/pairing-code": {
     parameters: {
       query?: never;
@@ -64,13 +80,74 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/pairing-attempts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["create_pairing_attempt"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/pairing-attempts/{token}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["get_pairing_attempt"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    AttemptStatus:
+      | {
+          /** @enum {string} */
+          status: "pending";
+        }
+      | {
+          /** @enum {string} */
+          status: "pairing";
+        }
+      | {
+          /** @enum {string} */
+          status: "success";
+        }
+      | {
+          reason: components["schemas"]["FailureReason"];
+          /** @enum {string} */
+          status: "failed";
+        }
+      | {
+          /** @enum {string} */
+          status: "expired";
+        };
+    CreatedAttempt: {
+      /** Format: date-time */
+      expires_at: string;
+      token: string;
+    };
     ErrorResponse: {
       error: string;
     };
+    /** @enum {string} */
+    FailureReason: "pairing_failed" | "timeout";
     Health: {
       status: string;
     };
@@ -95,6 +172,9 @@ export interface components {
       lifetime_seconds: number;
       token: string;
       wireguard: components["schemas"]["WireguardConfiguration"];
+    };
+    StartRequest: {
+      token: string;
     };
     WireguardConfiguration: {
       allowed_ips: string[];
@@ -207,6 +287,102 @@ export interface operations {
         };
       };
       /** @description Provisioning unavailable */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  start_pairing_attempt: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        device_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartRequest"];
+      };
+    };
+    responses: {
+      /** @description Attempt claimed and durably queued; same-device retries are safe */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      410: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
       503: {
         headers: {
           [name: string]: unknown;
@@ -369,6 +545,87 @@ export interface operations {
         content?: never;
       };
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  create_pairing_attempt: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreatedAttempt"];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  get_pairing_attempt: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Secret pairing attempt capability */
+        token: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AttemptStatus"];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
         headers: {
           [name: string]: unknown;
         };

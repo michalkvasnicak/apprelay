@@ -118,13 +118,46 @@ pub(super) async fn limit_registration(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
+    limit(
+        limiter,
+        request,
+        next,
+        "registration",
+        CAPACITY,
+        EMISSION_INTERVAL,
+    )
+    .await
+}
+
+pub(super) async fn limit_pairing_attempts(
+    State(limiter): State<RegistrationRateLimiter>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let polling = request.method() == axum::http::Method::GET;
+    let (scope, capacity, emission) = if polling {
+        ("pairing-poll", 60, Duration::from_secs(1))
+    } else {
+        ("pairing-create", CAPACITY, EMISSION_INTERVAL)
+    };
+    limit(limiter, request, next, scope, capacity, emission).await
+}
+
+async fn limit(
+    limiter: RegistrationRateLimiter,
+    request: Request,
+    next: Next,
+    scope: &str,
+    capacity: u16,
+    emission: Duration,
+) -> Result<Response, ApiError> {
     let ip = limiter.client_ip(&request)?;
-    let key = format!("apprelay:rate-limit:registration:{ip}");
+    let key = format!("apprelay:rate-limit:{scope}:{ip}");
     // The library owns the GCRA algorithm and atomic Redis script. Bound the
     // entire check, including script loading, rather than just each command.
     match timeout(
         Duration::from_secs(1),
-        rate_limit(&limiter.pool, key, CAPACITY, EMISSION_INTERVAL),
+        rate_limit(&limiter.pool, key, capacity, emission),
     )
     .await
     {
@@ -132,7 +165,7 @@ pub(super) async fn limit_registration(
         Ok(Ok(Some(retry_after))) => {
             let mut response = ApiError {
                 status: StatusCode::TOO_MANY_REQUESTS,
-                message: "too many registration requests",
+                message: "too many requests",
             }
             .into_response();
             response
@@ -141,10 +174,8 @@ pub(super) async fn limit_registration(
             Ok(response)
         }
         _ => {
-            eprintln!("Registration rate-limit Redis check failed");
-            Err(ApiError::unavailable(
-                "registration rate limiter is unavailable",
-            ))
+            eprintln!("HTTP rate-limit Redis check failed");
+            Err(ApiError::unavailable("rate limiter is unavailable"))
         }
     }
 }

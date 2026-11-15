@@ -59,11 +59,12 @@ impl PairingStore {
     pub(crate) async fn save(
         &self,
         device_id: Uuid,
-        attempt_id: Uuid,
+        attempts: (Uuid, Option<Uuid>),
         expected_expiry: DateTime<Utc>,
         attempt_started_at: DateTime<Utc>,
         record: &PairingRecord,
     ) -> io::Result<()> {
+        let (attempt_id, public_attempt_id) = attempts;
         let pairing_file = Zeroizing::new(record.pairing_file.to_bytes());
         let host = &record.host_info;
         let peer = &record.peer;
@@ -113,6 +114,24 @@ impl PairingStore {
             return Err(io::Error::other(
                 "device registration changed or expired before pairing was saved",
             ));
+        }
+        if let Some(public_attempt_id) = public_attempt_id {
+            let completed = sqlx::query(
+                "UPDATE public_pairing_attempts SET status = 'success'
+                 WHERE id = $1 AND device_id = $2 AND device_expires_at = $3
+                   AND status = 'pairing' AND expires_at > clock_timestamp()",
+            )
+            .bind(public_attempt_id)
+            .bind(device_id)
+            .bind(expected_expiry)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| io::Error::other("could not complete public pairing attempt"))?;
+            if completed.rows_affected() != 1 {
+                return Err(io::Error::other(
+                    "public pairing attempt changed or expired",
+                ));
+            }
         }
         let saved = sqlx::query(
             "INSERT INTO device_pairings

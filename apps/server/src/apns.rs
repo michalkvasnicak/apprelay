@@ -142,8 +142,8 @@ impl ApnsClient {
             ),
             NotificationContent::Success => (
                 "success",
-                "Pairing successful",
-                "Your device has been paired with AppRelay.".to_owned(),
+                "Pair setup complete",
+                "Pair setup is complete.".to_owned(),
             ),
             NotificationContent::Timeout => (
                 "timeout",

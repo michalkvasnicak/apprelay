@@ -1,6 +1,7 @@
 mod app_key;
 mod auth;
 mod openapi;
+mod pairing_attempts;
 mod pairing_codes;
 mod push_tokens;
 mod rate_limit;
@@ -41,6 +42,7 @@ struct AppState {
     agent: Client,
     push_tokens: PushTokenRepository,
     codes: PairingCodeRepository,
+    attempts: crate::db::pairing_attempts::PairingAttemptRepository,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -78,12 +80,13 @@ pub fn router(
     codes: PairingCodeRepository,
     app_key: AppKey,
     registration_limiter: RegistrationRateLimiter,
+    attempts: crate::db::pairing_attempts::PairingAttemptRepository,
 ) -> Router {
     Router::new()
         .route(
             "/v1/devices",
             post(register_device).layer(middleware::from_fn_with_state(
-                registration_limiter,
+                registration_limiter.clone(),
                 rate_limit::limit_registration,
             )),
         )
@@ -95,10 +98,23 @@ pub fn router(
             "/v1/devices/{device_id}/pairing-code",
             get(pairing_codes::get),
         )
+        .route(
+            "/v1/devices/{device_id}/pairing",
+            post(pairing_attempts::start),
+        )
         .route_layer(middleware::from_fn_with_state(
             app_key,
             app_key::require_app_key,
         ))
+        .merge(
+            Router::new()
+                .route("/v1/pairing-attempts", post(pairing_attempts::create))
+                .route("/v1/pairing-attempts/{token}", get(pairing_attempts::get))
+                .route_layer(middleware::from_fn_with_state(
+                    registration_limiter,
+                    rate_limit::limit_pairing_attempts,
+                )),
+        )
         .route("/health", get(health))
         .route("/openapi.json", get(|| async { Json(document()) }))
         .layer(DefaultBodyLimit::max(1024))
@@ -108,14 +124,27 @@ pub fn router(
             agent,
             push_tokens,
             codes,
+            attempts,
         })
 }
 
 async fn log_request(request: Request, next: Next) -> Response {
     let method = request.method().clone();
-    let path = request.uri().path().to_owned();
+    let path = if request.uri().path().starts_with("/v1/pairing-attempts/") {
+        "/v1/pairing-attempts/[redacted]".to_owned()
+    } else {
+        request.uri().path().to_owned()
+    };
     let started = Instant::now();
-    let response = next.run(request).await;
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::REFERRER_POLICY,
+        axum::http::HeaderValue::from_static("no-referrer"),
+    );
     eprintln!(
         "HTTP {method} {path:?} -> {} ({} ms)",
         response.status().as_u16(),
@@ -258,11 +287,6 @@ async fn register_device(
         return Err(ApiError::unavailable(
             "registration expired; retry registration",
         ));
-    }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if let Err(error) = crate::temporal_pairing::start(device.id).await {
-        // Registration remains valid even when the pairing queue is unavailable.
-        eprintln!("Could not queue pairing for device {}: {error}", device.id);
     }
     Ok((
         StatusCode::CREATED,

@@ -13,6 +13,9 @@ use utoipa::{
         super::health,
         super::register_device,
         super::pairing_codes::get,
+        super::pairing_attempts::create,
+        super::pairing_attempts::get,
+        super::pairing_attempts::start,
         super::push_tokens::put,
         super::push_tokens::delete
     ),

@@ -1,4 +1,5 @@
 pub mod devices;
+pub mod pairing_attempts;
 pub mod pairing_codes;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) mod pairings;

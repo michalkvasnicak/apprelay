@@ -134,6 +134,7 @@ impl PairingCodeRepository {
         device_expiry: DateTime<Utc>,
         started_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
+        public_attempt_id: Option<Uuid>,
     ) -> io::Result<Uuid> {
         let id = Uuid::new_v4();
         let mut tx = self.pool.begin().await.map_err(storage_error)?;
@@ -149,6 +150,19 @@ impl PairingCodeRepository {
         if valid.is_none() {
             return Err(io::Error::other("device registration changed or expired"));
         }
+        let owned = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM public_pairing_attempts
+             WHERE device_id = $1 AND status = 'pairing' AND expires_at > clock_timestamp()
+               AND ($2::uuid IS NULL OR id = $2))",
+        )
+        .bind(device_id)
+        .bind(public_attempt_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(storage_error)?;
+        if owned != public_attempt_id.is_some() {
+            return Err(io::Error::other("device pairing ownership changed"));
+        }
         let saved = sqlx::query(
             "INSERT INTO pairing_attempts
                  (id, device_id, device_expires_at, started_at, expires_at, timeout_notification_id)
@@ -163,7 +177,8 @@ impl PairingCodeRepository {
                success_notification_queued_at = NULL, success_notification_sent_at = NULL,
                timeout_notification_id = EXCLUDED.timeout_notification_id,
                timeout_notification_queued_at = NULL, timeout_notification_sent_at = NULL
-             WHERE pairing_attempts.started_at <= EXCLUDED.started_at",
+             WHERE pairing_attempts.started_at <= EXCLUDED.started_at
+               AND (pairing_attempts.ended_at IS NOT NULL OR pairing_attempts.expires_at <= clock_timestamp())",
         )
         .bind(id)
         .bind(device_id)

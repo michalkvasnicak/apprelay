@@ -100,6 +100,65 @@ impl PairDeviceWorkflow {
     }
 }
 
+// Separate workflow type preserves command history for existing CLI workflows.
+#[workflow]
+#[derive(Default)]
+pub struct PairAttemptWorkflow;
+
+#[workflow_methods]
+impl PairAttemptWorkflow {
+    #[run]
+    pub async fn run(ctx: &mut WorkflowContext<Self>, input: String) -> WorkflowResult<()> {
+        let result = async {
+            ctx.execute_activity(
+                PairingActivities::wait_for_connection,
+                input.clone(),
+                ActivityOptions::with_start_to_close_timeout(CONNECTION_LIMIT)
+                    .heartbeat_timeout(Duration::from_secs(10))
+                    .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
+                    .build(),
+            )
+            .await?;
+            ctx.execute_activity(
+                PairingActivities::pair_device,
+                input.clone(),
+                ActivityOptions::with_start_to_close_timeout(SESSION_LIMIT)
+                    .heartbeat_timeout(Duration::from_secs(10))
+                    .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
+                    .build(),
+            )
+            .await?;
+            Ok(())
+        }
+        .await;
+        if result.is_err() {
+            ctx.execute_activity(
+                PairingActivities::fail_attempt,
+                input,
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(10))
+                    .retry_policy(RetryPolicy::builder().maximum_attempts(3).build())
+                    .build(),
+            )
+            .await?;
+        }
+        result
+    }
+}
+
+fn activity_ids(input: &str) -> io::Result<(Uuid, Option<Uuid>)> {
+    let (device, attempt) = match input.split_once('/') {
+        Some((device, attempt)) => (device, Some(attempt)),
+        None => (input, None),
+    };
+    Ok((
+        Uuid::parse_str(device).map_err(io::Error::other)?,
+        attempt
+            .map(Uuid::parse_str)
+            .transpose()
+            .map_err(io::Error::other)?,
+    ))
+}
+
 pub struct PairingActivities {
     pool: PgPool,
     agent: Client,
@@ -110,13 +169,33 @@ pub struct PairingActivities {
 #[activities]
 impl PairingActivities {
     #[activity]
+    pub async fn fail_attempt(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        input: String,
+    ) -> Result<(), ActivityError> {
+        let (_, attempt) = activity_ids(&input)?;
+        sqlx::query(
+            "UPDATE public_pairing_attempts SET status = 'failed',
+             reason = CASE WHEN expires_at <= clock_timestamp() THEN 'timeout' ELSE 'pairing_failed' END
+             WHERE id = $1 AND status = 'pairing'",
+        )
+        .bind(attempt)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| io::Error::other("could not finish pairing attempt"))?;
+        Ok(())
+    }
+
+    #[activity]
     pub async fn wait_for_connection(
         self: Arc<Self>,
         ctx: ActivityContext,
         device_id: String,
     ) -> Result<(), ActivityError> {
-        let device_id = Uuid::parse_str(&device_id)?;
+        let (device_id, public_attempt_id) = activity_ids(&device_id)?;
         let operation = async {
+            let attempt_expiry = self.require_attempt(device_id, public_attempt_id).await?;
             let (public_key, expires_at) = sqlx::query_as::<_, (Vec<u8>, DateTime<Utc>)>(
                 "SELECT wireguard_public_key, expires_at FROM devices
                      WHERE id = $1 AND expires_at > statement_timestamp()",
@@ -132,7 +211,7 @@ impl PairingActivities {
             eprintln!("Waiting for device {device_id} to establish its WireGuard connection");
             let mut last_error = None;
             loop {
-                if Utc::now() >= expires_at {
+                if Utc::now() >= attempt_expiry.unwrap_or(expires_at).min(expires_at) {
                     return Err(io::Error::other("device expired while waiting for VPN"));
                 }
                 match self.agent.require_connected_peer(public_key).await {
@@ -166,9 +245,10 @@ impl PairingActivities {
         ctx: ActivityContext,
         device_id: String,
     ) -> Result<(), ActivityError> {
-        let device_id = Uuid::parse_str(&device_id)?;
+        let (device_id, public_attempt_id) = activity_ids(&device_id)?;
         let deadline = Instant::now() + SESSION_LIMIT;
         let prepare = async {
+            let attempt_expiry = self.require_attempt(device_id, public_attempt_id).await?;
             // Resolve the address at execution time, never from a queued IP payload.
             let (address, expires_at, attempt_started_at, public_key) =
                 sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, Vec<u8>)>(
@@ -194,7 +274,7 @@ impl PairingActivities {
                     "device address does not belong to the running VPN",
                 ));
             }
-            let remaining = (expires_at - Utc::now())
+            let remaining = (attempt_expiry.unwrap_or(expires_at).min(expires_at) - Utc::now())
                 .to_std()
                 .map_err(io::Error::other)?;
             let lease_deadline = Instant::now() + remaining;
@@ -214,7 +294,13 @@ impl PairingActivities {
                 .map_err(io::Error::other)?;
             let attempt_id = self
                 .codes
-                .begin(device_id, expires_at, attempt_started_at, code_expiry)
+                .begin(
+                    device_id,
+                    expires_at,
+                    attempt_started_at,
+                    code_expiry,
+                    public_attempt_id,
+                )
                 .await?;
             eprintln!("Starting pairing activity for device {device_id} at {peer}");
             Ok((
@@ -241,7 +327,7 @@ impl PairingActivities {
             self.pairings
                 .save(
                     device_id,
-                    attempt_id,
+                    (attempt_id, public_attempt_id),
                     expires_at,
                     attempt_started_at,
                     &record,
@@ -262,6 +348,76 @@ impl PairingActivities {
             eprintln!("Could not invalidate pairing code; it will expire at the session deadline");
         }
         result
+    }
+}
+
+impl PairingActivities {
+    async fn require_attempt(
+        &self,
+        device: Uuid,
+        attempt: Option<Uuid>,
+    ) -> io::Result<Option<DateTime<Utc>>> {
+        let valid = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT a.expires_at FROM public_pairing_attempts a JOIN devices d ON d.id = a.device_id
+                WHERE a.device_id = $1 AND ($2::uuid IS NULL OR a.id = $2)
+                  AND a.status = 'pairing' AND a.expires_at > clock_timestamp()
+                  AND d.expires_at = a.device_expires_at AND d.expires_at > clock_timestamp()",
+        )
+        .bind(device)
+        .bind(attempt)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| io::Error::other("could not validate pairing attempt"))?;
+        // CLI sessions cannot race a web-owned session.
+        if valid.is_some() != attempt.is_some() {
+            return Err(io::Error::other(
+                "pairing attempt expired, changed, or device is busy",
+            ));
+        }
+        Ok(valid)
+    }
+}
+
+// A committed claim survives HTTP cancellation and Temporal outages. Workflow IDs
+// deduplicate uncertain enqueue results, including already completed workflows.
+async fn dispatch_attempts(pool: PgPool) {
+    loop {
+        let result = async {
+            sqlx::query("UPDATE public_pairing_attempts SET status = 'expired'
+                WHERE status IN ('pending', 'pairing') AND expires_at <= clock_timestamp()")
+                .execute(&pool).await?;
+            let rows = sqlx::query_as::<_, (Uuid, Uuid)>(
+                "SELECT id, device_id FROM public_pairing_attempts
+                 WHERE status = 'pairing' AND queued_at IS NULL AND expires_at > clock_timestamp()
+                 ORDER BY expires_at LIMIT 100",
+            ).fetch_all(&pool).await?;
+            if rows.is_empty() {
+                return Ok::<(), Error>(());
+            }
+            let client = client().await?;
+            for (attempt, device) in rows {
+                let started = client.start_workflow(
+                    PairAttemptWorkflow::run,
+                    format!("{device}/{attempt}"),
+                    WorkflowStartOptions::new(TASK_QUEUE, format!("pair-attempt-{attempt}"))
+                        .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
+                        .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
+                        .build(),
+                ).await;
+                if started.is_err() {
+                    eprintln!("Could not enqueue pairing attempt {attempt}; will retry");
+                    continue;
+                }
+                sqlx::query("UPDATE public_pairing_attempts SET queued_at = clock_timestamp() WHERE id = $1")
+                    .bind(attempt).execute(&pool).await?;
+            }
+            Ok(())
+        }
+        .await;
+        if result.is_err() {
+            eprintln!("Pairing attempt dispatch unavailable; durable claims will be retried");
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -304,8 +460,9 @@ pub async fn run_worker() -> Result<(), Error> {
         .build();
     let options = WorkerOptions::new(TASK_QUEUE)
         .register_workflow::<PairDeviceWorkflow>()?
+        .register_workflow::<PairAttemptWorkflow>()?
         .register_activities(PairingActivities {
-            pool,
+            pool: pool.clone(),
             agent,
             pairings,
             codes,
@@ -317,13 +474,17 @@ pub async fn run_worker() -> Result<(), Error> {
     eprintln!(
         "Pairing worker listening on {TASK_QUEUE}: at most 10 activities, up to 120 seconds for VPN readiness, then 60 seconds for pairing"
     );
-    worker
+    let dispatcher = tokio::spawn(dispatch_attempts(pool));
+    let result = worker
         .run_until(async {
             tokio::select! {
                 _ = interrupt.recv() => {},
                 _ = terminate.recv() => {},
             }
         })
-        .await?;
+        .await;
+    dispatcher.abort();
+    let _ = dispatcher.await;
+    result?;
     Ok(())
 }
