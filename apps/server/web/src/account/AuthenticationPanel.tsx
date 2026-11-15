@@ -44,8 +44,9 @@ function Login() {
           />
         </label>
         <p className="text-xs leading-5 text-stone-500">
-          Your password is used only for sign-in and is never saved. The HTTPS relay can read later
-          Apple tokens in transit.
+          Your Apple password is used only on this device for sign-in and is never stored. Your
+          saved session stays on this device; the HTTPS relay can read Apple session tokens in
+          transit.
         </p>
         <button type="submit" className={buttonClass}>
           {login.isPending ? "Signing in…" : "Sign in to Apple"}
@@ -166,8 +167,7 @@ export function AuthenticationPanel({ account }: { account: AccountSnapshot }) {
   if (account.vaultExists) {
     return (
       <p className="text-sm leading-6 text-stone-600">
-        A saved account is locked. Unlock the browser vault below to validate and restore its Apple
-        session.
+        Your Apple account is saved on this device. Unlock it below to continue.
       </p>
     );
   }

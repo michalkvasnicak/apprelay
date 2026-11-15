@@ -13,87 +13,60 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
       ? accountController.unlock(passphrase)
       : accountController.save(passphrase);
   });
-  const lock = useAccountAction(() => accountController.lock());
   const forget = useAccountAction(async () => {
     if (
       window.confirm(
-        "Delete this browser’s saved Apple session, private signing key, certificates, and profiles? This cannot be undone and does not revoke assets at Apple.",
+        "Delete the Apple session and signing assets saved on this device? This cannot be undone and does not revoke assets at Apple.",
       )
     ) {
       await accountController.forget();
     }
   });
-  const canSave = account.status === "authenticated" || account.vaultExists;
-  let persistLabel = "Remember on this browser";
-  if (persist.isPending) {
-    persistLabel = "Working…";
-  } else if (account.vaultExists) {
-    persistLabel = "Unlock & validate";
-  }
+
   return (
-    <section aria-labelledby="vault-title" className="border-t border-stone-100 pt-6">
+    <section aria-labelledby="vault-title">
       <h3 id="vault-title" className="text-sm font-semibold">
-        Browser vault
+        {account.vaultExists ? "Unlock your saved account" : "Keep your account on this device"}
       </h3>
       <p className="mt-2 text-xs leading-5 text-stone-500">
-        Optional for sign-in; required before certificate creation so your signing key survives a
-        reload. Sessions and signing assets are encrypted in localStorage with a separate
-        passphrase. It is not your Apple password. There is no passphrase recovery; browser data can
-        be cleared or evicted. Same-origin scripts can access the vault while unlocked.
+        Your session and signing key are encrypted in this browser. Choose a separate passphrase,
+        not your Apple password. It cannot be recovered.
       </p>
-      {account.vaultUnlocked ? (
-        <div className="mt-4 flex items-center gap-5">
-          <span className="text-sm text-emerald-800">Saved and unlocked</span>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => lock.mutate()}
-            className={secondaryClass}
-          >
-            Lock
+      <form
+        ref={form}
+        className="mt-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          persist.mutate();
+        }}
+      >
+        <fieldset disabled={busy} className="space-y-4">
+          <label className="block text-sm font-medium">
+            Device passphrase
+            <input
+              name="passphrase"
+              type="password"
+              autoComplete={account.vaultExists ? "current-password" : "new-password"}
+              minLength={12}
+              maxLength={1024}
+              required
+              className={inputClass}
+            />
+          </label>
+          <button type="submit" className={buttonClass}>
+            {persist.isPending ? "Opening…" : "Continue"}
           </button>
-        </div>
-      ) : (
-        canSave && (
-          <form
-            ref={form}
-            className="mt-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              persist.mutate();
-            }}
-          >
-            <fieldset disabled={busy} className="space-y-4">
-              <label className="block text-sm font-medium">
-                Vault passphrase
-                <input
-                  name="passphrase"
-                  type="password"
-                  autoComplete={account.vaultExists ? "current-password" : "new-password"}
-                  minLength={12}
-                  maxLength={1024}
-                  required
-                  className={inputClass}
-                />
-              </label>
-              <button type="submit" className={buttonClass}>
-                {persistLabel}
-              </button>
-            </fieldset>
-          </form>
-        )
-      )}
-      {(account.status === "authenticated" || account.vaultExists) && (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => forget.mutate()}
-          className={secondaryClass + " mt-4 text-red-800"}
-        >
-          Forget account and local signing assets
-        </button>
-      )}
-      <ActionError error={persist.error ?? lock.error ?? forget.error} />
+        </fieldset>
+      </form>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => forget.mutate()}
+        className={secondaryClass + " mt-4"}
+      >
+        Use another Apple account
+      </button>
+      <ActionError error={persist.error ?? forget.error} />
     </section>
   );
 }

@@ -1,12 +1,19 @@
+import { useState } from "react";
+
+import { PairingWorkspace } from "../pairing/PairingWorkspace";
 import { SigningPanel } from "../signing/SigningPanel";
+import { useSigning } from "../signing/hooks";
 import { AuthenticationPanel } from "./AuthenticationPanel";
-import { ProvisioningPanel } from "./ProvisioningPanel";
 import { VaultPanel } from "./VaultPanel";
 import { useAccount, useAccountBusy } from "./hooks";
 
+const steps = ["Apple account", "Sign IPA", "Pair iPhone", "Upload"] as const;
+
 export function AccountWorkspace() {
   const account = useAccount();
+  const signing = useSigning();
   const busy = useAccountBusy();
+  const [paired, setPaired] = useState(false);
   if (account.isPending) {
     return (
       <p role="status" className="text-sm text-stone-500">
@@ -21,20 +28,60 @@ export function AccountWorkspace() {
       </p>
     );
   }
+  const ready =
+    account.data.status === "authenticated" && !!account.data.teamId && account.data.vaultUnlocked;
+  let step = 0;
+  if (ready) {
+    if (signing.data?.status !== "signed") {
+      step = 1;
+    } else if (paired) {
+      step = 3;
+    } else {
+      step = 2;
+    }
+  }
   return (
     <div className="space-y-6" aria-busy={busy}>
-      <p className="text-xs leading-5 text-amber-900">
-        Experimental Apple integration; not live-verified or production-ready. Use only accounts and
-        devices you are authorized to manage.
-      </p>
-      <AuthenticationPanel account={account.data} />
-      <VaultPanel account={account.data} />
-      {account.data.status === "authenticated" && <ProvisioningPanel account={account.data} />}
-      <SigningPanel account={account.data} />
-      {busy && (
-        <p role="status" className="text-xs text-stone-500">
-          Operation in progress. Keep this page open.
-        </p>
+      <ol
+        aria-label="Installation steps"
+        className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-stone-500"
+      >
+        {steps.map((title, index) => (
+          <li
+            key={title}
+            aria-current={index === step ? "step" : undefined}
+            className={index === step ? "font-semibold text-stone-900" : ""}
+          >
+            {index + 1}. {title}
+          </li>
+        ))}
+      </ol>
+      {step === 0 && (
+        <div className="space-y-6">
+          <h2 className="text-lg font-semibold">Sign in to Apple</h2>
+          <AuthenticationPanel account={account.data} />
+          {(account.data.vaultExists ||
+            (account.data.status === "authenticated" && account.data.teamId)) && (
+            <VaultPanel account={account.data} />
+          )}
+        </div>
+      )}
+      {step === 1 && <SigningPanel />}
+      {step === 2 && <PairingWorkspace onPaired={() => setPaired(true)} />}
+      {step === 3 && (
+        <section aria-labelledby="upload-title">
+          <h2 id="upload-title" className="text-lg font-semibold">
+            Ready to upload
+          </h2>
+          <p role="status" className="mt-3 text-sm leading-6 text-stone-600">
+            Your app is signed and your iPhone is paired. Upload is not implemented yet; no app has
+            been sent to your phone.
+          </p>
+          <p className="mt-3 text-xs leading-5 text-stone-500">
+            Upload progress will appear here when available. The signed IPA stays in memory until
+            you leave or reload this page.
+          </p>
+        </section>
       )}
     </div>
   );

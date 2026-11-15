@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ActionError, buttonClass } from "../components/forms";
 import { PairingController, PairingError, type PairingStatus } from "./controller";
@@ -12,7 +12,7 @@ const labels = {
   expired: "This attempt expired or is no longer available. Start a new attempt.",
 } as const satisfies Record<PairingStatus, string>;
 
-export function PairingWorkspace() {
+export function PairingWorkspace({ onPaired }: { onPaired: () => void }) {
   const [controller] = useState(() => new PairingController());
   const [generation, setGeneration] = useState(0);
   const status = useQuery({
@@ -30,6 +30,11 @@ export function PairingWorkspace() {
       return controller.interval();
     },
   });
+  useEffect(() => {
+    if (status.data === "success") {
+      onPaired();
+    }
+  }, [status.data, onPaired]);
   const create = useMutation({
     mutationFn: async () => {
       try {
@@ -61,16 +66,13 @@ export function PairingWorkspace() {
   const link = controller.link();
 
   return (
-    <section
-      aria-labelledby="pairing-title"
-      className="mb-6 rounded-2xl border border-stone-200 bg-white p-6 sm:p-8"
-    >
-      <h2 id="pairing-title" className="text-sm font-semibold">
+    <section aria-labelledby="pairing-title" className="space-y-4">
+      <h2 id="pairing-title" className="text-lg font-semibold">
         Pair your iPhone
       </h2>
       <p className="mt-3 text-sm leading-6 text-stone-600">
-        Start here in Safari on the iPhone with AppRelay installed. The app will register and
-        connect if needed, or reuse your existing VPN. No Apple login or IPA is required.
+        Your app is signed. Continue in Safari on the target iPhone with AppRelay installed. Open
+        AppRelay and confirm pairing; keep its VPN connected until pairing completes.
       </p>
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button
