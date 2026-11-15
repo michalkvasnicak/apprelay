@@ -19,10 +19,25 @@ if (result.status !== 0) {
 }
 
 const schema = JSON.parse(result.stdout);
-const source = [
+const generated = [
   "// Generated from the Rust API. Do not edit; run pnpm api:generate.",
   astToString(await openapiTS(schema)),
 ].join("\n");
+// Match the commit hook's formatting before writing or comparing generated types.
+const formatted = spawnSync("pnpm", ["exec", "oxfmt", "--stdin-filepath", fileURLToPath(output)], {
+  cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+  input: generated,
+  encoding: "utf8",
+  maxBuffer: 10 * 1024 * 1024,
+  stdio: ["pipe", "pipe", "inherit"],
+});
+if (formatted.error) {
+  throw formatted.error;
+}
+if (formatted.status !== 0) {
+  process.exit(formatted.status ?? 1);
+}
+const source = formatted.stdout;
 
 if (process.argv.includes("--check")) {
   const existing = await readFile(output, "utf8").catch((error) => {
