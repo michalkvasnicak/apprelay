@@ -62,7 +62,7 @@ services:
       - agent-socket:/run/apprelay
       # Existing root-owned mode-0600 private key on the Ubuntu host.
       - type: bind
-        source: ${APPRELAY_VPN_PRIVATE_KEY_HOST_FILE:?Set an absolute host path to the WireGuard private key}
+        source: ${APPRELAY_VPN_PRIVATE_KEY_HOST_FILE}
         target: /run/secrets/wireguard.key
         read_only: true
         bind:
@@ -147,7 +147,7 @@ services:
     volumes:
       # Existing mode-0600 file owned by UID 10001 on the Ubuntu host.
       - type: bind
-        source: ${APPRELAY_APNS_SIGNING_KEY_HOST_FILE:?Set an absolute host path to the APNs signing key}
+        source: ${APPRELAY_APNS_SIGNING_KEY_HOST_FILE}
         target: /run/secrets/apns.p8
         read_only: true
         bind:
