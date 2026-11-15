@@ -4,6 +4,8 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
+    "api:generate": "node scripts/generate-api.mjs",
+    "api:check": "node scripts/generate-api.mjs --check",
     "start": "node scripts/with-env.mjs local expo start",
     "android": "node scripts/with-env.mjs local expo run:android",
     "ios": "node scripts/with-env.mjs local expo run:ios --device",
@@ -21,13 +23,15 @@
     "expo": "~58.0.25",
     "expo-notifications": "~58.1.9",
     "expo-status-bar": "~58.0.5",
+    "openapi-fetch": "^0.17.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.1",
     "react-native-web": "^0.21.4"
   },
   "devDependencies": {
-    "@types/react": "~19.3.0"
+    "@types/react": "~19.3.0",
+    "openapi-typescript": "^7.13.0"
   },
   "engines": {
     "node": ">=22"

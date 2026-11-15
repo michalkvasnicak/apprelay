@@ -1,10 +1,12 @@
 mod app_key;
 mod auth;
+mod openapi;
 mod pairing_codes;
 mod push_tokens;
 mod rate_limit;
 
 pub use app_key::AppKey;
+pub use openapi::document;
 pub use rate_limit::RegistrationRateLimiter;
 
 use std::{net::Ipv4Addr, time::Instant};
@@ -21,6 +23,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
@@ -40,18 +43,18 @@ struct AppState {
     codes: PairingCodeRepository,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct Health {
     status: &'static str,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct RegistrationRequest {
     wireguard_public_key: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RegistrationResponse {
     device_id: Uuid,
     token: String,
@@ -61,7 +64,7 @@ struct RegistrationResponse {
     wireguard: WireguardConfiguration,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct WireguardConfiguration {
     server_public_key: String,
     allowed_ips: [String; 1],
@@ -97,6 +100,7 @@ pub fn router(
             app_key::require_app_key,
         ))
         .route("/health", get(health))
+        .route("/openapi.json", get(|| async { Json(document()) }))
         .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn(log_request))
         .with_state(AppState {
@@ -120,10 +124,27 @@ async fn log_request(request: Request, next: Next) -> Response {
     response
 }
 
+#[utoipa::path(get, path = "/health", responses((status = 200, body = Health)))]
 async fn health() -> Json<Health> {
     Json(Health { status: "ok" })
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/devices",
+    request_body = RegistrationRequest,
+    responses(
+        (status = 201, description = "Device registered", body = RegistrationResponse),
+        (status = 400, description = "Invalid registration", body = ErrorResponse),
+        (status = 401, description = "Invalid app key or device credential", body = ErrorResponse),
+        (status = 413, description = "Request body too large", body = ErrorResponse),
+        (status = 415, description = "Expected application/json", body = ErrorResponse),
+        (status = 422, description = "Invalid JSON fields", body = ErrorResponse),
+        (status = 429, description = "Rate limited; see Retry-After", body = ErrorResponse),
+        (status = 503, description = "Provisioning unavailable", body = ErrorResponse)
+    ),
+    security(("app_key" = []))
+)]
 async fn register_device(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -261,6 +282,11 @@ async fn register_device(
     ))
 }
 
+#[derive(Serialize, ToSchema)]
+struct ErrorResponse {
+    error: &'static str,
+}
+
 struct ApiError {
     status: StatusCode,
     message: &'static str,
@@ -296,7 +322,9 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (
             self.status,
-            Json(serde_json::json!({ "error": self.message })),
+            Json(ErrorResponse {
+                error: self.message,
+            }),
         )
             .into_response()
     }

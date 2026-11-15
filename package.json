@@ -2,6 +2,8 @@
   "name": "apprelay",
   "private": true,
   "scripts": {
+    "api:generate": "pnpm --filter @apprelay/mobile api:generate",
+    "api:check": "pnpm --filter @apprelay/mobile api:check",
     "start": "pnpm --filter @apprelay/mobile start",
     "server": "pnpm --filter @apprelay/server start",
     "android": "pnpm --filter @apprelay/mobile android",
@@ -12,7 +14,7 @@
     "lint": "pnpm -r lint",
     "format": "oxfmt --write . && pnpm --filter @apprelay/server format",
     "format:check": "oxfmt --check . && pnpm --filter @apprelay/server format:check",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm api:check && pnpm -r typecheck"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "^5.10.0",

@@ -42,6 +42,33 @@ pnpm run server
 
 The server listens on `127.0.0.1:8080` by default and serves `GET /health` with `{"status":"ok"}`. Set `APPRELAY_HTTP_ADDRESS` to override the listener. With Caddy running and its CA trusted, use `https://<configured-host>:8443/health` to verify HTTPS. Health does not require the VPN agent or PostgreSQL. `pnpm --filter @apprelay/server start:release` runs an optimized build.
 
+## Synchronized API types
+
+Rust request/response structs and `#[utoipa::path]` annotations are the source of truth.
+The server serves the OpenAPI contract at `GET /openapi.json` (no authentication required).
+
+After changing an API request, response, or endpoint:
+
+```sh
+pnpm api:generate
+```
+
+This exports the specification from Rust and regenerates
+`apps/mobile/src/api/schema.d.ts`. It requires the Rust toolchain, but no running
+server, database, Redis, or VPN agent. Commit the regenerated file with the Rust changes.
+
+The mobile app uses `openapi-fetch` through `apps/mobile/src/api/client.ts` for
+typed paths, parameters, request bodies, and responses. Types provide compile-time
+checks, not runtime response validation.
+
+For new endpoints, derive `utoipa::ToSchema` on their payload types, add
+`#[utoipa::path]` to the handler, register it in
+`apps/server/src/http/openapi.rs`, and wire it into the Axum router.
+Document authentication and status codes alongside the endpoint.
+
+`pnpm api:check` fails if generated types are stale without modifying files.
+It also runs as part of `pnpm typecheck` and the automatic Pi checks.
+
 ## Code quality
 
 - `pnpm lint` — run each workspace's lint script (the mobile app uses oxlint with React rules, autofixes, and warnings treated as errors).

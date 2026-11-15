@@ -6,17 +6,31 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{ApiError, AppState, auth::Credential};
+use super::{ApiError, AppState, ErrorResponse, auth::Credential};
 use crate::db::pairing_codes::CodeLookup;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct PairingCodeResponse {
     code: String,
     expires_at: DateTime<Utc>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/devices/{device_id}/pairing-code",
+    params(("device_id" = Uuid, Path, description = "Registered device ID")),
+    responses(
+        (status = 200, body = PairingCodeResponse),
+        (status = 400, description = "Invalid device ID"),
+        (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)
+    ),
+    security(("app_key" = [], "device_token" = []))
+)]
 pub(super) async fn get(
     State(state): State<AppState>,
     headers: HeaderMap,

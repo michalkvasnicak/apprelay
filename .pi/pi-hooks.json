@@ -4,6 +4,22 @@
     "maxRetries": 5,
     "checks": [
       {
+        "name": "api: synchronized types",
+        "type": "command",
+        "command": "pnpm api:check",
+        "inputs": [
+          "apps/server/**/*.rs",
+          "apps/server/Cargo.toml",
+          "apps/server/Cargo.lock",
+          "apps/mobile/src/api/schema.d.ts",
+          "apps/mobile/scripts/generate-api.mjs",
+          "apps/mobile/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml"
+        ]
+      },
+      {
         "name": "server: lint",
         "type": "command",
         "command": "pnpm --filter @apprelay/server lint",

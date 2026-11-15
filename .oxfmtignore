@@ -1,0 +1,2 @@
+# Preserve deterministic output from openapi-typescript.
+apps/mobile/src/api/schema.d.ts

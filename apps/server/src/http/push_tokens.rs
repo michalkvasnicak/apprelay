@@ -4,16 +4,33 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use serde::Deserialize;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{ApiError, AppState, auth::Credential};
+use super::{ApiError, AppState, ErrorResponse, auth::Credential};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PushTokenRequest {
     token: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/devices/{device_id}/push-token",
+    params(("device_id" = Uuid, Path, description = "Registered device ID")),
+    request_body = PushTokenRequest,
+    responses(
+        (status = 204, description = "Push token saved"),
+        (status = 400, description = "Invalid device ID or token"),
+        (status = 401, body = ErrorResponse),
+        (status = 413, body = ErrorResponse),
+        (status = 415, body = ErrorResponse),
+        (status = 422, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)
+    ),
+    security(("app_key" = [], "device_token" = []))
+)]
 pub(super) async fn put(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -31,6 +48,18 @@ pub(super) async fn put(
     update(&state, &headers, device_id, Some(&token)).await
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/devices/{device_id}/push-token",
+    params(("device_id" = Uuid, Path, description = "Registered device ID")),
+    responses(
+        (status = 204, description = "Push token removed"),
+        (status = 400, description = "Invalid device ID"),
+        (status = 401, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)
+    ),
+    security(("app_key" = [], "device_token" = []))
+)]
 pub(super) async fn delete(
     State(state): State<AppState>,
     headers: HeaderMap,
