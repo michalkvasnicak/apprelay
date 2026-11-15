@@ -2,6 +2,7 @@
   "expo": {
     "name": "apprelay",
     "slug": "apprelay",
+    "scheme": "apprelay",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

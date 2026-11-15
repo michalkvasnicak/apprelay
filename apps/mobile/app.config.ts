@@ -64,6 +64,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ...config,
     name: config.name ?? "apprelay",
     slug: config.slug ?? "apprelay",
+    scheme: process.env.EXPO_PUBLIC_APP_SCHEME ?? "apprelay",
     ios: {
       ...config.ios,
       bundleIdentifier,

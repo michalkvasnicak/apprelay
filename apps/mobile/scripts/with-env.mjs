@@ -38,7 +38,11 @@ for (const key of Object.keys(env)) {
     delete env[key];
   }
 }
-Object.assign(env, values, { EXPO_NO_DOTENV: "1", APPRELAY_ENV: environment });
+Object.assign(env, values, {
+  EXPO_NO_DOTENV: "1",
+  APPRELAY_ENV: environment,
+  EXPO_PUBLIC_APP_SCHEME: environment === "local" ? "apprelay-dev" : "apprelay",
+});
 
 const result = spawnSync(command, args, { cwd: projectRoot, env, stdio: "inherit" });
 if (result.error) {

@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { AppState } from "react-native";
 
-import { registerDevice } from "./config";
+import { ensureRegistration, ensureTunnel } from "./registration";
 import { isVpnAvailable, vpn, type VpnStatus } from "./native";
 
 focusManager.setEventListener((setFocused) => {
@@ -38,7 +38,7 @@ export function useVpn() {
     refetchOnWindowFocus: "always",
     retry: false,
   });
-  const registration = useMutation({ mutationFn: registerDevice, retry: false });
+  const registration = useMutation({ mutationFn: ensureRegistration, retry: false });
   const connection = useMutation({
     mutationFn: async (active: boolean): Promise<VpnStatus> => {
       // Avoid a poll racing the transition written below.
@@ -50,12 +50,8 @@ export function useVpn() {
       if (!identity.data) {
         throw new Error("The device public key is unavailable.");
       }
-      let device = registration.data;
-      if (!device?.token || Date.parse(device.expires_at) <= Date.now()) {
-        device = await registration.mutateAsync(identity.data.publicKey);
-      }
-      await vpn.connect(device);
-      return "connecting";
+      const device = await registration.mutateAsync();
+      return ensureTunnel(device);
     },
     onSuccess: (next) => client.setQueryData(statusKey, next),
     onSettled: () => client.invalidateQueries({ queryKey: statusKey }),

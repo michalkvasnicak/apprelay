@@ -1,4 +1,5 @@
 import { AccountWorkspace } from "./account/AccountWorkspace";
+import { PairingWorkspace } from "./pairing/PairingWorkspace";
 
 const steps = [
   {
@@ -53,6 +54,8 @@ export function App() {
             Private signing keys stay in your browser.
           </p>
         </div>
+
+        <PairingWorkspace />
 
         <div className="grid gap-6 lg:grid-cols-[1fr_19rem]">
           <section

@@ -86,17 +86,29 @@ final class AppRelayVPN: NSObject {
                 try await save(manager)
                 try await reload(manager)
                 try manager.connection.startVPNTunnel()
-                // Request local-network access from the foreground app, not the extension.
-                pairingDiscovery?.cancel()
-                let browser = NWBrowser(for: .bonjour(type: "_remotepairing-pairable-host._tcp", domain: "local."),
-                                        using: .tcp)
-                pairingDiscovery = browser
-                browser.start(queue: .main)
+                startPairingDiscovery()
                 // This means startup was requested, not that the peer has handshaken.
                 resolve(nil)
                 #endif
             } catch { reject("VPN_CONNECT", error.localizedDescription, error) }
         }
+    }
+
+    @objc(preparePairing:rejecter:)
+    func preparePairing(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task { @MainActor in
+            startPairingDiscovery()
+            resolve(nil)
+        }
+    }
+
+    // Also needed on a cold launch that reuses an already-running tunnel.
+    @MainActor private func startPairingDiscovery() {
+        pairingDiscovery?.cancel()
+        let browser = NWBrowser(for: .bonjour(type: "_remotepairing-pairable-host._tcp", domain: "local."),
+                                using: .tcp)
+        pairingDiscovery = browser
+        browser.start(queue: .main)
     }
 
     @objc(disconnect:rejecter:)

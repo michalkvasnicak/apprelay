@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { usePushNotifications } from "./src/notifications/usePushNotifications";
+import { usePairing } from "./src/pairing/usePairing";
 import { isVpnAvailable, type VpnStatus } from "./src/vpn/native";
 import { queryClient, useVpn } from "./src/vpn/queries";
 
@@ -27,7 +28,8 @@ function VpnScreen() {
   const { identity, status: statusQuery, registration, connection } = useVpn();
   const status = statusQuery.isError ? "unknown" : (statusQuery.data ?? "unknown");
   const active = status === "connected" || status === "connecting" || status === "reconnecting";
-  const busy = connection.isPending;
+  const pairing = usePairing(() => registration.mutateAsync());
+  const busy = connection.isPending || pairing.start.isPending;
   const disabled =
     !isVpnAvailable ||
     busy ||
@@ -84,6 +86,37 @@ function VpnScreen() {
             Notifications: {notifications.error} Will retry when the VPN reconnects or the app
             returns to the foreground with the VPN connected.
           </Text>
+        )}
+        {pairing.notice && <Text style={styles.error}>{pairing.notice}</Text>}
+        {pairing.available && (
+          <View style={{ gap: 12 }}>
+            <Text style={styles.status}>Browser pairing</Text>
+            <Text style={styles.description}>
+              Only continue if you started this request. AppRelay will register this device and
+              connect the VPN if needed. An existing connection will be reused.
+            </Text>
+            {pairing.start.isSuccess ? (
+              <Text accessibilityLiveRegion="polite" style={styles.description}>
+                Pairing request accepted. Return to the browser for progress and the final result.
+                Keep the VPN connected.
+              </Text>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy || !isVpnAvailable}
+                onPress={() => pairing.start.mutate()}
+                style={[styles.button, (busy || !isVpnAvailable) && styles.disabledButton]}
+              >
+                <Text style={styles.buttonText}>
+                  {pairing.start.isPending ? "Preparing pairing…" : "Continue pairing"}
+                </Text>
+              </Pressable>
+            )}
+            {pairing.start.error && <Text style={styles.error}>{pairing.start.error.message}</Text>}
+            <Pressable accessibilityRole="button" disabled={busy} onPress={pairing.dismiss}>
+              <Text style={styles.description}>Dismiss link (does not cancel server pairing)</Text>
+            </Pressable>
+          </View>
         )}
         <Pressable
           accessibilityRole="button"

@@ -25,6 +25,7 @@ type NativeVpnModule = {
     allowedIPs: string[];
     persistentKeepaliveSeconds: number;
   }): Promise<void>;
+  preparePairing(): Promise<void>;
   disconnect(): Promise<void>;
 };
 
@@ -56,5 +57,6 @@ export const vpn = {
       persistentKeepaliveSeconds: wireguard.persistent_keepalive_seconds,
     });
   },
+  preparePairing: () => requireNative().preparePairing(),
   disconnect: () => requireNative().disconnect(),
 };
