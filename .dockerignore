@@ -1,0 +1,14 @@
+node_modules/
+**/node_modules/
+**/target/
+**/dist/
+.git/
+.pi/
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/*.p8
+apps/mobile/

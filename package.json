@@ -10,6 +10,8 @@
     "ios": "pnpm --filter @apprelay/mobile ios",
     "publish:ios:testflight": "pnpm --filter @apprelay/mobile publish:ios:testflight",
     "web": "pnpm --filter @apprelay/mobile web",
+    "web:dev": "pnpm --filter @apprelay/web dev",
+    "web:build": "pnpm --filter @apprelay/web build",
     "prepare": "husky",
     "lint": "pnpm -r lint",
     "format": "oxfmt --write . && pnpm --filter @apprelay/server format",

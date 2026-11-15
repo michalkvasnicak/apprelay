@@ -13,8 +13,8 @@
 x-app: &app
   image: ${APPRELAY_IMAGE:-apprelay-server:local}
   build:
-    context: ./apps/server
-    dockerfile: Dockerfile
+    context: .
+    dockerfile: apps/server/Dockerfile
   restart: unless-stopped
   init: true
   read_only: true

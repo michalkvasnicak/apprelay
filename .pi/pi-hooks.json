@@ -74,6 +74,43 @@
           "pnpm-workspace.yaml",
           "apps/mobile/**/tsconfig*.json"
         ]
+      },
+      {
+        "name": "web: lint",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/web lint",
+        "inputs": [
+          "apps/server/web/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}",
+          "apps/server/web/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml",
+          ".oxlintrc.json"
+        ]
+      },
+      {
+        "name": "web: typecheck",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/web typecheck",
+        "inputs": [
+          "apps/server/web/**/*.{ts,tsx,mts,cts}",
+          "apps/server/web/**/tsconfig*.json",
+          "apps/server/web/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml"
+        ]
+      },
+      {
+        "name": "web: build",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/web build",
+        "inputs": [
+          "apps/server/web/**/*.{ts,tsx,css,html,json}",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml"
+        ]
       }
     ]
   }

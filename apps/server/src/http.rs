@@ -6,6 +6,7 @@ mod pairing_attempts;
 mod pairing_codes;
 mod push_tokens;
 mod rate_limit;
+mod web;
 
 pub use app_key::AppKey;
 pub use https_proxy::HttpsProxy;
@@ -121,6 +122,7 @@ pub fn router(
         .merge(https_proxy::router(https_proxy))
         .route("/health", get(health))
         .route("/openapi.json", get(|| async { Json(document()) }))
+        .merge(web::router())
         .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn(log_request))
         .with_state(AppState {

@@ -6,6 +6,7 @@ pnpm monorepo with a minimal Expo React Native app and a Rust server process.
 
 - `apps/mobile` — Expo app (`@apprelay/mobile`) with a blank white screen.
 - `apps/server` — Rust HTTP server (`@apprelay/server`) and privileged host VPN agent.
+- `apps/server/web` — React + TypeScript + Vite signing frontend (`@apprelay/web`), styled with Tailwind CSS.
 - `packages/*` — workspace location for future shared packages.
 - Repository root — shared tooling, Git hooks, and Pi hooks.
 
@@ -22,11 +23,21 @@ cp apps/mobile/.env.local.example apps/mobile/.env.local
 pnpm start
 ```
 
-Root development commands forward to `apps/mobile`. Open the app in Expo Go, or use `pnpm ios` / `pnpm android` to launch a simulator or emulator. `pnpm web` starts the web app.
+Root development commands forward to `apps/mobile`. Open the app in Expo Go, or use `pnpm ios` / `pnpm android` to launch a simulator or emulator. `pnpm web` starts the Expo web app.
 
 For separate local/TestFlight configuration and local iOS publishing with `pnpm publish:ios:testflight`, see [the mobile README](apps/mobile/README.md).
 
 Use `pnpm --filter @apprelay/mobile <command>` to target the app directly. Add Expo dependencies with `pnpm --filter @apprelay/mobile exec expo install <package>`.
+
+### Browser signing frontend
+
+Run `pnpm web:dev` to open the signing preview at `http://localhost:5173`.
+Vite proxies API requests to the Rust server at `127.0.0.1:8080`; start it separately with `pnpm server`.
+Apple authentication and signing are not implemented yet.
+
+`pnpm web:build` produces `apps/server/web/dist`, which Axum serves at `/`.
+Set `APPRELAY_WEB_DIR` to override the asset directory. The production Docker image builds and includes these assets; its build context is the repository root.
+API documentation is available at `/openapi.json`.
 
 ### Local infrastructure
 
@@ -78,4 +89,4 @@ It also runs as part of `pnpm typecheck` and the automatic Pi checks.
 - Husky runs lint-staged before commits, formatting and re-staging supported staged files with oxfmt or rustfmt.
 - Pi runs lint and typecheck automatically before settling. See [`.pi/README.md`](.pi/README.md).
 
-No navigation, application features, or tests are included.
+The signing frontend is a single-page preview; Apple authentication, provisioning, signing, and installation are not yet implemented.

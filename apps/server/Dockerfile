@@ -1,4 +1,14 @@
 # syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim AS web
+
+WORKDIR /build
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/server/web/package.json ./apps/server/web/package.json
+RUN pnpm install --filter @apprelay/web --frozen-lockfile --ignore-scripts
+COPY apps/server/web ./apps/server/web
+RUN pnpm --filter @apprelay/web build
+
 FROM rust:1.92-bookworm AS build
 
 RUN apt-get update \
@@ -7,9 +17,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY Cargo.toml Cargo.lock build.rs ./
-COPY src ./src
-COPY migrations ./migrations
+COPY apps/server/Cargo.toml apps/server/Cargo.lock apps/server/build.rs ./
+COPY apps/server/src ./src
+COPY apps/server/migrations ./migrations
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
@@ -31,7 +41,9 @@ RUN apt-get update \
     && install -d -m 0755 /run/apprelay
 
 COPY --from=build /out/ /usr/local/bin/
-COPY --chmod=0755 docker/vpn-agent-entrypoint.sh /usr/local/bin/vpn-agent-entrypoint
+COPY --from=web /build/apps/server/web/dist/ /opt/apprelay/web/
+ENV APPRELAY_WEB_DIR=/opt/apprelay/web
+COPY --chmod=0755 apps/server/docker/vpn-agent-entrypoint.sh /usr/local/bin/vpn-agent-entrypoint
 # Docker drops effective capabilities for non-root users. This file capability
 # lets only the pairing executable acquire NET_RAW within its bounding set.
 RUN setcap cap_net_raw=ep /usr/local/bin/pairing-worker
