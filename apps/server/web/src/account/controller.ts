@@ -5,6 +5,8 @@ import { ensureCertificate, provisionApp } from "../apple/provisioning";
 import { certificateExpiry, matchingCertificate } from "../apple/signing-assets";
 import type { StoredAccount, Team } from "../apple/types";
 import { LocalVault } from "../storage/vault";
+import { signingAssets } from "../signing/assets";
+import { SigningError, type SigningAssets } from "../signing/types";
 
 export class AccountError extends Error {}
 
@@ -24,12 +26,14 @@ class AccountController {
   snapshot() {
     const identity = this.account?.identity;
     const profile = this.account?.profile;
+    let status: "signed-out" | "two-factor" | "authenticated" = "signed-out";
+    if (this.challenge) {
+      status = "two-factor";
+    } else if (this.account) {
+      status = "authenticated";
+    }
     return {
-      status: this.challenge
-        ? ("two-factor" as const)
-        : this.account
-          ? ("authenticated" as const)
-          : ("signed-out" as const),
+      status,
       teams: this.teams,
       teamId: this.account?.teamId,
       vaultExists: this.vault.exists(),
@@ -265,6 +269,22 @@ class AccountController {
         await provisionApp(account, portal, bundleId, () => this.vault.save(account));
       },
     );
+  }
+
+  withSigningAssets(bundleId: string, consume: (assets: SigningAssets) => Promise<void>) {
+    return this.run("Could not validate signing assets or finish local signing", async () => {
+      if (!this.account || !this.vault.unlocked) {
+        throw new AccountError("Unlock the signing vault first");
+      }
+      try {
+        await consume(signingAssets(this.account, bundleId));
+      } catch (error) {
+        if (error instanceof SigningError) {
+          throw new AccountError(error.message);
+        }
+        throw error;
+      }
+    });
   }
 
   lock() {

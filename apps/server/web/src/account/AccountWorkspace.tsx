@@ -1,3 +1,4 @@
+import { SigningPanel } from "../signing/SigningPanel";
 import { AuthenticationPanel } from "./AuthenticationPanel";
 import { ProvisioningPanel } from "./ProvisioningPanel";
 import { VaultPanel } from "./VaultPanel";
@@ -29,6 +30,7 @@ export function AccountWorkspace() {
       <AuthenticationPanel account={account.data} />
       <VaultPanel account={account.data} />
       {account.data.status === "authenticated" && <ProvisioningPanel account={account.data} />}
+      <SigningPanel account={account.data} />
       {busy && (
         <p role="status" className="text-xs text-stone-500">
           Operation in progress. Keep this page open.

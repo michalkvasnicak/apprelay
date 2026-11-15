@@ -13,8 +13,8 @@ const steps = [
   },
   {
     number: "03",
-    title: "Sign & download",
-    description: "IPA signing and download are coming next.",
+    title: "Sign locally",
+    description: "Inspect and sign a supported IPA. Delivery is not yet decided.",
   },
 ] as const;
 
@@ -94,7 +94,8 @@ export function App() {
 
         <p className="mt-6 max-w-2xl text-xs leading-6 text-stone-500">
           Signing keys are generated locally. Apple authentication uses an HTTPS relay; the relay
-          can read Apple tokens in transit. IPA signing and installation are separate, later steps.
+          can read Apple tokens in transit. IPA contents stay local; delivery and installation are
+          not configured.
         </p>
       </main>
 

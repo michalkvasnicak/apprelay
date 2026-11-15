@@ -1,17 +1,21 @@
-import { useRef } from "react";
-
 import { ActionError, buttonClass, inputClass } from "../components/forms";
 import { targetDevice } from "../device";
+import { useSigning } from "../signing/hooks";
 import { accountController } from "./controller";
-import { inputValue, useAccountAction, useAccountBusy, type AccountSnapshot } from "./hooks";
+import { useAccountAction, useAccountBusy, type AccountSnapshot } from "./hooks";
 
 export function ProvisioningPanel({ account }: { account: AccountSnapshot }) {
-  const form = useRef<HTMLFormElement>(null);
+  const signing = useSigning();
+  const bundleId = signing.data?.bundleId;
   const busy = useAccountBusy();
   const certificate = useAccountAction(() => accountController.certificate());
-  const provision = useAccountAction(() =>
-    accountController.provision(inputValue(form, "bundleId").trim()),
-  );
+  const provision = useAccountAction(() => accountController.provision(bundleId ?? ""));
+  let certificateLabel = "Create development certificate";
+  if (certificate.isPending) {
+    certificateLabel = "Preparing certificate…";
+  } else if (account.certificateRequested) {
+    certificateLabel = "Recheck certificate request";
+  }
   return (
     <section aria-labelledby="assets-title" className="border-t border-stone-100 pt-6">
       <h3 id="assets-title" className="text-sm font-semibold">
@@ -33,11 +37,7 @@ export function ProvisioningPanel({ account }: { account: AccountSnapshot }) {
           onClick={() => certificate.mutate()}
           className={buttonClass + " mt-4"}
         >
-          {certificate.isPending
-            ? "Preparing certificate…"
-            : account.certificateRequested
-              ? "Recheck certificate request"
-              : "Create development certificate"}
+          {certificateLabel}
         </button>
       )}
       <ActionError error={certificate.error} />
@@ -54,7 +54,6 @@ export function ProvisioningPanel({ account }: { account: AccountSnapshot }) {
         )}
       </div>
       <form
-        ref={form}
         className="mt-5"
         onSubmit={(event) => {
           event.preventDefault();
@@ -62,22 +61,23 @@ export function ProvisioningPanel({ account }: { account: AccountSnapshot }) {
         }}
       >
         <fieldset
-          disabled={busy || targetDevice.isPlaceholder || !account.certificateExpiresAt}
+          disabled={
+            busy || targetDevice.isPlaceholder || !account.certificateExpiresAt || !bundleId
+          }
           className="space-y-4"
         >
           <label className="block text-sm font-medium">
-            App bundle identifier
+            Inspected app bundle identifier
             <input
-              name="bundleId"
-              placeholder="com.example.app"
-              required
-              maxLength={255}
+              value={bundleId ?? ""}
+              placeholder="Select an IPA below first"
+              readOnly
               className={inputClass}
             />
           </label>
           <p className="text-xs leading-5 text-stone-500">
-            Basic development provisioning only. IPA inspection, capability configuration,
-            extensions, and signing are not integrated. No capabilities are silently removed.
+            Basic development provisioning for the inspected app only. Capability configuration and
+            extensions are not supported; no capabilities are silently removed.
           </p>
           <button type="submit" className={buttonClass}>
             {provision.isPending ? "Provisioning…" : "Register device & request profile"}
@@ -88,7 +88,7 @@ export function ProvisioningPanel({ account }: { account: AccountSnapshot }) {
         <p className="mt-4 text-sm text-emerald-800">
           Profile saved for {account.profile.bundleId} · expires{" "}
           {new Date(account.profile.expiresAt).toLocaleString()}. CMS signature and chain
-          verification are still pending; this does not mean the IPA is ready to sign.
+          verification are still pending; this profile is experimental, not independently trusted.
         </p>
       )}
       <ActionError error={provision.error} />

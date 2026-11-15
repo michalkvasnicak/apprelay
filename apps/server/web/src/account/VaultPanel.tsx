@@ -24,6 +24,12 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
     }
   });
   const canSave = account.status === "authenticated" || account.vaultExists;
+  let persistLabel = "Remember on this browser";
+  if (persist.isPending) {
+    persistLabel = "Working…";
+  } else if (account.vaultExists) {
+    persistLabel = "Unlock & validate";
+  }
   return (
     <section aria-labelledby="vault-title" className="border-t border-stone-100 pt-6">
       <h3 id="vault-title" className="text-sm font-semibold">
@@ -71,11 +77,7 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
                 />
               </label>
               <button type="submit" className={buttonClass}>
-                {persist.isPending
-                  ? "Working…"
-                  : account.vaultExists
-                    ? "Unlock & validate"
-                    : "Remember on this browser"}
+                {persistLabel}
               </button>
             </fieldset>
           </form>

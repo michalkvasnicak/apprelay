@@ -69,14 +69,8 @@ function octets(node: forge.asn1.Asn1): string {
   return typeof node.value === "string" ? node.value : children(node).map(octets).join("");
 }
 
-// Structural/binding checks only; this is NOT CMS signature or chain validation.
-// Signing must not treat these provisional assets as independently trusted yet.
-export function validateProfile(
-  data: Uint8Array,
-  identity: SigningIdentity,
-  udid: string,
-  bundleId: string,
-): number {
+// Extraction only; this does not authenticate the CMS signature.
+export function profileDocument(data: Uint8Array): Record<string, unknown> {
   const cms = children(forge.asn1.fromDer(binary(data)));
   if (
     typeof cms[0].value !== "string" ||
@@ -92,9 +86,19 @@ export function validateProfile(
   ) {
     throw new Error("Expected CMS data");
   }
-  const profile = decodePlist(
+  return decodePlist(
     Uint8Array.from(octets(children(content[1])[0]), (character) => character.charCodeAt(0)),
   );
+}
+
+// Structural/binding checks only; this is NOT CMS signature or chain validation.
+export function validateProfile(
+  data: Uint8Array,
+  identity: SigningIdentity,
+  udid: string,
+  bundleId: string,
+): number {
+  const profile = profileDocument(data);
   const entitlements = record(profile.Entitlements);
   const expires = profile.ExpirationDate;
   const created = profile.CreationDate;
