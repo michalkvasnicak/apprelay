@@ -8,7 +8,7 @@ Requires a signed native build on a physical iPhone. Expo Go, the iOS simulator,
 
 - Node.js 22 or newer and pnpm (Node.js 24 is recommended).
 - Xcode and an iPhone supported by the deployment target in `app.json`.
-- An Apple Developer team with Network Extension provisioning and Apple's approved multicast entitlement (`com.apple.developer.networking.multicast`) enabled for the app and its extension (`<app bundle identifier>.PacketTunnel`). Both provisioning profiles must include these capabilities; regenerate them after approval.
+- An Apple Developer team with Network Extension provisioning enabled for the app and its extension (`<app bundle identifier>.PacketTunnel`).
 - A reachable AppRelay server.
 - Git and internet access for the first build.
 - Go **1.19.13**. With Go already installed, install the required version:
@@ -73,7 +73,7 @@ Configure native projects through Expo configuration and plugins; do not edit ge
 
 ### One-time setup
 
-1. Enroll in the Apple Developer Program and create an App Store Connect app with the bundle identifier from `.env.testflight`. Enable Network Extension provisioning and the approved multicast entitlement for both the app and `<bundle identifier>.PacketTunnel`.
+1. Enroll in the Apple Developer Program and create an App Store Connect app with the bundle identifier from `.env.testflight`. Enable Network Extension provisioning for both the app and `<bundle identifier>.PacketTunnel`.
 2. Fill in `.env.testflight` with your Apple team ID, distribution bundle identifier, deployed server URL and app key. Set `APPLE_BUILD_NUMBER` to a build version such as `1`; increase it for every new upload.
 3. Sign in to your Apple Developer account in **Xcode → Settings → Accounts**, with permission to sign and upload the app. Alternatively, supply all three optional `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` and `APPLE_API_KEY_PATH` settings for App Store Connect API-key authentication. The key must have permission to manage signing and upload builds; keep its private `.p8` file outside the repository.
 4. Install Xcode command-line tools, CocoaPods and the Go version described above. If needed, set `APPRELAY_GO_BINARY` in `.env.testflight` to the Go executable's absolute path.

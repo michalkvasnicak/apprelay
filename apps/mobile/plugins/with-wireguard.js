@@ -8,7 +8,10 @@ const DIRECTORY = "AppRelayVPN";
 const WIREGUARD_PACKAGE_PATH = `${DIRECTORY}/WireGuardKit`;
 const quote = (value) => JSON.stringify(value);
 
-module.exports = function withWireGuard(config) {
+module.exports = function withWireGuard(config, { allowArbitraryBonjour = false } = {}) {
+  if (typeof allowArbitraryBonjour !== "boolean") {
+    throw new Error("WireGuard allowArbitraryBonjour must be a boolean");
+  }
   const identifier = config.ios?.bundleIdentifier;
   if (!identifier || !/^[A-Za-z0-9.-]+$/.test(identifier)) {
     throw new Error("WireGuard requires ios.bundleIdentifier in the Expo configuration");
@@ -24,9 +27,12 @@ module.exports = function withWireGuard(config) {
     for (const [key, values] of Object.entries(entitlements)) {
       mod.modResults[key] = [...new Set([...(mod.modResults[key] ?? []), ...values])];
     }
-    // Runtime-selected Bonjour service types cannot be enumerated in
-    // NSBonjourServices. Requires Apple's multicast entitlement approval.
-    mod.modResults["com.apple.developer.networking.multicast"] = true;
+    // Arbitrary service types require Apple's multicast entitlement approval.
+    if (allowArbitraryBonjour) {
+      mod.modResults["com.apple.developer.networking.multicast"] = true;
+    } else {
+      delete mod.modResults["com.apple.developer.networking.multicast"];
+    }
     return mod;
   });
   config = withInfoPlist(config, (mod) => {
@@ -53,7 +59,7 @@ module.exports = function withWireGuard(config) {
       path.join(destination, "PacketTunnel.entitlements"),
       plist(`
       <key>com.apple.developer.networking.networkextension</key><array><string>packet-tunnel-provider</string></array>
-      <key>com.apple.developer.networking.multicast</key><true/>
+      ${allowArbitraryBonjour ? "<key>com.apple.developer.networking.multicast</key><true/>" : ""}
       <key>keychain-access-groups</key><array><string>${keychainGroup}</string></array>`),
     );
     fs.writeFileSync(
@@ -69,6 +75,7 @@ module.exports = function withWireGuard(config) {
       <key>AppRelayKeychainGroup</key><string>${keychainGroup}</string>
       <key>NSLocalNetworkUsageDescription</key><string>Advertise VPN services on your local network while the VPN is connected.</string>
       <key>NSBonjourServices</key><array><string>_remotepairing-pairable-host._tcp</string></array>
+      <key>AppRelayAllowArbitraryBonjour</key><${allowArbitraryBonjour ? "true" : "false"}/>
       <key>NSExtension</key><dict>
         <key>NSExtensionPointIdentifier</key><string>com.apple.networkextension.packet-tunnel</string>
         <key>NSExtensionPrincipalClass</key><string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>

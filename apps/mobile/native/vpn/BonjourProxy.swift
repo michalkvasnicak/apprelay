@@ -8,6 +8,11 @@ import os
 final class BonjourProxy {
     private let queue = DispatchQueue(label: "AppRelay.BonjourProxy")
     private let logger = Logger(subsystem: "AppRelay", category: "BonjourProxy")
+    private let allowArbitraryBonjour = Bundle.main.object(forInfoDictionaryKey: "AppRelayAllowArbitraryBonjour") as? Bool == true
+    private let declaredServiceTypes = Set(
+        (Bundle.main.object(forInfoDictionaryKey: "NSBonjourServices") as? [String] ?? [])
+            .map { $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+    )
     private var receiver: DispatchSourceRead?
     private var services: [String: BonjourServiceProxy] = [:]
     private var draining: [ObjectIdentifier: BonjourServiceProxy] = [:]
@@ -58,6 +63,10 @@ final class BonjourProxy {
                     let sourcePort = UInt16(bigEndian: sender.sin_port)
                     logger.info("Received UDP announcement: \(count) bytes from \(sourceIP, privacy: .public):\(sourcePort) to \(address, privacy: .public):5354")
                     for announcement in ServiceAnnouncement.decode(Array(bytes.prefix(count))) {
+                        guard allowArbitraryBonjour || declaredServiceTypes.contains(String(announcement.type.dropLast()).lowercased()) else {
+                            logger.debug("Skipping Bonjour service type not declared in NSBonjourServices: \(announcement.type, privacy: .public)")
+                            continue
+                        }
                         let key = announcement.key
                         if announcement.ttl == 0 {
                             services[key]?.stop()
