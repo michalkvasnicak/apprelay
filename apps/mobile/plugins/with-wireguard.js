@@ -24,12 +24,15 @@ module.exports = function withWireGuard(config) {
     for (const [key, values] of Object.entries(entitlements)) {
       mod.modResults[key] = [...new Set([...(mod.modResults[key] ?? []), ...values])];
     }
+    // Runtime-selected Bonjour service types cannot be enumerated in
+    // NSBonjourServices. Requires Apple's multicast entitlement approval.
+    mod.modResults["com.apple.developer.networking.multicast"] = true;
     return mod;
   });
   config = withInfoPlist(config, (mod) => {
     mod.modResults.AppRelayKeychainGroup = keychainGroup;
     mod.modResults.NSLocalNetworkUsageDescription =
-      "Advertise the pairing proxy on your local network while the VPN is connected.";
+      "Advertise VPN services on your local network while the VPN is connected.";
     mod.modResults.NSBonjourServices = [
       ...new Set([
         ...(mod.modResults.NSBonjourServices ?? []),
@@ -50,6 +53,7 @@ module.exports = function withWireGuard(config) {
       path.join(destination, "PacketTunnel.entitlements"),
       plist(`
       <key>com.apple.developer.networking.networkextension</key><array><string>packet-tunnel-provider</string></array>
+      <key>com.apple.developer.networking.multicast</key><true/>
       <key>keychain-access-groups</key><array><string>${keychainGroup}</string></array>`),
     );
     fs.writeFileSync(
@@ -63,7 +67,7 @@ module.exports = function withWireGuard(config) {
       <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
       <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
       <key>AppRelayKeychainGroup</key><string>${keychainGroup}</string>
-      <key>NSLocalNetworkUsageDescription</key><string>Advertise the pairing proxy on your local network while the VPN is connected.</string>
+      <key>NSLocalNetworkUsageDescription</key><string>Advertise VPN services on your local network while the VPN is connected.</string>
       <key>NSBonjourServices</key><array><string>_remotepairing-pairable-host._tcp</string></array>
       <key>NSExtension</key><dict>
         <key>NSExtensionPointIdentifier</key><string>com.apple.networkextension.packet-tunnel</string>
