@@ -43,8 +43,16 @@ enum VpnKeychain {
         return (key.publicKey.rawRepresentation.base64EncodedString(), reference)
     }
 
-    static func registrationToken(scope: String) throws -> String? {
-        var request = try query(account: "bearer:" + scope)
+    // The access group is derived from the app bundle ID, isolating local and production apps.
+    private static let registrationAccount = "device-registration-token"
+
+    static func registrationToken() throws -> String? {
+        if let token = try token(account: registrationAccount) { return token }
+        return try migrateRegistrationToken()
+    }
+
+    private static func token(account: String) throws -> String? {
+        var request = try query(account: account)
         request[kSecReturnData as String] = true
         var result: CFTypeRef?
         let status = SecItemCopyMatching(request as CFDictionary, &result)
@@ -56,8 +64,42 @@ enum VpnKeychain {
         return token
     }
 
-    static func saveRegistrationToken(scope: String, token: String) throws {
-        let request = try query(account: "bearer:" + scope)
+    private static func migrateRegistrationToken() throws -> String? {
+        let publicKey = try identity().publicKey
+        var request = try query()
+        request.removeValue(forKey: kSecAttrAccount as String)
+        request[kSecReturnAttributes as String] = true
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitAll
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else {
+            throw VpnError.keychain(status)
+        }
+        // Recover URL-scoped credentials for this identity only, within this app’s access group.
+        var tokens = Set<String>()
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  account.hasPrefix("bearer:"), account.hasSuffix(":" + publicKey) else { continue }
+            guard let data = item[kSecValueData as String] as? Data,
+                  let token = String(data: data, encoding: .utf8) else {
+                throw VpnError.keychain(errSecDecode)
+            }
+            tokens.insert(token)
+        }
+        guard tokens.count <= 1 else {
+            throw NSError(domain: "AppRelayVPN", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Multiple saved device tokens were found; registration recovery is required."
+            ])
+        }
+        guard let token = tokens.first else { return nil }
+        try saveRegistrationToken(token: token)
+        return token
+    }
+
+    static func saveRegistrationToken(token: String) throws {
+        let request = try query(account: registrationAccount)
         let data = Data(token.utf8)
         let status = SecItemUpdate(request as CFDictionary,
                                    [kSecValueData as String: data] as CFDictionary)

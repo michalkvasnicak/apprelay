@@ -4,7 +4,7 @@ import { vpn } from "./native";
 let device: DeviceRegistration | undefined;
 let pending: Promise<DeviceRegistration> | undefined;
 
-// Both manual connection and pairing restore registration through the scoped Keychain credential.
+// Both manual connection and pairing restore registration through the app’s Keychain credential.
 export function ensureRegistration(): Promise<DeviceRegistration> {
   if (device && Date.parse(device.expires_at) > Date.now() + 30_000) {
     return Promise.resolve(device);

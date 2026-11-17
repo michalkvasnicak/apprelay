@@ -21,20 +21,20 @@ final class AppRelayVPN: NSObject {
         }
     }
 
-    @objc(getRegistrationToken:resolver:rejecter:)
-    func getRegistrationToken(_ scope: String, resolver resolve: @escaping RCTPromiseResolveBlock,
+    @objc(getRegistrationToken:rejecter:)
+    func getRegistrationToken(_ resolve: @escaping RCTPromiseResolveBlock,
                               rejecter reject: @escaping RCTPromiseRejectBlock) {
         do {
-            resolve(try VpnKeychain.registrationToken(scope: scope))
+            resolve(try VpnKeychain.registrationToken())
         } catch { reject("VPN_CREDENTIAL", error.localizedDescription, error) }
     }
 
-    @objc(saveRegistrationToken:token:resolver:rejecter:)
-    func saveRegistrationToken(_ scope: String, token: String,
+    @objc(saveRegistrationToken:resolver:rejecter:)
+    func saveRegistrationToken(_ token: String,
                                resolver resolve: @escaping RCTPromiseResolveBlock,
                                rejecter reject: @escaping RCTPromiseRejectBlock) {
         do {
-            try VpnKeychain.saveRegistrationToken(scope: scope, token: token)
+            try VpnKeychain.saveRegistrationToken(token: token)
             resolve(nil)
         } catch { reject("VPN_CREDENTIAL", error.localizedDescription, error) }
     }

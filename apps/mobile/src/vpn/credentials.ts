@@ -1,8 +1,8 @@
 import { NativeModules } from "react-native";
 
 type CredentialStore = {
-  getRegistrationToken(scope: string): Promise<string | null>;
-  saveRegistrationToken(scope: string, token: string): Promise<void>;
+  getRegistrationToken(): Promise<string | null>;
+  saveRegistrationToken(token: string): Promise<void>;
 };
 
 function store(): CredentialStore {
@@ -14,6 +14,6 @@ function store(): CredentialStore {
 }
 
 export const credentials = {
-  get: (scope: string) => store().getRegistrationToken(scope),
-  save: (scope: string, token: string) => store().saveRegistrationToken(scope, token),
+  get: () => store().getRegistrationToken(),
+  save: (token: string) => store().saveRegistrationToken(token),
 };
