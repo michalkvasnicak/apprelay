@@ -1,0 +1,36 @@
+{
+  "name": "apprelay",
+  "version": "0.1.0",
+  "description": "Upload an IPA to AppRelay and print its share URL.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michalkvasnicak/apprelay.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "apprelay": "bin/apprelay.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/"
+  ],
+  "type": "module",
+  "scripts": {
+    "api:generate": "node scripts/generate-api.mjs",
+    "api:check": "node scripts/generate-api.mjs --check",
+    "start": "node bin/apprelay.mjs",
+    "lint": "oxlint --fix --deny-warnings .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "openapi-typescript": "^7.13.0"
+  },
+  "engines": {
+    "node": ">=24.12.0"
+  }
+}

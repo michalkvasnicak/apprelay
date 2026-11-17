@@ -1,11 +1,12 @@
 {
-  "name": "apprelay",
+  "name": "@apprelay/workspace",
   "private": true,
   "scripts": {
-    "api:generate": "pnpm --filter @apprelay/mobile api:generate",
-    "api:check": "pnpm --filter @apprelay/mobile api:check",
+    "api:generate": "pnpm --filter @apprelay/mobile api:generate && pnpm --filter apprelay api:generate",
+    "api:check": "pnpm --filter @apprelay/mobile api:check && pnpm --filter apprelay api:check",
     "start": "pnpm --filter @apprelay/mobile start",
     "server": "pnpm --filter @apprelay/server start",
+    "cli": "pnpm --filter apprelay start",
     "android": "pnpm --filter @apprelay/mobile android",
     "ios": "pnpm --filter @apprelay/mobile ios",
     "publish:ios:testflight": "pnpm --filter @apprelay/mobile publish:ios:testflight",

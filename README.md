@@ -7,8 +7,18 @@ pnpm monorepo with a minimal Expo React Native app and a Rust server process.
 - `apps/mobile` — Expo app (`@apprelay/mobile`) with a blank white screen.
 - `apps/server` — Rust HTTP server (`@apprelay/server`) and privileged host VPN agent.
 - `apps/server/web` — React + TypeScript + Vite signing frontend (`@apprelay/web`), styled with Tailwind CSS.
-- `packages/*` — workspace location for future shared packages.
+- `packages/cli` — TypeScript IPA upload CLI (`apprelay`), requiring Node.js 24.12+.
 - Repository root — shared tooling, Git hooks, and Pi hooks.
+
+## CLI
+
+```sh
+npx apprelay ./MyApp.ipa
+# From the repository, before npm publication:
+pnpm cli ./MyApp.ipa
+```
+
+CLI configuration and publishing commands: [packages/cli/README.md](packages/cli/README.md).
 
 ## Development
 
