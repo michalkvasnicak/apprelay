@@ -11,7 +11,7 @@
     "ios": "node scripts/with-env.mjs local expo run:ios --device",
     "web": "node scripts/with-env.mjs local expo start --web",
     "prebuild:ios": "node scripts/with-env.mjs local expo prebuild --platform ios",
-    "publish:ios:testflight": "node scripts/with-env.mjs testflight node scripts/publish-testflight.mjs",
+    "publish:ios:testflight": "node scripts/publish-testflight-with-build-number.mjs",
     "lint": "oxlint --fix --deny-warnings --react-plugin .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",

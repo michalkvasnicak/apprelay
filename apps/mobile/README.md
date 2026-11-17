@@ -74,7 +74,7 @@ Configure native projects through Expo configuration and plugins; do not edit ge
 ### One-time setup
 
 1. Enroll in the Apple Developer Program and create an App Store Connect app with the bundle identifier from `.env.testflight`. Enable Network Extension provisioning for both the app and `<bundle identifier>.PacketTunnel`.
-2. Fill in `.env.testflight` with your Apple team ID, distribution bundle identifier, deployed server URL and app key. Set `APPLE_BUILD_NUMBER` to a build version such as `1`; increase it for every new upload.
+2. Fill in `.env.testflight` with your Apple team ID, distribution bundle identifier, deployed server URL and app key. Set `APPLE_BUILD_NUMBER` to the last used integer build number (or `0` before the first upload). Publishing increments it automatically.
 3. Sign in to your Apple Developer account in **Xcode → Settings → Accounts**, with permission to sign and upload the app. Alternatively, supply all three optional `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` and `APPLE_API_KEY_PATH` settings for App Store Connect API-key authentication. The key must have permission to manage signing and upload builds; keep its private `.p8` file outside the repository.
 4. Install Xcode command-line tools, CocoaPods and the Go version described above. If needed, set `APPRELAY_GO_BINARY` in `.env.testflight` to the Go executable's absolute path.
 
@@ -90,11 +90,13 @@ pnpm publish:ios:testflight
 
 This command:
 
-1. Loads only `apps/mobile/.env.testflight` and validates the Expo configuration.
+1. Increments `APPLE_BUILD_NUMBER` in `apps/mobile/.env.testflight`, loads only that file and validates the Expo configuration.
 2. Copies the app into a temporary build directory, without env files or existing native projects, and reuses the installed dependencies.
 3. Runs Expo prebuild and CocoaPods to generate a fresh native iOS project.
 4. Creates a signed Release archive using local `xcodebuild`. The explicit build number applies to both the app and its VPN extension.
 5. Uses `xcodebuild -exportArchive` with an App Store Connect upload destination to send the archive directly to Apple. Upload does not run if archiving fails.
+
+The incremented build number is kept only when publishing succeeds. On failure or interruption (SIGINT/SIGTERM), the original `.env.testflight` contents are restored. Do not run simultaneous publishes or edit that file while publishing.
 
 The local `.env.local` file and generated development iOS project are untouched. The temporary release project is removed afterward. Archives and export settings are saved under a unique `apps/mobile/dist/testflight-*` directory, printed by the script.
 
