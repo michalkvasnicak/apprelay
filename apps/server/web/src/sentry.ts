@@ -2,7 +2,8 @@ import * as Sentry from "@sentry/react";
 
 const dsn = import.meta.env.VITE_SENTRY_DSN;
 
-if (import.meta.env.PROD && dsn) {
+// Share tokens are capabilities; do not initialize telemetry on secret-link pages.
+if (import.meta.env.PROD && dsn && !window.location.pathname.startsWith("/s/")) {
   Sentry.init({
     dsn,
     environment: import.meta.env.VITE_SENTRY_ENVIRONMENT || "production",

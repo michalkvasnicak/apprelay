@@ -3,14 +3,16 @@ import { useRef, useState } from "react";
 
 import { AccountError, accountController } from "../account/controller";
 import { useAccountAction, useAccountBusy } from "../account/hooks";
-import { ActionError, inputClass } from "../components/forms";
-import { requireProvisionableDevice, targetDevice } from "../device";
+import { ActionError, buttonClass, inputClass } from "../components/forms";
+import { selectTargetDevice } from "../device";
+import { SignedResult } from "./SignedResult";
 import { signingController } from "./controller";
 import { useSigning } from "./hooks";
 import { SigningError } from "./types";
 
-export function SigningPanel() {
+export function SigningPanel({ file: sharedFile }: { file?: File }) {
   const input = useRef<HTMLInputElement>(null);
+  const udid = useRef<HTMLInputElement>(null);
   const client = useQueryClient();
   const busy = useAccountBusy();
   const state = useSigning();
@@ -19,15 +21,16 @@ export function SigningPanel() {
     void client.invalidateQueries({ queryKey: ["signing"] });
   };
   const prepare = useAccountAction(async () => {
-    const file = input.current?.files?.[0];
-    if (input.current) {
-      input.current.value = "";
-    }
+    const file = sharedFile ?? input.current?.files?.[0];
     if (!file) {
       throw new AccountError("Choose an IPA first");
     }
     try {
-      requireProvisionableDevice();
+      try {
+        selectTargetDevice(udid.current?.value ?? "");
+      } catch {
+        throw new AccountError("Enter a valid iPhone hardware UDID before signing");
+      }
       setProgress("Inspecting IPA…");
       await signingController.inspect(file, changed);
       const bundleId = signingController.snapshot().bundleId;
@@ -46,42 +49,63 @@ export function SigningPanel() {
       throw new AccountError(
         error instanceof AccountError || error instanceof SigningError
           ? error.message
-          : "Could not prepare this app. Check the target device configuration and try again.",
+          : "Could not prepare this app. Check your Apple session and target device, then try again.",
       );
     } finally {
       setProgress("");
     }
   });
 
+  if (state.data?.status === "signed") {
+    return <SignedResult />;
+  }
+
   return (
     <section aria-labelledby="sign-title">
       <h2 id="sign-title" className="text-lg font-semibold">
-        Choose an IPA
+        {sharedFile ? "Sign this app" : "Choose an IPA"}
       </h2>
       <p className="mt-3 text-sm leading-6 text-muted">
-        We’ll prepare the signing assets and sign your app automatically. The IPA and private
-        signing key stay on this device.
+        We’ll prepare the signing assets and sign your app automatically. Signing happens in this
+        browser; your private signing key stays here.
       </p>
-      <label className="mt-5 block text-sm font-medium">
-        IPA file
-        <input
-          ref={input}
-          type="file"
-          accept=".ipa"
-          disabled={busy || targetDevice.isPlaceholder}
-          className={inputClass}
-          onChange={() => {
-            if (input.current?.files?.length) {
-              prepare.mutate();
-            }
-          }}
-        />
-      </label>
-      {targetDevice.isPlaceholder && (
-        <p role="alert" className="mt-3 text-sm text-error">
-          Signing requires a target iPhone UDID. Configure VITE_DEVICE_UDID before continuing.
-        </p>
-      )}
+      <form
+        className="mt-5"
+        onSubmit={(event) => {
+          event.preventDefault();
+          prepare.mutate();
+        }}
+      >
+        <fieldset disabled={busy} className="space-y-5">
+          {!sharedFile && (
+            <label className="block text-sm font-medium">
+              IPA file
+              <input ref={input} type="file" accept=".ipa" required className={inputClass} />
+            </label>
+          )}
+          <label className="block text-sm font-medium">
+            Target iPhone UDID
+            <input
+              ref={udid}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              pattern="(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{8}-[a-fA-F0-9]{16})"
+              maxLength={40}
+              required
+              className={inputClass}
+            />
+          </label>
+          <p className="text-xs leading-5 text-muted">
+            Use the hardware UDID shown in Finder or Apple Devices for the iPhone you intend to
+            install on. It will be registered with your Apple development team. This does not pair
+            or connect your phone.
+          </p>
+          <button type="submit" className={buttonClass}>
+            {prepare.isPending ? "Signing…" : "Sign app"}
+          </button>
+        </fieldset>
+      </form>
       {prepare.isPending && (
         <p role="status" className="mt-4 text-sm text-muted">
           {state.data?.status === "signing" ? state.data.message || progress : progress} Keep this

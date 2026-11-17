@@ -217,7 +217,7 @@ export interface components {
        * @description Null when the IPA is retained indefinitely.
        */
       expires_at?: string | null;
-      /** @description API resolver URL; the browser installation page will be wired separately. */
+      /** @description Browser signing page URL. */
       share_url: string;
       /** Format: date-time */
       upload_expires_at: string;

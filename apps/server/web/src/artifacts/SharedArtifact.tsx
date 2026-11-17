@@ -1,0 +1,69 @@
+import { useEffect, useState } from "react";
+
+import { AccountWorkspace } from "../account/AccountWorkspace";
+import { buttonClass, secondaryClass } from "../components/forms";
+import { ArtifactError, downloadArtifact } from "./download";
+
+type DownloadState =
+  | { status: "loading" }
+  | { status: "ready"; file: File }
+  | { status: "error"; message: string };
+
+export function SharedArtifact({ token }: { token: string }) {
+  const [state, setState] = useState<DownloadState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(3 * 60_000)]);
+    void downloadArtifact(token, signal).then(
+      (file) => {
+        if (!controller.signal.aborted) {
+          setState({ status: "ready", file });
+        }
+      },
+      (error: unknown) => {
+        if (!controller.signal.aborted) {
+          setState({
+            status: "error",
+            message: error instanceof ArtifactError ? error.message : "Could not load this app.",
+          });
+        }
+      },
+    );
+    return () => controller.abort();
+  }, [token, attempt]);
+
+  if (state.status === "ready") {
+    return <AccountWorkspace file={state.file} />;
+  }
+  if (state.status === "loading") {
+    return (
+      <p role="status" className="text-sm text-muted">
+        Downloading and verifying IPA…
+      </p>
+    );
+  }
+  return (
+    <section>
+      <p role="alert" className="text-sm text-error">
+        {state.message}
+      </p>
+      <div className="mt-5 flex items-center gap-5">
+        <button
+          type="button"
+          className={buttonClass}
+          onClick={() => {
+            setState({ status: "loading" });
+            setAttempt(attempt + 1);
+          }}
+        >
+          Try again
+        </button>
+        <a href="/" className={secondaryClass}>
+          Choose a local IPA
+        </a>
+      </div>
+    </section>
+  );
+}

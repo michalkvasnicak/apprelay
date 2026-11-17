@@ -44,7 +44,6 @@ Use `pnpm --filter @apprelay/mobile <command>` to target the app directly. Add E
 Run `pnpm web:dev` to open the signing preview at `http://localhost:5173`.
 Vite proxies API requests to the Rust server at `127.0.0.1:8080`; start it separately with `pnpm server`.
 Apple authentication, trusted-device 2FA, and basic certificate/profile preparation are experimental and not live-verified. IPA signing is not integrated yet.
-The device UDID is supplied through `VITE_DEVICE_UDID` (see `apps/server/web/.env.example`); the default placeholder blocks device provisioning.
 Optional sessions and signing assets use a passphrase-encrypted localStorage vault. Apple passwords and verification codes are never saved.
 
 `pnpm web:build` produces `apps/server/web/dist`, which Axum serves at `/`.

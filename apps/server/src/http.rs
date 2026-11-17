@@ -163,6 +163,7 @@ async fn log_request(request: Request, next: Next) -> Response {
     });
     let path = if request.uri().path().starts_with("/v1/pairing-attempts/")
         || request.uri().path().starts_with("/v1/artifacts/")
+        || request.uri().path().starts_with("/s/")
     {
         route.clone()
     } else {

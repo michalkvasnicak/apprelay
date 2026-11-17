@@ -1,19 +1,22 @@
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { PairingWorkspace } from "../pairing/PairingWorkspace";
+import { ActionError, secondaryClass } from "../components/forms";
 import { SigningPanel } from "../signing/SigningPanel";
-import { useSigning } from "../signing/hooks";
+import { signingController } from "../signing/controller";
 import { AuthenticationPanel } from "./AuthenticationPanel";
 import { VaultPanel } from "./VaultPanel";
-import { useAccount, useAccountBusy } from "./hooks";
+import { accountController } from "./controller";
+import { useAccount, useAccountAction, useAccountBusy } from "./hooks";
 
-const steps = ["Apple account", "Sign IPA", "Pair iPhone", "Upload"] as const;
-
-export function AccountWorkspace() {
+export function AccountWorkspace({ file }: { file?: File }) {
   const account = useAccount();
-  const signing = useSigning();
   const busy = useAccountBusy();
-  const [paired, setPaired] = useState(false);
+  const client = useQueryClient();
+  const lock = useAccountAction(async () => {
+    await accountController.lock();
+    signingController.reset();
+    await client.invalidateQueries({ queryKey: ["signing"] });
+  });
   if (account.isPending) {
     return (
       <p role="status" className="text-sm text-muted">
@@ -30,33 +33,11 @@ export function AccountWorkspace() {
   }
   const ready =
     account.data.status === "authenticated" && !!account.data.teamId && account.data.vaultUnlocked;
-  let step = 0;
-  if (ready) {
-    if (signing.data?.status !== "signed") {
-      step = 1;
-    } else if (paired) {
-      step = 3;
-    } else {
-      step = 2;
-    }
-  }
+
   return (
     <div className="space-y-6" aria-busy={busy}>
-      <ol
-        aria-label="Installation steps"
-        className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted"
-      >
-        {steps.map((title, index) => (
-          <li
-            key={title}
-            aria-current={index === step ? "step" : undefined}
-            className={index === step ? "font-semibold text-primary" : ""}
-          >
-            {index + 1}. {title}
-          </li>
-        ))}
-      </ol>
-      {step === 0 && (
+      {file && <p className="break-all text-sm text-muted">App: {file.name}</p>}
+      {!ready ? (
         <div className="space-y-6">
           <h2 className="text-lg font-semibold">Sign in to Apple</h2>
           <AuthenticationPanel account={account.data} />
@@ -65,23 +46,19 @@ export function AccountWorkspace() {
             <VaultPanel account={account.data} />
           )}
         </div>
-      )}
-      {step === 1 && <SigningPanel />}
-      {step === 2 && <PairingWorkspace onPaired={() => setPaired(true)} />}
-      {step === 3 && (
-        <section aria-labelledby="upload-title">
-          <h2 id="upload-title" className="text-lg font-semibold">
-            Ready to upload
-          </h2>
-          <p role="status" className="mt-3 text-sm leading-6 text-muted">
-            Your app is signed and your iPhone is paired. Upload is not implemented yet; no app has
-            been sent to your phone.
-          </p>
-          <p className="mt-3 text-xs leading-5 text-muted">
-            Upload progress will appear here when available. The signed IPA stays in memory until
-            you leave or reload this page.
-          </p>
-        </section>
+      ) : (
+        <div className="space-y-6">
+          <SigningPanel file={file} />
+          <button
+            type="button"
+            className={secondaryClass}
+            disabled={busy}
+            onClick={() => lock.mutate()}
+          >
+            Lock Apple account
+          </button>
+          <ActionError error={lock.error} />
+        </div>
       )}
     </div>
   );

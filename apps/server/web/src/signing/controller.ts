@@ -7,6 +7,7 @@ class SigningController {
   private worker?: SigningWorker;
   private inspection?: Inspection;
   private result?: ArrayBuffer;
+  private fileName = "app.ipa";
   private status: "idle" | "inspecting" | "ready" | "signing" | "signed" = "idle";
   private message = "";
   private revision = 0;
@@ -35,6 +36,7 @@ class SigningController {
     if (!file.size || file.size > signingLimits.inputBytes) {
       throw new SigningError("Choose an IPA smaller than 100 MiB");
     }
+    this.fileName = file.name;
     const revision = this.revision;
     const worker = new SigningWorker();
     this.worker = worker;
@@ -65,6 +67,15 @@ class SigningController {
     }
   }
 
+  signedFile() {
+    if (this.status !== "signed" || !this.result) {
+      throw new SigningError("Sign an IPA before downloading");
+    }
+    return new File([this.result], this.fileName.replace(/\.ipa$/i, "") + "-signed.ipa", {
+      type: "application/octet-stream",
+    });
+  }
+
   async sign(changed: () => void) {
     const worker = this.worker;
     const inspection = this.inspection;
@@ -86,11 +97,9 @@ class SigningController {
         if (response.type !== "signed") {
           throw new SigningError("The signer returned an unexpected signing result");
         }
-        // Delivery is intentionally not implemented. No Blob URL, upload, or
-        // localStorage persistence: only this private in-memory result boundary.
         this.result = response.bytes;
         this.status = "signed";
-        this.message = "Signed result held in memory. Delivery is not configured.";
+        this.message = "Your app is signed and ready to download.";
       });
     } catch (error) {
       if (revision === this.revision) {

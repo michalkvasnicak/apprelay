@@ -132,7 +132,7 @@ pub(super) struct CreateRequest {
 #[derive(Serialize, ToSchema)]
 struct CreatedArtifact {
     artifact_id: Uuid,
-    /// API resolver URL; the browser installation page will be wired separately.
+    /// Browser signing page URL.
     share_url: String,
     /// Null when the IPA is retained indefinitely.
     expires_at: Option<DateTime<Utc>>,
@@ -250,7 +250,7 @@ pub(super) async fn create(
         StatusCode::CREATED,
         Json(CreatedArtifact {
             artifact_id: id,
-            share_url: format!("{}/v1/artifacts/{}", api.public_origin, credential.token),
+            share_url: format!("{}/s/{}", api.public_origin, credential.token),
             expires_at,
             upload_url: upload.url,
             upload_expires_at,

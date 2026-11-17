@@ -2,8 +2,8 @@
   "name": "@apprelay/workspace",
   "private": true,
   "scripts": {
-    "api:generate": "pnpm --filter @apprelay/mobile api:generate && pnpm --filter @brosoft/apprelay api:generate",
-    "api:check": "pnpm --filter @apprelay/mobile api:check && pnpm --filter @brosoft/apprelay api:check",
+    "api:generate": "pnpm --filter @apprelay/mobile api:generate && pnpm --filter @brosoft/apprelay api:generate && pnpm --filter @apprelay/web api:generate",
+    "api:check": "pnpm --filter @apprelay/mobile api:check && pnpm --filter @brosoft/apprelay api:check && pnpm --filter @apprelay/web api:check",
     "start": "pnpm --filter @apprelay/mobile start",
     "server": "pnpm --filter @apprelay/server start",
     "cli": "pnpm --filter @brosoft/apprelay start",
