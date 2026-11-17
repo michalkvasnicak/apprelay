@@ -106,7 +106,7 @@ try {
     throw new Error(`Unexpected PostgreSQL port binding: ${binding}`);
   }
   const databaseUrl = `postgres://apprelay_test:${password}@127.0.0.1:${port}/apprelay_test`;
-  await run("cargo", ["test", "--tests", ...process.argv.slice(2)], {
+  await run("cargo", ["test", "--tests", "--features", "test-support", ...process.argv.slice(2)], {
     env: { ...process.env, DATABASE_URL: databaseUrl },
   });
 } catch (error) {

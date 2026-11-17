@@ -5,9 +5,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_MESSAGE_SIZE: usize = 4096;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum Request {
+pub enum Request {
     Status,
     RequireConnectedPeer {
         public_key: [u8; 32],
@@ -31,7 +31,7 @@ pub(super) enum Response {
     Error { message: String },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VpnStatus {
     pub state: VpnState,
@@ -42,7 +42,7 @@ pub struct VpnStatus {
     pub public_key: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum VpnState {
     Running,

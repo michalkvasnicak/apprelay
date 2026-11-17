@@ -23,6 +23,9 @@ path = "src/bin/notification-worker.rs"
 name = "pair-device"
 path = "src/bin/pair-device.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 base64 = "0.22"

@@ -1,6 +1,10 @@
 use std::{io, net::Ipv4Addr, path::PathBuf, time::Duration};
 
-use tokio::{net::UnixStream, time::timeout};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::UnixStream,
+    time::timeout,
+};
 
 use super::{
     protocol::{self, Request, Response, VpnStatus},
@@ -9,14 +13,28 @@ use super::{
 
 #[derive(Clone)]
 pub struct Client {
-    socket: PathBuf,
+    transport: Transport,
+}
+
+#[derive(Clone)]
+enum Transport {
+    Socket(PathBuf),
+    #[cfg(feature = "test-support")]
+    Fake(tokio::sync::mpsc::Sender<tokio::io::DuplexStream>),
 }
 
 impl Client {
     pub fn from_env() -> io::Result<Self> {
         Ok(Self {
-            socket: socket_path()?,
+            transport: Transport::Socket(socket_path()?),
         })
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(super) fn fake(sender: tokio::sync::mpsc::Sender<tokio::io::DuplexStream>) -> Self {
+        Self {
+            transport: Transport::Fake(sender),
+        }
     }
 
     pub async fn status(&self) -> io::Result<VpnStatus> {
@@ -61,29 +79,47 @@ impl Client {
 
     async fn request(&self, request: Request) -> io::Result<VpnStatus> {
         timeout(Duration::from_secs(30), async {
-            let mut stream = UnixStream::connect(&self.socket).await.map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!(
-                        "could not connect to VPN agent at {}: {error}",
-                        self.socket.display()
-                    ),
-                )
-            })?;
-            if stream.peer_cred()?.uid() != 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "VPN agent must be owned by root",
-                ));
-            }
-
-            protocol::send(&mut stream, &request).await?;
-            match protocol::receive(&mut stream).await? {
-                Response::Status { status } => Ok(status),
-                Response::Error { message } => Err(io::Error::other(message)),
+            match &self.transport {
+                Transport::Socket(socket) => {
+                    let mut stream = UnixStream::connect(socket).await.map_err(|error| {
+                        io::Error::new(
+                            error.kind(),
+                            format!(
+                                "could not connect to VPN agent at {}: {error}",
+                                socket.display()
+                            ),
+                        )
+                    })?;
+                    if stream.peer_cred()?.uid() != 0 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "VPN agent must be owned by root",
+                        ));
+                    }
+                    exchange(&mut stream, &request).await
+                }
+                #[cfg(feature = "test-support")]
+                Transport::Fake(sender) => {
+                    let (mut client, server) = tokio::io::duplex(8192);
+                    sender.send(server).await.map_err(|_| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "fake VPN agent is stopped")
+                    })?;
+                    exchange(&mut client, &request).await
+                }
             }
         })
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "VPN agent request timed out"))?
+    }
+}
+
+async fn exchange(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    request: &Request,
+) -> io::Result<VpnStatus> {
+    protocol::send(stream, request).await?;
+    match protocol::receive(stream).await? {
+        Response::Status { status } => Ok(status),
+        Response::Error { message } => Err(io::Error::other(message)),
     }
 }

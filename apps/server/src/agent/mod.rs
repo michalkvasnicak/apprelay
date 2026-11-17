@@ -1,6 +1,9 @@
 mod client;
 mod protocol;
 
+#[cfg(feature = "test-support")]
+pub mod testing;
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod service;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
