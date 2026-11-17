@@ -63,17 +63,39 @@ impl NotificationActivities {
         let notification_id = Uuid::parse_str(&notification_id)?;
         let operation = async {
             // All credentials and the PIN stay in this activity, never in history.
-            let Some(notification) = self.codes.notification(notification_id).await? else {
+            let Some(notification) = self
+                .codes
+                .notification(notification_id)
+                .await
+                .inspect_err(|_| crate::telemetry::report("Could not read pairing notification"))?
+            else {
                 return Ok(());
             };
-            match self.apns.send(notification_id, &notification).await? {
-                SendOutcome::Accepted => self.codes.mark_sent(notification_id).await?,
+            match self
+                .apns
+                .send(notification_id, &notification)
+                .await
+                .inspect_err(|_| crate::telemetry::report("APNs notification delivery failed"))?
+            {
+                SendOutcome::Accepted => {
+                    self.codes
+                        .mark_sent(notification_id)
+                        .await
+                        .inspect_err(|_| {
+                            crate::telemetry::report("Could not mark pairing notification sent");
+                        })?
+                }
                 SendOutcome::Expired => {}
                 SendOutcome::InvalidToken(invalidated_at) => {
                     if invalidated_at
                         .is_none_or(|time| notification.token_updated_at.timestamp_millis() <= time)
                     {
-                        self.codes.remove_invalid_token(&notification).await?;
+                        self.codes
+                            .remove_invalid_token(&notification)
+                            .await
+                            .inspect_err(|_| {
+                                crate::telemetry::report("Could not remove invalid APNs token");
+                            })?;
                     }
                     return Err(ActivityError::application(
                         ApplicationFailure::non_retryable(io::Error::other(
@@ -94,7 +116,10 @@ impl NotificationActivities {
         tokio::select! {
             _ = ctx.cancelled() => Err(ActivityError::cancelled()),
             result = tokio::time::timeout(Duration::from_secs(8), operation) => {
-                result.map_err(|_| io::Error::other("APNs notification attempt timed out"))?
+                result.map_err(|_| {
+                    crate::telemetry::report("APNs notification attempt timed out");
+                    io::Error::other("APNs notification attempt timed out")
+                })?
             }
         }
     }
@@ -103,12 +128,18 @@ impl NotificationActivities {
 async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Client) {
     let mut ticks = tokio::time::interval(Duration::from_secs(1));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut was_unavailable = false;
     loop {
         ticks.tick().await;
+        let mut unavailable = false;
         let pending = match codes.pending_notifications().await {
             Ok(pending) => pending,
             Err(_) => {
                 eprintln!("Could not read pairing notification outbox; will retry");
+                if !was_unavailable {
+                    crate::telemetry::report("Pairing notification dispatch unavailable");
+                }
+                was_unavailable = true;
                 continue;
             }
         };
@@ -127,12 +158,20 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
             match tokio::time::timeout(Duration::from_secs(2), start).await {
                 Ok(Ok(_)) => {
                     if codes.mark_queued(notification_id).await.is_err() {
+                        unavailable = true;
                         eprintln!("Could not mark pairing notification queued; will retry");
                     }
                 }
-                _ => eprintln!("Could not queue pairing notification; will retry while active"),
+                _ => {
+                    unavailable = true;
+                    eprintln!("Could not queue pairing notification; will retry while active");
+                }
             }
         }
+        if unavailable && !was_unavailable {
+            crate::telemetry::report("Pairing notification dispatch unavailable");
+        }
+        was_unavailable = unavailable;
     }
 }
 

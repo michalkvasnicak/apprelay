@@ -1,7 +1,13 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    apprelay_server::temporal_notifications::run_worker().await
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _sentry = apprelay_server::telemetry::init("notification-worker")?;
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(apprelay_server::temporal_notifications::run_worker())
+        .inspect_err(|_| {
+            apprelay_server::telemetry::report("notification-worker terminated with an error");
+        })
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

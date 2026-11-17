@@ -17,7 +17,10 @@ pub async fn run(pool: PgPool, agent: Client) {
         match reconcile(&pool, &agent).await {
             Ok(0) => {}
             Ok(count) => eprintln!("Reconciled {count} active VPN peers"),
-            Err(error) => eprintln!("VPN peer reconciliation failed; will retry: {error}"),
+            Err(error) => {
+                crate::telemetry::report("VPN peer reconciliation failed");
+                eprintln!("VPN peer reconciliation failed; will retry: {error}");
+            }
         }
     }
 }

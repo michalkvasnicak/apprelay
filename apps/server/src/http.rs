@@ -17,7 +17,7 @@ use std::{net::Ipv4Addr, time::Instant};
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Request, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, MatchedPath, Request, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header::CACHE_CONTROL},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -134,6 +134,7 @@ pub fn router(
         .merge(web::router())
         .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn(log_request))
+        .layer(sentry::integrations::tower::NewSentryLayer::<Request>::new_from_top())
         .with_state(AppState {
             devices,
             agent,
@@ -145,6 +146,16 @@ pub fn router(
 
 async fn log_request(request: Request, next: Next) -> Response {
     let method = request.method().clone();
+    // Matched route patterns contain placeholders, never capability tokens/IDs.
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or("unmatched", MatchedPath::as_str)
+        .to_owned();
+    sentry::configure_scope(|scope| {
+        scope.set_tag("http.method", method.as_str());
+        scope.set_tag("http.route", &route);
+    });
     let path = if request.uri().path().starts_with("/v1/pairing-attempts/") {
         "/v1/pairing-attempts/[redacted]".to_owned()
     } else {
@@ -152,6 +163,20 @@ async fn log_request(request: Request, next: Next) -> Response {
     };
     let started = Instant::now();
     let mut response = next.run(request).await;
+    if response.status().is_server_error() {
+        sentry::with_scope(
+            |scope| {
+                scope.set_tag("http.status_code", response.status().as_str());
+                scope.set_fingerprint(Some(&[
+                    "http",
+                    method.as_str(),
+                    route.as_str(),
+                    response.status().as_str(),
+                ]));
+            },
+            || crate::telemetry::report("HTTP request failed"),
+        );
+    }
     response.headers_mut().insert(
         CACHE_CONTROL,
         axum::http::HeaderValue::from_static("no-store"),

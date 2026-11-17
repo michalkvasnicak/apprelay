@@ -17,12 +17,16 @@ ARG SENTRY_RELEASE
 RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN,env=SENTRY_AUTH_TOKEN \
     pnpm --filter @apprelay/web build
 
+FROM getsentry/sentry-cli:3.8.1 AS sentry-cli
+
 FROM rust:1.92-bookworm AS build
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates clang cmake git libprotobuf-dev libssl-dev pkg-config protobuf-compiler \
+        binutils ca-certificates clang cmake git libprotobuf-dev libssl-dev pkg-config protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=sentry-cli /bin/sentry-cli /usr/local/bin/sentry-cli
 
 WORKDIR /build
 COPY apps/server/Cargo.toml apps/server/Cargo.lock apps/server/build.rs ./
@@ -32,10 +36,27 @@ COPY apps/server/migrations ./migrations
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/build/target \
-    cargo build --locked --release --bins \
-    && mkdir /out \
+    cargo build --locked --release --bins --features sentry-debug-images \
+    && mkdir /out /symbols \
     && cp target/release/apprelay-server target/release/vpn-agent \
-        target/release/pairing-worker target/release/notification-worker /out/
+        target/release/pairing-worker target/release/notification-worker /out/ \
+    && for binary in /out/*; do \
+        objcopy --only-keep-debug "$binary" "/symbols/$(basename "$binary").debug" || exit 1; \
+        objcopy --strip-debug --strip-unneeded "$binary" || exit 1; \
+    done
+
+ARG SENTRY_ORG
+ARG SENTRY_BACKEND_PROJECT
+ARG SENTRY_RELEASE
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=secret,id=SENTRY_AUTH_TOKEN,env=SENTRY_AUTH_TOKEN \
+    if [ -n "$SENTRY_BACKEND_PROJECT" ]; then \
+        : "${SENTRY_ORG:?SENTRY_ORG is required to upload backend debug files}"; \
+        : "${SENTRY_AUTH_TOKEN:?SENTRY_AUTH_TOKEN is required to upload backend debug files}"; \
+        sentry-cli debug-files upload --org "$SENTRY_ORG" \
+            --project "$SENTRY_BACKEND_PROJECT" --include-sources --wait /out /symbols; \
+    fi
 
 FROM debian:bookworm-slim AS runtime
 
@@ -50,7 +71,9 @@ RUN apt-get update \
 
 COPY --from=build /out/ /usr/local/bin/
 COPY --from=web /build/apps/server/web/dist/ /opt/apprelay/web/
-ENV APPRELAY_WEB_DIR=/opt/apprelay/web
+ARG SENTRY_RELEASE
+ENV APPRELAY_WEB_DIR=/opt/apprelay/web \
+    SENTRY_RELEASE=${SENTRY_RELEASE}
 COPY --chmod=0755 apps/server/docker/vpn-agent-entrypoint.sh /usr/local/bin/vpn-agent-entrypoint
 # Docker drops effective capabilities for non-root users. This file capability
 # lets only the pairing executable acquire NET_RAW within its bounding set.

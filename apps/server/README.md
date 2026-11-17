@@ -102,16 +102,25 @@ Configuration comes from exported environment variables, not `.env` files.
 | `APPRELAY_VPN_AGENT_UID`           | Agent                   | `SUDO_UID`                                | Permitted non-root server user's UID.                                                                                                                                                                                                                                                                                               |
 | `APPRELAY_VPN_AGENT_SOCKET`        | Server and agent        | `/var/db/apprelay/vpn-agent.sock` (macOS) | Unix socket path; Linux defaults to `/var/run/apprelay/vpn-agent.sock`. Set for the server, pairing worker, and agent when overriding, including explicitly in `sudo env`. Its directory must be root-owned and not group/world-writable.                                                                                           |
 
-### Web build configuration
+### Backend telemetry configuration
 
-| Variable                  | Default          | Description                                                                                                                                        |
-| ------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VITE_SENTRY_DSN`         | Empty (disabled) | Public Sentry DSN, embedded in production web builds.                                                                                              |
-| `VITE_SENTRY_ENVIRONMENT` | `production`     | Sentry environment for the web app.                                                                                                                |
-| `SENTRY_AUTH_TOKEN`       | Empty            | Build-only source-map upload token; required when `VITE_SENTRY_DSN` is set. Supply through a BuildKit secret with the same name for Docker builds. |
-| `SENTRY_ORG`              | Unset            | Build-only Sentry organization slug; required when `VITE_SENTRY_DSN` is set. Pass as a Docker build argument.                                      |
-| `SENTRY_PROJECT`          | Unset            | Build-only Sentry project slug; required when `VITE_SENTRY_DSN` is set. Pass as a Docker build argument.                                           |
-| `SENTRY_RELEASE`          | Unset            | Optional release identifier for the web build, such as the commit SHA.                                                                             |
+| Variable             | Process                         | Default          | Description                                                                                                  |
+| -------------------- | ------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| `SENTRY_DSN`         | Server, VPN agent, both workers | Empty (disabled) | Runtime Sentry DSN. Missing or empty disables reporting.                                                     |
+| `SENTRY_ENVIRONMENT` | Server, VPN agent, both workers | SDK environment  | Runtime deployment environment; SDK uses `development` for debug builds and `production` for release builds. |
+| `SENTRY_RELEASE`     | Server, VPN agent, both workers | Unset            | Runtime release identifier; Docker embeds the supplied build argument, which can be overridden at runtime.   |
+
+### Build telemetry configuration
+
+| Variable                  | Default          | Description                                                                                                                                                         |
+| ------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_SENTRY_DSN`         | Empty (disabled) | Public Sentry DSN, embedded in production web builds.                                                                                                               |
+| `VITE_SENTRY_ENVIRONMENT` | `production`     | Sentry environment for the web app.                                                                                                                                 |
+| `SENTRY_AUTH_TOKEN`       | Empty            | Build-only upload token; required when `VITE_SENTRY_DSN` or `SENTRY_BACKEND_PROJECT` is set. Supply through a BuildKit secret with the same name for Docker builds. |
+| `SENTRY_ORG`              | Unset            | Build-only Sentry organization slug; required when `VITE_SENTRY_DSN` or `SENTRY_BACKEND_PROJECT` is set. Pass as a Docker build argument.                           |
+| `SENTRY_PROJECT`          | Unset            | Build-only Sentry project slug; required when `VITE_SENTRY_DSN` is set. Pass as a Docker build argument.                                                            |
+| `SENTRY_BACKEND_PROJECT`  | Unset            | Docker build-only backend project slug. Setting it enables debug-symbol and source uploads for the server, VPN agent, and both workers.                             |
+| `SENTRY_RELEASE`          | Unset            | Optional release identifier for the web and backend builds, such as the commit SHA.                                                                                 |
 
 ## API documentation
 

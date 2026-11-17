@@ -183,6 +183,7 @@ impl PairingActivities {
         .bind(attempt)
         .execute(&self.pool)
         .await
+        .inspect_err(|_| crate::telemetry::report("Could not finish pairing attempt"))
         .map_err(|_| io::Error::other("could not finish pairing attempt"))?;
         Ok(())
     }
@@ -345,6 +346,7 @@ impl PairingActivities {
         // Best effort on cancellation as well; expiry also handles process crashes.
         let ended = tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id)).await;
         if !matches!(ended, Ok(Ok(()))) {
+            crate::telemetry::report("Could not invalidate pairing code");
             eprintln!("Could not invalidate pairing code; it will expire at the session deadline");
         }
         result
@@ -381,7 +383,9 @@ impl PairingActivities {
 // A committed claim survives HTTP cancellation and Temporal outages. Workflow IDs
 // deduplicate uncertain enqueue results, including already completed workflows.
 async fn dispatch_attempts(pool: PgPool) {
+    let mut was_unavailable = false;
     loop {
+        let mut dispatch_failed = false;
         let result = async {
             sqlx::query("UPDATE public_pairing_attempts SET status = 'expired'
                 WHERE status IN ('pending', 'pairing') AND expires_at <= clock_timestamp()")
@@ -405,6 +409,7 @@ async fn dispatch_attempts(pool: PgPool) {
                         .build(),
                 ).await;
                 if started.is_err() {
+                    dispatch_failed = true;
                     eprintln!("Could not enqueue pairing attempt {attempt}; will retry");
                     continue;
                 }
@@ -417,6 +422,11 @@ async fn dispatch_attempts(pool: PgPool) {
         if result.is_err() {
             eprintln!("Pairing attempt dispatch unavailable; durable claims will be retried");
         }
+        let unavailable = result.is_err() || dispatch_failed;
+        if unavailable && !was_unavailable {
+            crate::telemetry::report("Pairing attempt dispatch unavailable");
+        }
+        was_unavailable = unavailable;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
@@ -437,7 +447,11 @@ async fn wait<T>(
             _ = sleep_until(deadline) => return Err(io::Error::new(
                 io::ErrorKind::TimedOut, timeout_message,
             ).into()),
-            result = &mut operation => return result.map_err(Into::into),
+            result = &mut operation => return result.inspect_err(|error| {
+                if error.kind() != io::ErrorKind::TimedOut {
+                    crate::telemetry::report("Pairing activity failed");
+                }
+            }).map_err(Into::into),
             _ = heartbeats.tick() => ctx.record_heartbeat(()).await?,
         }
     }

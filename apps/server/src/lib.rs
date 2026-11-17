@@ -10,6 +10,7 @@ pub mod http;
 #[cfg(unix)]
 pub mod reconciliation;
 mod secrets;
+pub mod telemetry;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod pairing;

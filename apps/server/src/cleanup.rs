@@ -17,7 +17,10 @@ pub async fn run(pool: PgPool, agent: Client) {
         match cleanup_batch(&pool, &agent).await {
             Ok(0) => {}
             Ok(count) => eprintln!("Removed {count} expired device registrations"),
-            Err(error) => eprintln!("Expired device cleanup failed; will retry: {error}"),
+            Err(error) => {
+                crate::telemetry::report("Expired device cleanup failed");
+                eprintln!("Expired device cleanup failed; will retry: {error}");
+            }
         }
     }
 }

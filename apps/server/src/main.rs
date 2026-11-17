@@ -1,6 +1,15 @@
 #[cfg(unix)]
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> std::io::Result<()> {
+fn main() -> std::io::Result<()> {
+    let _sentry = apprelay_server::telemetry::init("server")?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+        .inspect_err(|_| apprelay_server::telemetry::report("HTTP server terminated with an error"))
+}
+
+#[cfg(unix)]
+async fn run() -> std::io::Result<()> {
     use apprelay_server::{
         agent::Client,
         cleanup, db,
