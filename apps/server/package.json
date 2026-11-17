@@ -4,6 +4,7 @@
   "scripts": {
     "start": "cargo run",
     "start:release": "cargo run --release",
+    "test:api": "node scripts/test-api.mjs",
     "vpn:agent": "cargo build --bin vpn-agent && sudo -E env PATH=\"$PATH\" ./target/debug/vpn-agent",
     "pairing:worker": "cargo run --bin pairing-worker",
     "notifications:worker": "cargo run --bin notification-worker",
