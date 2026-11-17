@@ -2,6 +2,10 @@ use std::{env, io, time::Duration};
 
 /// Initialize before creating Tokio; retain the guard until after runtime shutdown.
 pub fn init(service: &'static str) -> io::Result<Option<sentry::ClientInitGuard>> {
+    // Sentry uses rustls-no-provider; select ring before any TLS clients are built.
+    // An error only means a process-wide provider was already installed.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let Some(dsn) = setting("SENTRY_DSN")? else {
         return Ok(None);
     };
