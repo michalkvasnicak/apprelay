@@ -60,9 +60,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     throw new Error("Set EXPO_PUBLIC_API_KEY to the server's 64-character hexadecimal app key.");
   }
 
+  const name = config.name ?? "AppRelay VPN";
+
   return {
     ...config,
-    name: config.name ?? "apprelay",
+    name: process.env.APPRELAY_ENV === "local" ? `${name} (Local)` : name,
     slug: config.slug ?? "apprelay",
     scheme: process.env.EXPO_PUBLIC_APP_SCHEME ?? "apprelay",
     ios: {
@@ -73,8 +75,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         // Matches Apple's no-documentation assessment with France excluded from distribution.
         // Reassess before changing encryption or distribution territories.
         ITSAppUsesNonExemptEncryption: false,
-        CFBundleDisplayName:
-          process.env.APPRELAY_ENV === "local" ? "AppRelay VPN (Local)" : "AppRelay VPN",
       },
       ...(buildNumber ? { buildNumber } : {}),
       ...(teamId ? { appleTeamId: teamId } : {}),
