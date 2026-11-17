@@ -31,15 +31,21 @@ cp apps/mobile/.env.testflight.example apps/mobile/.env.testflight
 
 If you already have `.env.local`, keep it; do not overwrite it. Fill in the following values in each file:
 
-| Variable                  | Value                                                                                                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EXPO_PUBLIC_APP_SCHEME`  | Set automatically by the package scripts: `apprelay-dev` for local development, `apprelay` for TestFlight/production. Do not set it in env files.                                   |
-| `APPLE_TEAM_ID`           | Your Apple Developer Team ID.                                                                                                                                                       |
-| `APPLE_BUNDLE_IDENTIFIER` | The app's bundle identifier. Required for every build.                                                                                                                              |
-| `EXPO_PUBLIC_VPN_API_URL` | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment.                                                       |
-| `EXPO_PUBLIC_VPN_HOST`    | Direct WireGuard hostname or IP, for example `vpn.example.com`. No scheme or port. Must resolve to the VPN server, not an HTTP proxy.                                               |
-| `EXPO_PUBLIC_VPN_PORT`    | Public WireGuard UDP port, matching the server and firewall configuration. Defaults to `51820`.                                                                                     |
-| `EXPO_PUBLIC_API_KEY`     | Required 64-character hexadecimal app key matching the server's `APPRELAY_API_KEY`. Sent as `X-App-Key` on API requests; embedded in the app and extractable, not a private secret. |
+| Variable                         | Value                                                                                                                                                                               |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EXPO_PUBLIC_APP_SCHEME`         | Set automatically by the package scripts: `apprelay-dev` for local development, `apprelay` for TestFlight/production. Do not set it in env files.                                   |
+| `APPLE_TEAM_ID`                  | Your Apple Developer Team ID.                                                                                                                                                       |
+| `APPLE_BUNDLE_IDENTIFIER`        | The app's bundle identifier. Required for every build.                                                                                                                              |
+| `EXPO_PUBLIC_VPN_API_URL`        | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment.                                                       |
+| `EXPO_PUBLIC_VPN_HOST`           | Direct WireGuard hostname or IP, for example `vpn.example.com`. No scheme or port. Must resolve to the VPN server, not an HTTP proxy.                                               |
+| `EXPO_PUBLIC_VPN_PORT`           | Public WireGuard UDP port, matching the server and firewall configuration. Defaults to `51820`.                                                                                     |
+| `EXPO_PUBLIC_API_KEY`            | Required 64-character hexadecimal app key matching the server's `APPRELAY_API_KEY`. Sent as `X-App-Key` on API requests; embedded in the app and extractable, not a private secret. |
+| `EXPO_PUBLIC_SENTRY_DSN`         | Optional public DSN. Empty or omitted disables reporting.                                                                                                                           |
+| `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | Optional environment label. No configured default.                                                                                                                                  |
+| `SENTRY_ORG`                     | Upload organization slug. Required for TestFlight when a DSN is configured. No configured default.                                                                                  |
+| `SENTRY_PROJECT`                 | Upload project slug. Required for TestFlight when a DSN is configured. No configured default.                                                                                       |
+| `SENTRY_URL`                     | HTTPS upload API base URL for your Sentry region. Required for TestFlight when a DSN is configured. No configured default.                                                          |
+| `SENTRY_AUTH_TOKEN`              | Build-only token with permission to upload source maps and debug symbols. Required for TestFlight when a DSN is configured. Never use an `EXPO_PUBLIC_` variable for this token.    |
 
 Pairing links use `apprelay-dev://pair?token=…` locally and `apprelay://pair?token=…` in TestFlight/production. The Vite dev server generates the local scheme; production web builds generate the production scheme. Each mobile build accepts only its configured scheme. Scheme changes require regenerating and rebuilding the native app, not just restarting Metro.
 

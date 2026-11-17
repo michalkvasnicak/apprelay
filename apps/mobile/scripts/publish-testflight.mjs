@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -32,6 +33,29 @@ function publish() {
   }
   if (!process.env.APPLE_BUILD_NUMBER?.trim()) {
     throw new Error("Set APPLE_BUILD_NUMBER in .env.testflight; increase it for each new upload.");
+  }
+
+  if (process.env.EXPO_PUBLIC_SENTRY_DSN?.trim()) {
+    for (const key of ["SENTRY_ORG", "SENTRY_PROJECT", "SENTRY_URL", "SENTRY_AUTH_TOKEN"]) {
+      if (!process.env[key]?.trim()) {
+        throw new Error(`Set ${key} in .env.testflight when EXPO_PUBLIC_SENTRY_DSN is configured.`);
+      }
+    }
+    const sentryUrl = new URL(process.env.SENTRY_URL);
+    if (
+      sentryUrl.protocol !== "https:" ||
+      sentryUrl.username ||
+      sentryUrl.password ||
+      sentryUrl.search ||
+      sentryUrl.hash
+    ) {
+      throw new Error("SENTRY_URL must be an HTTPS URL without credentials, query or fragment.");
+    }
+    // Reporting-enabled releases must not silently ship without their source maps.
+    process.env.SENTRY_DISABLE_AUTO_UPLOAD = "false";
+    process.env.SENTRY_ALLOW_FAILURE = "false";
+  } else {
+    process.env.SENTRY_DISABLE_AUTO_UPLOAD = "true";
   }
 
   const auth = [];
@@ -108,6 +132,20 @@ function publish() {
       throw new Error("Expected exactly one generated iOS workspace.");
     }
     const workspace = join(staging, "ios", workspaces[0]);
+    if (process.env.EXPO_PUBLIC_SENTRY_DSN?.trim()) {
+      const project = join(
+        staging,
+        "ios",
+        `${basename(workspace, ".xcworkspace")}.xcodeproj`,
+        "project.pbxproj",
+      );
+      const contents = readFileSync(project, "utf8");
+      for (const script of ["sentry-xcode.sh", "sentry-xcode-debug-files.sh"]) {
+        if (!contents.includes(script)) {
+          throw new Error(`Sentry Expo plugin did not install ${script}; refusing to publish.`);
+        }
+      }
+    }
     run("xcodebuild", [
       "-workspace",
       workspace,

@@ -61,11 +61,25 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   }
 
   const name = config.name ?? "AppRelay VPN";
+  const sentryOrg = process.env.SENTRY_ORG?.trim();
+  const sentryProject = process.env.SENTRY_PROJECT?.trim();
+  const sentryUrl = process.env.SENTRY_URL?.trim();
 
   return {
     ...config,
     name: process.env.APPRELAY_ENV === "local" ? `${name} (Local)` : name,
     slug: config.slug ?? "apprelay",
+    plugins: [
+      ...(config.plugins ?? []),
+      ...(sentryOrg && sentryProject && sentryUrl
+        ? [
+            [
+              "@sentry/react-native/expo",
+              { organization: sentryOrg, project: sentryProject, url: sentryUrl },
+            ] satisfies [string, Record<string, string>],
+          ]
+        : []),
+    ],
     scheme: process.env.EXPO_PUBLIC_APP_SCHEME ?? "apprelay",
     ios: {
       ...config.ios,

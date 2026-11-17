@@ -26,6 +26,7 @@ const env = { ...process.env };
 for (const key of Object.keys(env)) {
   if (
     key.startsWith("EXPO_PUBLIC_") ||
+    key.startsWith("SENTRY_") ||
     [
       "APPLE_TEAM_ID",
       "APPLE_BUNDLE_IDENTIFIER",
