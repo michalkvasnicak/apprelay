@@ -37,6 +37,7 @@ test-support = []
 sentry-debug-images = ["sentry/debug-images"]
 
 [dependencies]
+aws-sdk-s3 = { version = "1.115", default-features = false, features = ["rt-tokio", "rustls", "default-https-client"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "tokio"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }

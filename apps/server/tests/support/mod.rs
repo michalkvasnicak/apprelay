@@ -63,6 +63,7 @@ impl TestApi {
                 app_key: AppKey::from_env().unwrap(),
                 registration_limiter: RegistrationRateLimiter::from_env().await.unwrap(),
                 https_proxy: HttpsProxy::new().unwrap(),
+                artifacts: None,
             },
         );
         // Rate limits are shared in Redis. Each fixture gets its own client IP,

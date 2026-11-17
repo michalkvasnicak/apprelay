@@ -8,6 +8,8 @@ pub mod db;
 #[cfg(unix)]
 pub mod http;
 #[cfg(unix)]
+mod r2;
+#[cfg(unix)]
 pub mod reconciliation;
 mod secrets;
 pub mod telemetry;

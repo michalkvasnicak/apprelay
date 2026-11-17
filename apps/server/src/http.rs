@@ -1,4 +1,5 @@
 mod app_key;
+mod artifacts;
 mod auth;
 mod https_proxy;
 mod openapi;
@@ -9,6 +10,7 @@ mod rate_limit;
 mod web;
 
 pub use app_key::AppKey;
+pub use artifacts::ArtifactApi;
 pub use https_proxy::HttpsProxy;
 pub use openapi::document;
 pub use rate_limit::RegistrationRateLimiter;
@@ -80,6 +82,7 @@ pub struct RouterConfig {
     pub app_key: AppKey,
     pub registration_limiter: RegistrationRateLimiter,
     pub https_proxy: HttpsProxy,
+    pub artifacts: Option<ArtifactApi>,
 }
 
 pub fn router(
@@ -94,6 +97,7 @@ pub fn router(
         app_key,
         registration_limiter,
         https_proxy,
+        artifacts,
     } = config;
     Router::new()
         .route(
@@ -124,10 +128,11 @@ pub fn router(
                 .route("/v1/pairing-attempts", post(pairing_attempts::create))
                 .route("/v1/pairing-attempts/{token}", get(pairing_attempts::get))
                 .route_layer(middleware::from_fn_with_state(
-                    registration_limiter,
+                    registration_limiter.clone(),
                     rate_limit::limit_pairing_attempts,
                 )),
         )
+        .merge(artifacts::router(artifacts, registration_limiter))
         .merge(https_proxy::router(https_proxy))
         .route("/health", get(health))
         .route("/openapi.json", get(|| async { Json(document()) }))
@@ -156,8 +161,10 @@ async fn log_request(request: Request, next: Next) -> Response {
         scope.set_tag("http.method", method.as_str());
         scope.set_tag("http.route", &route);
     });
-    let path = if request.uri().path().starts_with("/v1/pairing-attempts/") {
-        "/v1/pairing-attempts/[redacted]".to_owned()
+    let path = if request.uri().path().starts_with("/v1/pairing-attempts/")
+        || request.uri().path().starts_with("/v1/artifacts/")
+    {
+        route.clone()
     } else {
         request.uri().path().to_owned()
     };

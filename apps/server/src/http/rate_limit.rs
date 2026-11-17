@@ -145,6 +145,19 @@ pub(super) async fn limit_pairing_attempts(
     limit(limiter, request, next, scope, capacity, emission).await
 }
 
+pub(super) async fn limit_artifacts(
+    State(limiter): State<RegistrationRateLimiter>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let (scope, capacity, emission) = if request.method() == axum::http::Method::GET {
+        ("artifact-read", 60, Duration::from_secs(1))
+    } else {
+        ("artifact-write", CAPACITY, EMISSION_INTERVAL)
+    };
+    limit(limiter, request, next, scope, capacity, emission).await
+}
+
 async fn limit(
     limiter: RegistrationRateLimiter,
     request: Request,

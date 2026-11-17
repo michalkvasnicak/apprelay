@@ -32,6 +32,54 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/artifacts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["create"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/artifacts/{artifact_id}/complete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["complete"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/artifacts/{token}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["resolve"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/devices": {
     parameters: {
       query?: never;
@@ -154,6 +202,31 @@ export interface components {
           /** @enum {string} */
           status: "expired";
         };
+    CreateRequest: {
+      file_name: string;
+      /** @description Base64-encoded SHA-256 digest of the complete IPA (32 bytes, not hex). */
+      sha256: string;
+      /** Format: int64 */
+      size_bytes: number;
+    };
+    CreatedArtifact: {
+      /** Format: uuid */
+      artifact_id: string;
+      /**
+       * Format: date-time
+       * @description Null when the IPA is retained indefinitely.
+       */
+      expires_at?: string | null;
+      /** @description API resolver URL; the browser installation page will be wired separately. */
+      share_url: string;
+      /** Format: date-time */
+      upload_expires_at: string;
+      /** @description Send these headers verbatim with the PUT. Browsers set Content-Length automatically. */
+      upload_headers: {
+        [key: string]: string;
+      };
+      upload_url: string;
+    };
     CreatedAttempt: {
       /** Format: date-time */
       expires_at: string;
@@ -262,6 +335,20 @@ export interface components {
       lifetime_seconds: number;
       token: string;
       wireguard: components["schemas"]["WireguardConfiguration"];
+    };
+    ResolvedArtifact: {
+      /** Format: date-time */
+      download_expires_at: string;
+      download_url: string;
+      /**
+       * Format: date-time
+       * @description Null when the IPA is retained indefinitely.
+       */
+      expires_at?: string | null;
+      file_name: string;
+      sha256: string;
+      /** Format: int64 */
+      size_bytes: number;
     };
     StartRequest: {
       token: string;
@@ -378,6 +465,159 @@ export interface operations {
       };
       /** @description Proxy timed out */
       504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateRequest"];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreatedArtifact"];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  complete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        artifact_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Object size and checksum-bound metadata verified; safe to retry */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  resolve: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Secret share capability */
+        token: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ResolvedArtifact"];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      503: {
         headers: {
           [name: string]: unknown;
         };

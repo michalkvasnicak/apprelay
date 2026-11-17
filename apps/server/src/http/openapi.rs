@@ -11,6 +11,9 @@ use utoipa::{
     info(title = "AppRelay API", version = "1.0.0"),
     paths(
         super::health,
+        super::artifacts::create,
+        super::artifacts::complete,
+        super::artifacts::resolve,
         super::register_device,
         super::https_proxy::relay,
         super::pairing_codes::get,

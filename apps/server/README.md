@@ -102,6 +102,24 @@ Configuration comes from exported environment variables, not `.env` files.
 | `APPRELAY_VPN_AGENT_UID`           | Agent                   | `SUDO_UID`                                | Permitted non-root server user's UID.                                                                                                                                                                                                                                                                                               |
 | `APPRELAY_VPN_AGENT_SOCKET`        | Server and agent        | `/var/db/apprelay/vpn-agent.sock` (macOS) | Unix socket path; Linux defaults to `/var/run/apprelay/vpn-agent.sock`. Set for the server, pairing worker, and agent when overriding, including explicitly in `sudo env`. Its directory must be root-owned and not group/world-writable.                                                                                           |
 
+### R2 upload configuration
+
+Export the five required variables below on the HTTP server to enable anonymous uploads.
+Leave all R2 upload configuration unset to disable uploads; partial or invalid
+configuration fails startup.
+
+| Variable                        | Description                                                                                                                                                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APPRELAY_R2_ACCOUNT_ID`        | Your 32-character Cloudflare account ID.                                                                                                                                                                          |
+| `APPRELAY_R2_BUCKET`            | Dedicated private R2 bucket name.                                                                                                                                                                                 |
+| `APPRELAY_R2_ACCESS_KEY_ID`     | R2 S3 API access key with Object Read & Write permission, restricted to this bucket.                                                                                                                              |
+| `APPRELAY_R2_SECRET_ACCESS_KEY` | Corresponding R2 secret access key.                                                                                                                                                                               |
+| `APPRELAY_PUBLIC_ORIGIN`        | Public HTTPS origin, e.g. `https://apprelay.example.com`, without a path.                                                                                                                                         |
+| `APPRELAY_IPA_LIFETIME_DAYS`    | Optional lifetime for new IPAs and their share links, in whole days (1–65535). Unset means indefinite retention. Changes do not alter existing uploads. Configure matching R2 lifecycle rules as described below. |
+
+Configure your bucket using the [R2 bucket setup](R2.md). Configure reverse-proxy logs to redact
+`/v1/artifacts/*` and avoid logging response bodies.
+
 ### Backend telemetry configuration
 
 | Variable             | Process                         | Default          | Description                                                                                                  |

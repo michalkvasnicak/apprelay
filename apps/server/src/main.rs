@@ -56,6 +56,7 @@ async fn run() -> std::io::Result<()> {
         .await
         .map_err(std::io::Error::other)?;
     let devices = DeviceRepository::new(pool.clone(), lifetime_seconds);
+    let artifacts = http::ArtifactApi::from_env(pool.clone())?;
 
     let agent = Client::from_env()?;
     match agent.status().await {
@@ -87,6 +88,7 @@ async fn run() -> std::io::Result<()> {
                 app_key,
                 registration_limiter,
                 https_proxy,
+                artifacts,
             },
         )
         .into_make_service_with_connect_info::<std::net::SocketAddr>(),

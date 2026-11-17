@@ -1,3 +1,4 @@
+pub(crate) mod artifacts;
 pub mod devices;
 pub mod pairing_attempts;
 pub mod pairing_codes;

@@ -35,6 +35,10 @@ async fn cleanup_batch(pool: &PgPool, agent: &Client) -> Result<u32, Box<dyn Err
     )
     .execute(pool)
     .await?;
+    // R2 lifecycle rules own object deletion; this only removes expired capabilities.
+    sqlx::query("DELETE FROM ipa_artifacts WHERE expires_at <= clock_timestamp()")
+        .execute(pool)
+        .await?;
     let mut removed = 0;
     // Bound each sweep so a large backlog cannot monopolize the agent.
     for _ in 0..100 {
