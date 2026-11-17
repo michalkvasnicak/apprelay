@@ -7,7 +7,15 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/web/package.json ./apps/server/web/package.json
 RUN pnpm install --filter @apprelay/web --frozen-lockfile --ignore-scripts
 COPY apps/server/web ./apps/server/web
-RUN pnpm --filter @apprelay/web build
+ARG VITE_SENTRY_DSN
+ARG VITE_SENTRY_ENVIRONMENT=production
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
+ARG SENTRY_RELEASE
+# Keep upload credentials out of image layers and build arguments. Vite requires
+# the token only when a DSN is configured, ensuring those builds upload maps.
+RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN,env=SENTRY_AUTH_TOKEN \
+    pnpm --filter @apprelay/web build
 
 FROM rust:1.92-bookworm AS build
 
