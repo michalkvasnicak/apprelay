@@ -2,6 +2,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { colors } from "./src/colors";
 import { usePushNotifications } from "./src/notifications/usePushNotifications";
 import { usePairing } from "./src/pairing/usePairing";
 import { isVpnAvailable, type VpnStatus } from "./src/vpn/native";
@@ -89,7 +90,7 @@ function VpnScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <View style={styles.content}>
         <Text style={styles.brand}>AppRelay</Text>
         <Text accessibilityLiveRegion="polite" style={styles.title}>
@@ -103,7 +104,7 @@ function VpnScreen() {
         )}
         {isVpnAvailable && (busy || waitingToPair) ? (
           <View style={styles.progress}>
-            <ActivityIndicator color="#2456a6" />
+            <ActivityIndicator color={colors.primary} />
             <Text style={styles.description}>{progressLabel}</Text>
           </View>
         ) : (
@@ -112,7 +113,11 @@ function VpnScreen() {
             accessibilityState={{ disabled }}
             disabled={disabled}
             onPress={handlePress}
-            style={[styles.button, disabled && styles.disabledButton]}
+            style={({ pressed }) => [
+              styles.button,
+              pressed && styles.pressedButton,
+              disabled && styles.disabledButton,
+            ]}
           >
             <Text style={styles.buttonText}>{buttonLabel}</Text>
           </Pressable>
@@ -123,21 +128,24 @@ function VpnScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#f5f7fb", justifyContent: "center", padding: 24 },
+  screen: { flex: 1, backgroundColor: colors.background, justifyContent: "center", padding: 24 },
   content: { width: "100%", maxWidth: 400, alignSelf: "center", gap: 20 },
-  brand: { fontSize: 16, fontWeight: "600", color: "#2456a6" },
-  title: { fontSize: 30, fontWeight: "700", color: "#15243b" },
-  description: { fontSize: 16, lineHeight: 24, color: "#475569" },
-  error: { color: "#b42318", fontSize: 14, lineHeight: 21 },
+  brand: { fontSize: 16, fontWeight: "600", color: colors.primary },
+  title: { fontSize: 30, fontWeight: "700", color: colors.text },
+  description: { fontSize: 16, lineHeight: 24, color: colors.muted },
+  error: { color: colors.error, fontSize: 14, lineHeight: 21 },
   progress: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52 },
   button: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#2456a6",
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    borderWidth: 2,
     borderRadius: 12,
     minHeight: 54,
     padding: 16,
   },
+  pressedButton: { borderColor: colors.accent },
   disabledButton: { opacity: 0.45 },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "600" },
+  buttonText: { color: colors.background, fontSize: 18, fontWeight: "600" },
 });
