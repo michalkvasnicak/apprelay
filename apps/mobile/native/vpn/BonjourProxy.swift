@@ -223,9 +223,9 @@ private final class BonjourServiceProxy {
                     relays[id] = relay
                     // Keep the owner alive while withdrawn services drain.
                     relay.start { [self] in
-                        queue.async { [self] in
-                            relays.removeValue(forKey: id)
-                            if relays.isEmpty { onDrained?() }
+                        self.queue.async { [self] in
+                            self.relays.removeValue(forKey: id)
+                            if self.relays.isEmpty { self.onDrained?() }
                         }
                     }
                 }
@@ -593,7 +593,7 @@ private final class DatagramRelay: ServiceRelay {
             guard error == nil else { finish(); return }
             if let data {
                 let sent = data.withUnsafeBytes { bytes in
-                    Darwin.send(socketFD, bytes.baseAddress, bytes.count, 0)
+                    Darwin.send(self.socketFD, bytes.baseAddress, bytes.count, 0)
                 }
                 guard sent == data.count else { finish(); return }
                 refreshTimeout()
