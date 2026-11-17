@@ -2,16 +2,29 @@
 
 @theme {
   --font-sans: "Inter", "Avenir Next", "Segoe UI", sans-serif;
+
+  /* Keep aligned with apps/mobile/src/colors.ts. */
+  --color-background: #041423;
+  --color-primary: #00efc0;
+  --color-accent: #2178ff;
+  --color-text: #f0f7fc;
+  --color-muted: #a8bacb;
+  --color-error: #ffb4ab;
 }
 
 @layer base {
+  :root {
+    color-scheme: dark;
+    background-color: var(--color-background);
+  }
+
   body {
-    @apply m-0 min-w-80 bg-[#f5f5f2] text-stone-900 antialiased;
+    @apply m-0 min-w-80 bg-background text-text antialiased;
   }
 
   button,
   a {
-    @apply focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-700;
+    @apply focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent;
   }
 
   button:not(:disabled),
@@ -20,6 +33,6 @@
   }
 
   ::selection {
-    @apply bg-emerald-200;
+    @apply bg-primary text-background;
   }
 }

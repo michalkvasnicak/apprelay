@@ -70,7 +70,7 @@ export function PairingWorkspace({ onPaired }: { onPaired: () => void }) {
       <h2 id="pairing-title" className="text-lg font-semibold">
         Pair your iPhone
       </h2>
-      <p className="mt-3 text-sm leading-6 text-stone-600">
+      <p className="mt-3 text-sm leading-6 text-muted">
         Your app is signed. Continue in Safari on the target iPhone with AppRelay installed. Open
         AppRelay and confirm pairing; keep its VPN connected until pairing completes.
       </p>
@@ -89,12 +89,12 @@ export function PairingWorkspace({ onPaired }: { onPaired: () => void }) {
           </a>
         )}
       </div>
-      <p role="status" className="mt-4 text-sm leading-6 text-stone-600">
+      <p role="status" className="mt-4 text-sm leading-6 text-muted">
         {generation > 0 ? labels[status.data ?? "pending"] : "Pairing progress will appear here."}
       </p>
       <ActionError error={create.error ?? status.error} />
       {active && (
-        <p className="mt-2 text-xs leading-5 text-stone-500">
+        <p className="mt-2 text-xs leading-5 text-muted">
           If the app did not open, tap Open AppRelay. Return here for the final result.
         </p>
       )}

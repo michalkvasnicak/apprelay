@@ -28,7 +28,7 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
       <h3 id="vault-title" className="text-sm font-semibold">
         {account.vaultExists ? "Unlock your saved account" : "Keep your account on this device"}
       </h3>
-      <p className="mt-2 text-xs leading-5 text-stone-500">
+      <p className="mt-2 text-xs leading-5 text-muted">
         Your session and signing key are encrypted in this browser. Choose a separate passphrase,
         not your Apple password. It cannot be recovered.
       </p>

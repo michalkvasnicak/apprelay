@@ -43,7 +43,7 @@ function Login() {
             className={inputClass}
           />
         </label>
-        <p className="text-xs leading-5 text-stone-500">
+        <p className="text-xs leading-5 text-muted">
           Your Apple password is used only on this device for sign-in and is never stored. Your
           saved session stays on this device; the HTTPS relay can read Apple session tokens in
           transit.
@@ -65,7 +65,7 @@ function TwoFactor() {
   const reset = useAccountAction(() => accountController.forget());
   return (
     <div>
-      <p className="mb-5 text-sm leading-6 text-stone-600">
+      <p className="mb-5 text-sm leading-6 text-muted">
         Enter the six-digit code sent to your trusted Apple device. This challenge expires after ten
         minutes. SMS is not supported yet.
       </p>
@@ -123,7 +123,7 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
   const choose = useAccountAction(() => accountController.selectTeam(select.current?.value ?? ""));
   return (
     <div>
-      <p className="mb-5 text-sm text-emerald-800">Signed in to Apple.</p>
+      <p className="mb-5 text-sm text-primary">Signed in to Apple.</p>
       <label className="block text-sm font-medium">
         Development team
         <select
@@ -144,11 +144,11 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
         </select>
       </label>
       {account.teams.length === 0 && (
-        <p className="mt-3 text-sm text-amber-800">
+        <p className="mt-3 text-sm text-error">
           Apple returned no development teams for this account.
         </p>
       )}
-      <p className="mt-3 text-xs leading-5 text-stone-500">
+      <p className="mt-3 text-xs leading-5 text-muted">
         Personal Teams have short-lived profiles and restrictive quotas and capabilities. Existing
         certificates are never revoked automatically.
       </p>
@@ -166,7 +166,7 @@ export function AuthenticationPanel({ account }: { account: AccountSnapshot }) {
   }
   if (account.vaultExists) {
     return (
-      <p className="text-sm leading-6 text-stone-600">
+      <p className="text-sm leading-6 text-muted">
         Your Apple account is saved on this device. Unlock it below to continue.
       </p>
     );

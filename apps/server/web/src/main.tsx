@@ -27,7 +27,7 @@ createRoot(root, {
           <p className="mt-3">Reload the page to try again.</p>
           <button
             type="button"
-            className="mt-5 rounded-lg bg-stone-900 px-4 py-2 text-white"
+            className="mt-5 rounded-lg bg-primary px-4 py-2 text-background"
             onClick={() => window.location.reload()}
           >
             Reload

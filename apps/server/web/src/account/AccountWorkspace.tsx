@@ -16,14 +16,14 @@ export function AccountWorkspace() {
   const [paired, setPaired] = useState(false);
   if (account.isPending) {
     return (
-      <p role="status" className="text-sm text-stone-500">
+      <p role="status" className="text-sm text-muted">
         Opening workspace…
       </p>
     );
   }
   if (account.isError) {
     return (
-      <p role="alert" className="text-sm text-red-800">
+      <p role="alert" className="text-sm text-error">
         Browser storage is unavailable. Enable localStorage for this site, then reload.
       </p>
     );
@@ -44,13 +44,13 @@ export function AccountWorkspace() {
     <div className="space-y-6" aria-busy={busy}>
       <ol
         aria-label="Installation steps"
-        className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-stone-500"
+        className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted"
       >
         {steps.map((title, index) => (
           <li
             key={title}
             aria-current={index === step ? "step" : undefined}
-            className={index === step ? "font-semibold text-stone-900" : ""}
+            className={index === step ? "font-semibold text-primary" : ""}
           >
             {index + 1}. {title}
           </li>
@@ -73,11 +73,11 @@ export function AccountWorkspace() {
           <h2 id="upload-title" className="text-lg font-semibold">
             Ready to upload
           </h2>
-          <p role="status" className="mt-3 text-sm leading-6 text-stone-600">
+          <p role="status" className="mt-3 text-sm leading-6 text-muted">
             Your app is signed and your iPhone is paired. Upload is not implemented yet; no app has
             been sent to your phone.
           </p>
-          <p className="mt-3 text-xs leading-5 text-stone-500">
+          <p className="mt-3 text-xs leading-5 text-muted">
             Upload progress will appear here when available. The signed IPA stays in memory until
             you leave or reload this page.
           </p>

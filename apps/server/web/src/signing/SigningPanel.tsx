@@ -58,7 +58,7 @@ export function SigningPanel() {
       <h2 id="sign-title" className="text-lg font-semibold">
         Choose an IPA
       </h2>
-      <p className="mt-3 text-sm leading-6 text-stone-600">
+      <p className="mt-3 text-sm leading-6 text-muted">
         We’ll prepare the signing assets and sign your app automatically. The IPA and private
         signing key stay on this device.
       </p>
@@ -78,18 +78,18 @@ export function SigningPanel() {
         />
       </label>
       {targetDevice.isPlaceholder && (
-        <p role="alert" className="mt-3 text-sm text-amber-800">
+        <p role="alert" className="mt-3 text-sm text-error">
           Signing requires a target iPhone UDID. Configure VITE_DEVICE_UDID before continuing.
         </p>
       )}
       {prepare.isPending && (
-        <p role="status" className="mt-4 text-sm text-stone-600">
+        <p role="status" className="mt-4 text-sm text-muted">
           {state.data?.status === "signing" ? state.data.message || progress : progress} Keep this
           page open.
         </p>
       )}
       <ActionError error={prepare.error} />
-      <details className="mt-5 text-xs leading-5 text-stone-500">
+      <details className="mt-5 text-xs leading-5 text-muted">
         <summary className="cursor-pointer">Signing limitations</summary>
         <p className="mt-2">
           Up to 100 MiB compressed and 256 MiB expanded. Basic development apps only; extensions,
