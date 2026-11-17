@@ -1,14 +1,15 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const cwd = fileURLToPath(new URL("../", import.meta.url));
 const container = `apprelay-api-test-${randomUUID()}`;
+const redisContainer = `${container}-redis`;
 const password = randomUUID();
+const containers = [];
 let child;
 let interrupted;
-let containerRequested = false;
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
@@ -46,10 +47,34 @@ async function run(command, args, { capture = false, env = process.env } = {}) {
   });
 }
 
+async function waitUntilReady(name, command) {
+  const deadline = Date.now() + 60_000;
+  while (true) {
+    try {
+      await run("docker", ["exec", name, ...command], { capture: true });
+      return;
+    } catch (error) {
+      if (interrupted || Date.now() >= deadline) {
+        throw error;
+      }
+      await setTimeout(250);
+    }
+  }
+}
+
+async function publishedPort(name, containerPort) {
+  const binding = await run("docker", ["port", name, `${containerPort}/tcp`], { capture: true });
+  const port = /^127\.0\.0\.1:(\d+)$/.exec(binding)?.[1];
+  if (!port) {
+    throw new Error(`Unexpected port binding for ${name}: ${binding}`);
+  }
+  return port;
+}
+
 try {
   await run("docker", ["info"], { capture: true });
   console.log(`Starting disposable PostgreSQL: ${container}`);
-  containerRequested = true;
+  containers.push(container);
   await run(
     "docker",
     [
@@ -73,41 +98,54 @@ try {
     { capture: true },
   );
 
-  const deadline = Date.now() + 60_000;
-  while (true) {
-    try {
-      await run(
-        "docker",
-        [
-          "exec",
-          container,
-          "pg_isready",
-          "-h",
-          "127.0.0.1",
-          "-U",
-          "apprelay_test",
-          "-d",
-          "apprelay_test",
-        ],
-        { capture: true },
-      );
-      break;
-    } catch (error) {
-      if (interrupted || Date.now() >= deadline) {
-        throw error;
-      }
-      await setTimeout(250);
-    }
-  }
+  await waitUntilReady(container, [
+    "pg_isready",
+    "-h",
+    "127.0.0.1",
+    "-U",
+    "apprelay_test",
+    "-d",
+    "apprelay_test",
+  ]);
 
-  const binding = await run("docker", ["port", container, "5432/tcp"], { capture: true });
-  const port = /^127\.0\.0\.1:(\d+)$/.exec(binding)?.[1];
-  if (!port) {
-    throw new Error(`Unexpected PostgreSQL port binding: ${binding}`);
-  }
+  console.log(`Starting disposable Redis: ${redisContainer}`);
+  containers.push(redisContainer);
+  await run(
+    "docker",
+    [
+      "run",
+      "--detach",
+      "--rm",
+      "--name",
+      redisContainer,
+      "--publish",
+      "127.0.0.1::6379",
+      "--tmpfs",
+      "/data:rw",
+      "redis:7-alpine",
+      "redis-server",
+      "--save",
+      "",
+      "--appendonly",
+      "no",
+    ],
+    { capture: true },
+  );
+  await waitUntilReady(redisContainer, ["redis-cli", "ping"]);
+
+  const port = await publishedPort(container, 5432);
+  const redisPort = await publishedPort(redisContainer, 6379);
   const databaseUrl = `postgres://apprelay_test:${password}@127.0.0.1:${port}/apprelay_test`;
   await run("cargo", ["test", "--tests", "--features", "test-support", ...process.argv.slice(2)], {
-    env: { ...process.env, DATABASE_URL: databaseUrl },
+    env: {
+      ...process.env,
+      DATABASE_URL: databaseUrl,
+      REDIS_URL: `redis://127.0.0.1:${redisPort}/0`,
+      APPRELAY_API_KEY: randomBytes(32).toString("hex"),
+      APPRELAY_APNS_ENVIRONMENT: "sandbox",
+      PAIRING_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+      APPRELAY_TRUSTED_PROXY_CIDRS: "",
+    },
   });
 } catch (error) {
   console.error(error.message);
@@ -116,15 +154,15 @@ try {
   if (interrupted) {
     process.exitCode = interrupted === "SIGINT" ? 130 : 143;
   }
-  if (containerRequested) {
-    console.log(`Removing disposable PostgreSQL: ${container}`);
-    const result = spawnSync("docker", ["rm", "--force", "--volumes", container], {
+  for (const name of containers.reverse()) {
+    console.log(`Removing disposable container: ${name}`);
+    const result = spawnSync("docker", ["rm", "--force", "--volumes", name], {
       encoding: "utf8",
       timeout: 30_000,
     });
     if (result.error || result.status !== 0) {
       console.error(result.error?.message ?? result.stderr);
-      console.error(`If it still exists, remove it with: docker rm -fv ${container}`);
+      console.error(`If it still exists, remove it with: docker rm -fv ${name}`);
       process.exitCode ||= 1;
     }
   }

@@ -90,6 +90,7 @@ dependencies = [
  "temporalio-sdk",
  "temporalio-workflow",
  "tokio",
+ "tower",
  "tower-http",
  "tower-rate-limit-fred",
  "utoipa",

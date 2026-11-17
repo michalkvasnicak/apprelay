@@ -50,6 +50,22 @@
         ]
       },
       {
+        "name": "server: API integration tests",
+        "type": "command",
+        "command": "pnpm --filter @apprelay/server test:api",
+        "inputs": [
+          "apps/server/**/*.rs",
+          "apps/server/migrations/**/*.sql",
+          "apps/server/scripts/test-api.mjs",
+          "apps/server/Cargo.toml",
+          "apps/server/Cargo.lock",
+          "apps/server/package.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml"
+        ]
+      },
+      {
         "name": "mobile: lint",
         "type": "command",
         "command": "pnpm --filter @apprelay/mobile lint",
