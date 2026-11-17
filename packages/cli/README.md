@@ -1,13 +1,13 @@
-# apprelay
+# @brosoft/apprelay
 
 Requires Node.js 24.12 or newer.
 
 ## Upload
 
 ```sh
-npx apprelay ./MyApp.ipa
-pnpm dlx apprelay ./MyApp.ipa
-npm install --global apprelay
+npx @brosoft/apprelay ./MyApp.ipa
+pnpm dlx @brosoft/apprelay ./MyApp.ipa
+npm install --global @brosoft/apprelay
 apprelay ./MyApp.ipa
 apprelay --help
 ```
@@ -28,14 +28,6 @@ apprelay ./MyApp.ipa > share-url.txt
 pnpm install
 pnpm cli ./MyApp.ipa
 node packages/cli/bin/apprelay.mjs ./MyApp.ipa
-pnpm --filter apprelay api:generate
-pnpm --filter apprelay api:check
-```
-
-## Publish
-
-The npm package name `apprelay` requires registry availability and publishing access.
-
-```sh
-pnpm --dir packages/cli publish --access public
+pnpm --filter @brosoft/apprelay api:generate
+pnpm --filter @brosoft/apprelay api:check
 ```

@@ -1,5 +1,5 @@
 {
-  "name": "apprelay",
+  "name": "@brosoft/apprelay",
   "version": "0.1.0",
   "description": "Upload an IPA to AppRelay and print its share URL.",
   "license": "MIT",
@@ -16,6 +16,9 @@
     "src/"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "api:generate": "node scripts/generate-api.mjs",
     "api:check": "node scripts/generate-api.mjs --check",

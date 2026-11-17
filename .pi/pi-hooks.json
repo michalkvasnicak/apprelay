@@ -71,7 +71,7 @@
       {
         "name": "cli: lint",
         "type": "command",
-        "command": "pnpm --filter apprelay lint",
+        "command": "pnpm --filter @brosoft/apprelay lint",
         "inputs": [
           "packages/cli/**/*.{ts,mjs}",
           "packages/cli/package.json",
@@ -84,7 +84,7 @@
       {
         "name": "cli: typecheck",
         "type": "command",
-        "command": "pnpm --filter apprelay typecheck",
+        "command": "pnpm --filter @brosoft/apprelay typecheck",
         "inputs": [
           "packages/cli/**/*.ts",
           "packages/cli/tsconfig.json",
