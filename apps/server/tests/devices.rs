@@ -129,9 +129,11 @@ async fn existing_device_requires_its_own_token(pool: PgPool) {
     let wrong_token = URL_SAFE_NO_PAD.encode([7; 32]);
 
     for token in [None, Some(wrong_token.as_str()), Some(other.token.as_str())] {
-        api.register(DEVICE_KEY, token)
-            .await
-            .assert_error(StatusCode::UNAUTHORIZED, TOKEN_ERROR);
+        api.register(DEVICE_KEY, token).await.assert_error(
+            StatusCode::UNAUTHORIZED,
+            "device_token_required",
+            TOKEN_ERROR,
+        );
     }
     let stored = api.stored_device(first.device_id).await;
     assert_eq!(stored.expires_at, first.expires_at);
@@ -154,9 +156,11 @@ async fn expired_device_cannot_renew_without_its_matching_token(pool: PgPool) {
     let wrong_token = URL_SAFE_NO_PAD.encode([7; 32]);
 
     for token in [None, Some(wrong_token.as_str())] {
-        api.register(DEVICE_KEY, token)
-            .await
-            .assert_error(StatusCode::UNAUTHORIZED, TOKEN_ERROR);
+        api.register(DEVICE_KEY, token).await.assert_error(
+            StatusCode::UNAUTHORIZED,
+            "device_token_required",
+            TOKEN_ERROR,
+        );
     }
     assert_eq!(
         api.stored_device(first.device_id).await.expires_at,
@@ -179,7 +183,11 @@ async fn legacy_device_without_a_token_hash_cannot_renew(pool: PgPool) {
 
     api.register(DEVICE_KEY, Some(&first.token))
         .await
-        .assert_error(StatusCode::UNAUTHORIZED, TOKEN_ERROR);
+        .assert_error(
+            StatusCode::UNAUTHORIZED,
+            "device_token_required",
+            TOKEN_ERROR,
+        );
     let stored = api.stored_device(first.device_id).await;
     assert_eq!(stored.expires_at, expired_at);
     assert!(stored.bearer_token_hash.is_none());
@@ -206,9 +214,11 @@ async fn rejects_missing_duplicate_malformed_and_incorrect_app_keys(pool: PgPool
                 .headers_mut()
                 .append("x-app-key", HeaderValue::from_str(key).unwrap());
         }
-        api.send(request)
-            .await
-            .assert_error(StatusCode::UNAUTHORIZED, APP_KEY_ERROR);
+        api.send(request).await.assert_error(
+            StatusCode::UNAUTHORIZED,
+            "app_key_required",
+            APP_KEY_ERROR,
+        );
     }
     assert_eq!(api.device_count().await, 0);
     assert!(api.agent.requests().is_empty());
@@ -230,9 +240,11 @@ async fn rejects_malformed_bearer_headers_even_for_new_devices(pool: PgPool) {
             .header("authorization", value)
             .body(Body::from(body.clone()))
             .unwrap();
-        api.send(request)
-            .await
-            .assert_error(StatusCode::UNAUTHORIZED, TOKEN_ERROR);
+        api.send(request).await.assert_error(
+            StatusCode::UNAUTHORIZED,
+            "device_token_required",
+            TOKEN_ERROR,
+        );
     }
     let token = format!("Bearer {}", URL_SAFE_NO_PAD.encode([7; 32]));
     let duplicate = api
@@ -241,17 +253,21 @@ async fn rejects_malformed_bearer_headers_even_for_new_devices(pool: PgPool) {
         .header("authorization", &token)
         .body(Body::from(body.clone()))
         .unwrap();
-    api.send(duplicate)
-        .await
-        .assert_error(StatusCode::UNAUTHORIZED, TOKEN_ERROR);
+    api.send(duplicate).await.assert_error(
+        StatusCode::UNAUTHORIZED,
+        "device_token_required",
+        TOKEN_ERROR,
+    );
     let non_text = api
         .request()
         .header("authorization", HeaderValue::from_bytes(&[0xff]).unwrap())
         .body(Body::from(body))
         .unwrap();
-    api.send(non_text)
-        .await
-        .assert_error(StatusCode::UNAUTHORIZED, TOKEN_ERROR);
+    api.send(non_text).await.assert_error(
+        StatusCode::UNAUTHORIZED,
+        "device_token_required",
+        TOKEN_ERROR,
+    );
     assert_eq!(api.device_count().await, 0);
     assert!(api.agent.requests().is_empty());
 }
@@ -277,13 +293,15 @@ async fn rejects_invalid_json_fields_content_type_and_oversized_bodies(pool: PgP
         let request = api.request().body(Body::from(body)).unwrap();
         api.send(request)
             .await
-            .assert_error(status, INVALID_JSON_ERROR);
+            .assert_error(status, "invalid_request", INVALID_JSON_ERROR);
     }
     let mut request = api.request().body(Body::from("{}")).unwrap();
     request.headers_mut().remove("content-type");
-    api.send(request)
-        .await
-        .assert_error(StatusCode::UNSUPPORTED_MEDIA_TYPE, INVALID_JSON_ERROR);
+    api.send(request).await.assert_error(
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "invalid_request",
+        INVALID_JSON_ERROR,
+    );
     assert_eq!(api.device_count().await, 0);
     assert!(api.agent.requests().is_empty());
 }
@@ -305,9 +323,11 @@ async fn rejects_zero_invalid_base64_and_wrong_length_public_keys(pool: PgPool) 
                 json!({ "wireguard_public_key": key }).to_string(),
             ))
             .unwrap();
-        api.send(request)
-            .await
-            .assert_error(StatusCode::BAD_REQUEST, INVALID_KEY_ERROR);
+        api.send(request).await.assert_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            INVALID_KEY_ERROR,
+        );
     }
     assert_eq!(api.device_count().await, 0);
     assert!(api.agent.requests().is_empty());
@@ -316,9 +336,11 @@ async fn rejects_zero_invalid_base64_and_wrong_length_public_keys(pool: PgPool) 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_the_servers_own_public_key(pool: PgPool) {
     let api = TestApi::new(pool).await;
-    api.register(SERVER_KEY, None)
-        .await
-        .assert_error(StatusCode::BAD_REQUEST, INVALID_KEY_ERROR);
+    api.register(SERVER_KEY, None).await.assert_error(
+        StatusCode::BAD_REQUEST,
+        "invalid_request",
+        INVALID_KEY_ERROR,
+    );
     assert_eq!(api.device_count().await, 0);
     assert!(matches!(
         api.agent.requests().as_slice(),
@@ -333,6 +355,7 @@ async fn status_failure_does_not_reserve_a_device(pool: PgPool) {
         .enqueue_response(Err("agent unavailable".to_owned()));
     api.register(DEVICE_KEY, None).await.assert_error(
         StatusCode::SERVICE_UNAVAILABLE,
+        "service_unavailable",
         "VPN provisioning is unavailable; retry registration",
     );
     assert_eq!(api.device_count().await, 0);
@@ -348,15 +371,18 @@ async fn stopped_or_unconfigured_vpn_does_not_reserve_a_device(pool: PgPool) {
     let mut stopped = running_status();
     stopped.state = VpnState::Stopped;
     api.agent.set_status(stopped);
-    api.register(DEVICE_KEY, None)
-        .await
-        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "VPN is not running");
+    api.register(DEVICE_KEY, None).await.assert_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "service_unavailable",
+        "VPN is not running",
+    );
 
     let mut missing_key = running_status();
     missing_key.public_key = None;
     api.agent.set_status(missing_key);
     api.register(DEVICE_KEY, None).await.assert_error(
         StatusCode::SERVICE_UNAVAILABLE,
+        "service_unavailable",
         "VPN public key is unavailable",
     );
     assert_eq!(api.device_count().await, 0);
@@ -375,9 +401,11 @@ async fn unusable_vpn_subnets_do_not_reserve_devices(pool: PgPool) {
         status.address = address.into();
         status.prefix_len = prefix;
         api.agent.set_status(status);
-        api.register(DEVICE_KEY, None)
-            .await
-            .assert_error(StatusCode::SERVICE_UNAVAILABLE, message);
+        api.register(DEVICE_KEY, None).await.assert_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "service_unavailable",
+            message,
+        );
     }
     assert_eq!(api.device_count().await, 0);
 }
@@ -392,6 +420,7 @@ async fn exhausted_address_pool_does_not_insert_another_device(pool: PgPool) {
     assert_eq!(first.address, "10.77.0.2/32");
     api.register([2; 32], None).await.assert_error(
         StatusCode::SERVICE_UNAVAILABLE,
+        "service_unavailable",
         "VPN address pool is exhausted",
     );
     assert_eq!(api.device_count().await, 1);
@@ -406,6 +435,7 @@ async fn provisioning_failure_keeps_the_reservation_out_of_the_address_pool(pool
         .enqueue_response(Err("peer provisioning failed".to_owned()));
     api.register(DEVICE_KEY, None).await.assert_error(
         StatusCode::SERVICE_UNAVAILABLE,
+        "service_unavailable",
         "VPN provisioning is unavailable; retry registration",
     );
     assert_eq!(api.device_count().await, 1);
@@ -430,6 +460,7 @@ async fn detects_vpn_configuration_changes_during_provisioning(pool: PgPool) {
     api.agent.enqueue_response(Ok(changed));
     api.register(DEVICE_KEY, None).await.assert_error(
         StatusCode::SERVICE_UNAVAILABLE,
+        "service_unavailable",
         "VPN configuration changed; retry registration",
     );
     assert_eq!(api.device_count().await, 1);
@@ -447,6 +478,7 @@ async fn rejects_a_reserved_address_outside_the_current_subnet(pool: PgPool) {
         .await
         .assert_error(
             StatusCode::SERVICE_UNAVAILABLE,
+            "service_unavailable",
             "reserved address does not match the VPN subnet",
         );
     assert_eq!(
@@ -469,7 +501,11 @@ async fn concurrent_registration_of_the_same_key_creates_only_one_device(pool: P
         (second, first)
     };
     let device = created.registration();
-    rejected.assert_error(StatusCode::UNAUTHORIZED, TOKEN_ERROR);
+    rejected.assert_error(
+        StatusCode::UNAUTHORIZED,
+        "device_token_required",
+        TOKEN_ERROR,
+    );
     assert_eq!(api.device_count().await, 1);
     assert_eq!(
         api.stored_device(device.device_id).await.address,
@@ -502,12 +538,18 @@ async fn registration_rate_limit_returns_retry_after_and_ignores_spoofed_forward
             .header("cf-connecting-ip", format!("192.0.2.{}", index + 1))
             .body(Body::from("{}"))
             .unwrap();
-        api.send(request)
-            .await
-            .assert_error(StatusCode::UNPROCESSABLE_ENTITY, INVALID_JSON_ERROR);
+        api.send(request).await.assert_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_request",
+            INVALID_JSON_ERROR,
+        );
     }
     let response = api.register(DEVICE_KEY, None).await;
-    response.assert_error(StatusCode::TOO_MANY_REQUESTS, "too many requests");
+    response.assert_error(
+        StatusCode::TOO_MANY_REQUESTS,
+        "rate_limited",
+        "too many requests",
+    );
     assert!(
         response.headers["retry-after"]
             .to_str()

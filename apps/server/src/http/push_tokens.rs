@@ -39,11 +39,15 @@ pub(super) async fn put(
 ) -> Result<StatusCode, ApiError> {
     let Json(request) = request.map_err(|error| ApiError {
         status: error.status(),
-        message: "invalid push token JSON; expected token",
+        body: super::ErrorResponse::InvalidRequest {
+            error: "invalid push token JSON; expected token",
+        },
     })?;
     let token = decode_token(&request.token).ok_or(ApiError {
         status: StatusCode::BAD_REQUEST,
-        message: "token must be a nonempty, even-length hexadecimal string",
+        body: super::ErrorResponse::InvalidRequest {
+            error: "token must be a nonempty, even-length hexadecimal string",
+        },
     })?;
     update(&state, &headers, device_id, Some(&token)).await
 }

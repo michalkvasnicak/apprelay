@@ -5,6 +5,8 @@ import { credentials } from "./credentials";
 
 export type DeviceRegistration = components["schemas"]["RegistrationResponse"];
 
+export class DeviceCredentialError extends Error {}
+
 export async function registerDevice(publicKey: string): Promise<DeviceRegistration> {
   const token = await credentials.get();
   const {
@@ -16,12 +18,11 @@ export async function registerDevice(publicKey: string): Promise<DeviceRegistrat
     body: { wireguard_public_key: publicKey },
   });
   if (response.status !== 201 || !device) {
-    const reason = error?.error;
-    if (response.status === 401 && reason === "a valid app key is required") {
+    if (response.status === 401 && error?.code === "app_key_required") {
       throw new Error("Device registration failed (HTTP 401): the server rejected the app key.");
     }
-    if (response.status === 401 && reason === "a valid device bearer token is required") {
-      throw new Error(
+    if (response.status === 401 && error?.code === "device_token_required") {
+      throw new DeviceCredentialError(
         token
           ? "Device registration failed (HTTP 401): the server rejected the saved device token."
           : "Device registration failed (HTTP 401): no saved device token was found for this app.",

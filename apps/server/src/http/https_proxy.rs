@@ -67,7 +67,9 @@ async fn limit_request(State(proxy): State<HttpsProxy>, request: Request, next: 
     let result = async {
         let _permit = proxy.permits.try_acquire().map_err(|_| ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            message: "HTTPS proxy is busy; retry later",
+            body: super::ErrorResponse::ServiceUnavailable {
+                error: "HTTPS proxy is busy; retry later",
+            },
         })?;
         timeout(REQUEST_TIMEOUT, next.run(request))
             .await
@@ -137,7 +139,9 @@ async fn relay(
 ) -> Result<Json<ProxyResponse>, ApiError> {
     let Json(request) = request.map_err(|error| ApiError {
         status: error.status(),
-        message: "invalid HTTPS proxy JSON",
+        body: super::ErrorResponse::InvalidRequest {
+            error: "invalid HTTPS proxy JSON",
+        },
     })?;
     let url = Url::parse(&request.url).map_err(|_| policy_error())?;
     if request.url.len() > 2048
@@ -329,28 +333,36 @@ fn public_address(address: IpAddr) -> bool {
 fn policy_error() -> ApiError {
     ApiError {
         status: StatusCode::BAD_REQUEST,
-        message: "HTTPS proxy request violates destination, method, body or header policy",
+        body: super::ErrorResponse::InvalidRequest {
+            error: "HTTPS proxy request violates destination, method, body or header policy",
+        },
     }
 }
 
 fn request_too_large() -> ApiError {
     ApiError {
         status: StatusCode::PAYLOAD_TOO_LARGE,
-        message: "HTTPS proxy request is too large",
+        body: super::ErrorResponse::InvalidRequest {
+            error: "HTTPS proxy request is too large",
+        },
     }
 }
 
 fn upstream_error() -> ApiError {
     ApiError {
         status: StatusCode::BAD_GATEWAY,
-        message: "HTTPS proxy upstream request failed",
+        body: super::ErrorResponse::UpstreamFailure {
+            error: "HTTPS proxy upstream request failed",
+        },
     }
 }
 
 fn upstream_timeout() -> ApiError {
     ApiError {
         status: StatusCode::GATEWAY_TIMEOUT,
-        message: "HTTPS proxy request timed out",
+        body: super::ErrorResponse::UpstreamTimeout {
+            error: "HTTPS proxy request timed out",
+        },
     }
 }
 

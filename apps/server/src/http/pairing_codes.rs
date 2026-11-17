@@ -47,7 +47,9 @@ pub(super) async fn get(
             CodeLookup::Forbidden => Err(ApiError::unauthorized()),
             CodeLookup::Missing => Err(ApiError {
                 status: StatusCode::NOT_FOUND,
-                message: "no active pairing code",
+                body: super::ErrorResponse::NotFound {
+                    error: "no active pairing code",
+                },
             }),
             CodeLookup::Active(code) => Ok(Json(PairingCodeResponse {
                 code: code.code,

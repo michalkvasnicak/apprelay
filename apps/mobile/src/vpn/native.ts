@@ -16,6 +16,7 @@ export type VpnIdentity = { publicKey: string };
 
 type NativeVpnModule = {
   getIdentity(): Promise<VpnIdentity>;
+  resetRegistration(): Promise<VpnIdentity>;
   getStatus(): Promise<VpnStatus>;
   connect(settings: {
     host: string;
@@ -43,6 +44,7 @@ function requireNative(): NativeVpnModule {
 
 export const vpn = {
   getIdentity: () => requireNative().getIdentity(),
+  resetRegistration: () => requireNative().resetRegistration(),
   getStatus: () => requireNative().getStatus(),
   connect: (registration: DeviceRegistration) => {
     const { wireguard } = registration;

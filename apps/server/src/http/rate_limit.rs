@@ -97,7 +97,9 @@ impl RegistrationRateLimiter {
         }
         let invalid = || ApiError {
             status: StatusCode::BAD_REQUEST,
-            message: "trusted proxy must supply one valid CF-Connecting-IP header",
+            body: super::ErrorResponse::InvalidRequest {
+                error: "trusted proxy must supply one valid CF-Connecting-IP header",
+            },
         };
         let mut values = request.headers().get_all("cf-connecting-ip").iter();
         let value = values.next().ok_or_else(invalid)?;
@@ -165,7 +167,9 @@ async fn limit(
         Ok(Ok(Some(retry_after))) => {
             let mut response = ApiError {
                 status: StatusCode::TOO_MANY_REQUESTS,
-                message: "too many requests",
+                body: super::ErrorResponse::RateLimited {
+                    error: "too many requests",
+                },
             }
             .into_response();
             response

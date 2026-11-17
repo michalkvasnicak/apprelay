@@ -114,6 +114,17 @@ enum VpnKeychain {
         }
     }
 
+    static func resetRegistration() throws {
+        // This service contains only the WireGuard identity and registration credentials.
+        // Delete legacy token entries too, so migration cannot restore a rejected token.
+        var request = try query()
+        request.removeValue(forKey: kSecAttrAccount as String)
+        let status = SecItemDelete(request as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw VpnError.keychain(status)
+        }
+    }
+
     static func privateKey(reference: Data) throws -> Data {
         // The persistent reference identifies the item; signed entitlements still
         // enforce access to its shared group, without relying on plist expansion.

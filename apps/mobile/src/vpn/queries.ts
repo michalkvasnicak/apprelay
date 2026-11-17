@@ -38,7 +38,12 @@ export function useVpn() {
     refetchOnWindowFocus: "always",
     retry: false,
   });
-  const registration = useMutation({ mutationFn: ensureRegistration, retry: false });
+  const registration = useMutation({
+    mutationFn: ensureRegistration,
+    // Recovery may replace the native identity even if its registration retry fails.
+    onSettled: () => client.invalidateQueries({ queryKey: ["vpn", "identity"] }),
+    retry: false,
+  });
   const connection = useMutation({
     mutationFn: async (active: boolean): Promise<VpnStatus> => {
       // Avoid a poll racing the transition written below.

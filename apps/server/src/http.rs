@@ -197,11 +197,15 @@ async fn register_device(
     let credential = auth::Credential::optional(&headers)?;
     let Json(request) = request.map_err(|error| ApiError {
         status: error.status(),
-        message: "invalid registration JSON; expected wireguard_public_key",
+        body: ErrorResponse::InvalidRequest {
+            error: "invalid registration JSON; expected wireguard_public_key",
+        },
     })?;
     let invalid_key = || ApiError {
         status: StatusCode::BAD_REQUEST,
-        message: "wireguard_public_key must be a nonzero, base64-encoded 32-byte key",
+        body: ErrorResponse::InvalidRequest {
+            error: "wireguard_public_key must be a nonzero, base64-encoded 32-byte key",
+        },
     };
     if request.wireguard_public_key.len() != 44 {
         return Err(invalid_key());
@@ -322,27 +326,39 @@ async fn register_device(
 }
 
 #[derive(Serialize, ToSchema)]
-struct ErrorResponse {
-    error: &'static str,
+#[serde(tag = "code", rename_all = "snake_case")]
+enum ErrorResponse {
+    InvalidRequest { error: &'static str },
+    AppKeyRequired { error: &'static str },
+    DeviceTokenRequired { error: &'static str },
+    ServiceUnavailable { error: &'static str },
+    NotFound { error: &'static str },
+    Conflict { error: &'static str },
+    Expired { error: &'static str },
+    RateLimited { error: &'static str },
+    UpstreamFailure { error: &'static str },
+    UpstreamTimeout { error: &'static str },
 }
 
 struct ApiError {
     status: StatusCode,
-    message: &'static str,
+    body: ErrorResponse,
 }
 
 impl ApiError {
     fn unauthorized() -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
-            message: "a valid device bearer token is required",
+            body: ErrorResponse::DeviceTokenRequired {
+                error: "a valid device bearer token is required",
+            },
         }
     }
 
     fn unavailable(message: &'static str) -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            message,
+            body: ErrorResponse::ServiceUnavailable { error: message },
         }
     }
 
@@ -359,12 +375,6 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(ErrorResponse {
-                error: self.message,
-            }),
-        )
-            .into_response()
+        (self.status, Json(self.body)).into_response()
     }
 }

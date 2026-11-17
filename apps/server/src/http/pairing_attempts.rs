@@ -29,7 +29,9 @@ pub(super) struct StartRequest {
 fn token_hash(token: &str) -> Result<[u8; 32], ApiError> {
     let missing = || ApiError {
         status: StatusCode::NOT_FOUND,
-        message: "pairing attempt not found",
+        body: super::ErrorResponse::NotFound {
+            error: "pairing attempt not found",
+        },
     };
     if token.len() != 43 {
         return Err(missing());
@@ -87,7 +89,9 @@ pub(super) async fn get(
         .map_err(ApiError::database)?
         .ok_or(ApiError {
             status: StatusCode::NOT_FOUND,
-            message: "pairing attempt not found",
+            body: super::ErrorResponse::NotFound {
+                error: "pairing attempt not found",
+            },
         })?;
     Ok(Json(status))
 }
@@ -113,7 +117,9 @@ pub(super) async fn start(
     let credential = Credential::required(&headers)?;
     let Json(request) = request.map_err(|error| ApiError {
         status: error.status(),
-        message: "invalid pairing JSON; expected token",
+        body: super::ErrorResponse::InvalidRequest {
+            error: "invalid pairing JSON; expected token",
+        },
     })?;
     match state
         .attempts
@@ -125,15 +131,21 @@ pub(super) async fn start(
         Claim::Unauthorized => Err(ApiError::unauthorized()),
         Claim::Missing => Err(ApiError {
             status: StatusCode::NOT_FOUND,
-            message: "pairing attempt not found",
+            body: super::ErrorResponse::NotFound {
+                error: "pairing attempt not found",
+            },
         }),
         Claim::Conflict => Err(ApiError {
             status: StatusCode::CONFLICT,
-            message: "attempt already used or device has an active attempt",
+            body: super::ErrorResponse::Conflict {
+                error: "attempt already used or device has an active attempt",
+            },
         }),
         Claim::Expired => Err(ApiError {
             status: StatusCode::GONE,
-            message: "pairing attempt expired",
+            body: super::ErrorResponse::Expired {
+                error: "pairing attempt expired",
+            },
         }),
     }
 }

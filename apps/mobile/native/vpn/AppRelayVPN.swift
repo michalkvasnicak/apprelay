@@ -39,6 +39,43 @@ final class AppRelayVPN: NSObject {
         } catch { reject("VPN_CREDENTIAL", error.localizedDescription, error) }
     }
 
+    @objc(resetRegistration:rejecter:)
+    func resetRegistration(_ resolve: @escaping RCTPromiseResolveBlock,
+                           rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task { @MainActor in
+            guard !operationInProgress else {
+                reject("VPN_BUSY", VpnError.busy.localizedDescription, VpnError.busy)
+                return
+            }
+            operationInProgress = true
+            defer { operationInProgress = false }
+            do {
+                if let manager = try await loadManager() {
+                    manager.connection.stopVPNTunnel()
+                    // Never delete an identity while the tunnel may still be using it.
+                    for _ in 0..<50 {
+                        if [.invalid, .disconnected].contains(manager.connection.status) { break }
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                    guard [.invalid, .disconnected].contains(manager.connection.status) else {
+                        throw VpnError.busy
+                    }
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        manager.removeFromPreferences { error in
+                            if let error { continuation.resume(throwing: error) }
+                            else { continuation.resume() }
+                        }
+                    }
+                }
+                pairingDiscovery?.cancel()
+                pairingDiscovery = nil
+                try VpnKeychain.resetRegistration()
+                let identity = try VpnKeychain.identity()
+                resolve(["publicKey": identity.publicKey])
+            } catch { reject("VPN_RESET", error.localizedDescription, error) }
+        }
+    }
+
     @objc(getStatus:rejecter:)
     func getStatus(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task { @MainActor in

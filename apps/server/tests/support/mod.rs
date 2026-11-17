@@ -160,9 +160,9 @@ impl TestResponse {
         serde_json::from_value(self.body).unwrap()
     }
 
-    pub fn assert_error(&self, status: StatusCode, message: &str) {
+    pub fn assert_error(&self, status: StatusCode, code: &str, message: &str) {
         assert_eq!(self.status, status, "{}", self.body);
-        assert_eq!(self.body, json!({ "error": message }));
+        assert_eq!(self.body, json!({ "code": code, "error": message }));
         assert_eq!(self.headers["cache-control"], "no-store");
     }
 }

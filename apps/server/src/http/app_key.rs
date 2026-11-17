@@ -38,7 +38,9 @@ pub(super) async fn require_app_key(
 ) -> Result<Response, ApiError> {
     let unauthorized = || ApiError {
         status: StatusCode::UNAUTHORIZED,
-        message: "a valid app key is required",
+        body: super::ErrorResponse::AppKeyRequired {
+            error: "a valid app key is required",
+        },
     };
     let mut values = request.headers().get_all(HEADER).iter();
     let value = values.next().ok_or_else(unauthorized)?;

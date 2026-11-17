@@ -159,9 +159,57 @@ export interface components {
       expires_at: string;
       token: string;
     };
-    ErrorResponse: {
-      error: string;
-    };
+    ErrorResponse:
+      | {
+          /** @enum {string} */
+          code: "invalid_request";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "app_key_required";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "device_token_required";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "service_unavailable";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "not_found";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "conflict";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "expired";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "rate_limited";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "upstream_failure";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
+          code: "upstream_timeout";
+          error: string;
+        };
     /** @enum {string} */
     FailureReason: "pairing_failed" | "timeout";
     Health: {
