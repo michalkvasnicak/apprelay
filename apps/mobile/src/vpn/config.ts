@@ -13,11 +13,26 @@ export async function registerDevice(publicKey: string): Promise<DeviceRegistrat
   const url = getRegistrationUrl();
   const scope = `${url}:${publicKey}`;
   const token = await credentials.get(scope);
-  const { data: device, response } = await createApiClient().POST("/v1/devices", {
+  const {
+    data: device,
+    error,
+    response,
+  } = await createApiClient().POST("/v1/devices", {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: { wireguard_public_key: publicKey },
   });
   if (response.status !== 201 || !device) {
+    const reason = error?.error;
+    if (response.status === 401 && reason === "a valid app key is required") {
+      throw new Error("Device registration failed (HTTP 401): the server rejected the app key.");
+    }
+    if (response.status === 401 && reason === "a valid device bearer token is required") {
+      throw new Error(
+        token
+          ? "Device registration failed (HTTP 401): the server rejected the saved device token."
+          : "Device registration failed (HTTP 401): no saved device token was found for this API URL and device identity.",
+      );
+    }
     throw new Error(`Device registration failed (HTTP ${response.status}).`);
   }
   if (!/^[A-Za-z0-9_-]{43}$/.test(device.token)) {
