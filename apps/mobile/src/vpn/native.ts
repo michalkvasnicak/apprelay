@@ -16,6 +16,8 @@ export type VpnIdentity = { publicKey: string };
 
 type NativeVpnModule = {
   getIdentity(): Promise<VpnIdentity>;
+  getRegistrationToken(): Promise<string | null>;
+  saveRegistrationToken(token: string, publicKey: string): Promise<void>;
   resetRegistration(): Promise<VpnIdentity>;
   getStatus(): Promise<VpnStatus>;
   connect(settings: {
@@ -42,8 +44,19 @@ function requireNative(): NativeVpnModule {
   return native;
 }
 
+// The UI and registration may both ask for the identity during first launch.
+let pendingIdentity: Promise<VpnIdentity> | undefined;
+
 export const vpn = {
-  getIdentity: () => requireNative().getIdentity(),
+  getIdentity: () =>
+    (pendingIdentity ??= requireNative()
+      .getIdentity()
+      .finally(() => {
+        pendingIdentity = undefined;
+      })),
+  getRegistrationToken: () => requireNative().getRegistrationToken(),
+  saveRegistrationToken: (token: string, publicKey: string) =>
+    requireNative().saveRegistrationToken(token, publicKey),
   resetRegistration: () => requireNative().resetRegistration(),
   getStatus: () => requireNative().getStatus(),
   connect: (registration: DeviceRegistration) => {

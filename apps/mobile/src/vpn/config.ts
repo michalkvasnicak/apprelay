@@ -1,14 +1,14 @@
 import { createApiClient } from "../api/client";
 import type { components } from "../api/schema";
 
-import { credentials } from "./credentials";
+import { vpn } from "./native";
 
 export type DeviceRegistration = components["schemas"]["RegistrationResponse"];
 
 export class DeviceCredentialError extends Error {}
 
 export async function registerDevice(publicKey: string): Promise<DeviceRegistration> {
-  const token = await credentials.get();
+  const token = await vpn.getRegistrationToken();
   const {
     data: device,
     error,
@@ -33,6 +33,6 @@ export async function registerDevice(publicKey: string): Promise<DeviceRegistrat
   if (!/^[A-Za-z0-9_-]{43}$/.test(device.token)) {
     throw new Error("Device registration returned an invalid bearer token.");
   }
-  await credentials.save(device.token);
+  await vpn.saveRegistrationToken(device.token, publicKey);
   return device;
 }

@@ -36,6 +36,7 @@ struct VpnSettings {
 enum VpnError: LocalizedError {
     case invalidConfiguration
     case keychain(OSStatus)
+    case missingKeychainGroup
     case missingKey
     case busy
     case simulator
@@ -46,6 +47,8 @@ enum VpnError: LocalizedError {
             return "Unable to load the VPN configuration."
         case .keychain(let status):
             return "Unable to access the VPN keychain (\(status)). Check signing and keychain-sharing entitlements."
+        case .missingKeychainGroup:
+            return "The VPN keychain access group is not configured."
         case .missingKey:
             return "The VPN device key is unavailable. Open the app and configure the VPN again."
         case .busy:

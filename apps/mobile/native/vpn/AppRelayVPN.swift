@@ -15,7 +15,13 @@ final class AppRelayVPN: NSObject {
     func getIdentity(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task { @MainActor in
             do {
-                let identity = try VpnKeychain.identity()
+                guard !operationInProgress else { throw VpnError.busy }
+                if let identity = try VpnKeychain.identity() {
+                    resolve(["publicKey": identity.publicKey])
+                    return
+                }
+                // A missing or corrupt key invalidates any saved token and tunnel profile.
+                let identity = try await replaceIdentity(discardPreviousStorage: true)
                 resolve(["publicKey": identity.publicKey])
             } catch { reject("VPN_IDENTITY", error.localizedDescription, error) }
         }
@@ -24,56 +30,66 @@ final class AppRelayVPN: NSObject {
     @objc(getRegistrationToken:rejecter:)
     func getRegistrationToken(_ resolve: @escaping RCTPromiseResolveBlock,
                               rejecter reject: @escaping RCTPromiseRejectBlock) {
-        do {
-            resolve(try VpnKeychain.registrationToken())
-        } catch { reject("VPN_CREDENTIAL", error.localizedDescription, error) }
+        Task { @MainActor in
+            do {
+                guard !operationInProgress else { throw VpnError.busy }
+                resolve(try VpnKeychain.registrationToken())
+            } catch { reject("VPN_CREDENTIAL", error.localizedDescription, error) }
+        }
     }
 
-    @objc(saveRegistrationToken:resolver:rejecter:)
-    func saveRegistrationToken(_ token: String,
+    @objc(saveRegistrationToken:publicKey:resolver:rejecter:)
+    func saveRegistrationToken(_ token: String, publicKey: String,
                                resolver resolve: @escaping RCTPromiseResolveBlock,
                                rejecter reject: @escaping RCTPromiseRejectBlock) {
-        do {
-            try VpnKeychain.saveRegistrationToken(token: token)
-            resolve(nil)
-        } catch { reject("VPN_CREDENTIAL", error.localizedDescription, error) }
+        Task { @MainActor in
+            do {
+                guard !operationInProgress else { throw VpnError.busy }
+                guard try VpnKeychain.identity()?.publicKey == publicKey else { throw VpnError.missingKey }
+                try VpnKeychain.saveRegistrationToken(token)
+                resolve(nil)
+            } catch { reject("VPN_CREDENTIAL", error.localizedDescription, error) }
+        }
     }
 
     @objc(resetRegistration:rejecter:)
     func resetRegistration(_ resolve: @escaping RCTPromiseResolveBlock,
                            rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task { @MainActor in
-            guard !operationInProgress else {
-                reject("VPN_BUSY", VpnError.busy.localizedDescription, VpnError.busy)
-                return
-            }
-            operationInProgress = true
-            defer { operationInProgress = false }
             do {
-                if let manager = try await loadManager() {
-                    manager.connection.stopVPNTunnel()
-                    // Never delete an identity while the tunnel may still be using it.
-                    for _ in 0..<50 {
-                        if [.invalid, .disconnected].contains(manager.connection.status) { break }
-                        try await Task.sleep(nanoseconds: 100_000_000)
-                    }
-                    guard [.invalid, .disconnected].contains(manager.connection.status) else {
-                        throw VpnError.busy
-                    }
-                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        manager.removeFromPreferences { error in
-                            if let error { continuation.resume(throwing: error) }
-                            else { continuation.resume() }
-                        }
-                    }
-                }
-                pairingDiscovery?.cancel()
-                pairingDiscovery = nil
-                try VpnKeychain.resetRegistration()
-                let identity = try VpnKeychain.identity()
+                let identity = try await replaceIdentity()
                 resolve(["publicKey": identity.publicKey])
             } catch { reject("VPN_RESET", error.localizedDescription, error) }
         }
+    }
+
+    @MainActor private func replaceIdentity(discardPreviousStorage: Bool = false) async throws -> VpnKeychain.Identity {
+        guard !operationInProgress else { throw VpnError.busy }
+        operationInProgress = true
+        defer { operationInProgress = false }
+
+        for manager in try await loadManagers() {
+            let connection = manager.connection
+            connection.stopVPNTunnel()
+            // Never delete an identity while a tunnel may still be using it.
+            for _ in 0..<50 {
+                if [.invalid, .disconnected].contains(connection.status) { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard [.invalid, .disconnected].contains(connection.status) else { throw VpnError.busy }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                manager.removeFromPreferences { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                }
+            }
+        }
+
+        pairingDiscovery?.cancel()
+        pairingDiscovery = nil
+        try VpnKeychain.clearCredentials()
+        if discardPreviousStorage { try VpnKeychain.discardPreviousStorage() }
+        return try VpnKeychain.createIdentity()
     }
 
     @objc(getStatus:rejecter:)
@@ -101,7 +117,7 @@ final class AppRelayVPN: NSObject {
                 throw VpnError.simulator
                 #else
                 let settings = try VpnSettings(values)
-                let identity = try VpnKeychain.identity()
+                guard let identity = try VpnKeychain.identity() else { throw VpnError.missingKey }
                 let manager = try await loadManager() ?? NETunnelProviderManager()
                 guard [.invalid, .disconnected].contains(manager.connection.status) else {
                     throw VpnError.busy
@@ -168,13 +184,17 @@ final class AppRelayVPN: NSObject {
     }
 
     private func loadManager() async throws -> NETunnelProviderManager? {
+        try await loadManagers().first
+    }
+
+    private func loadManagers() async throws -> [NETunnelProviderManager] {
         let managers: [NETunnelProviderManager] = try await withCheckedThrowingContinuation { continuation in
             NETunnelProviderManager.loadAllFromPreferences { managers, error in
                 if let error { continuation.resume(throwing: error) }
                 else { continuation.resume(returning: managers ?? []) }
             }
         }
-        return managers.first {
+        return managers.filter {
             ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == providerIdentifier
         }
     }

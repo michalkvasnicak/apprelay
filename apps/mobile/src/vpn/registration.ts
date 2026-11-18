@@ -1,39 +1,40 @@
 import { DeviceCredentialError, registerDevice, type DeviceRegistration } from "./config";
 import { vpn } from "./native";
 
-let device: DeviceRegistration | undefined;
+let cached: { publicKey: string; device: DeviceRegistration } | undefined;
 let pending: Promise<DeviceRegistration> | undefined;
 
 async function registerWithRecovery(): Promise<DeviceRegistration> {
-  const identity = await vpn.getIdentity();
+  let { publicKey } = await vpn.getIdentity();
+  if (
+    cached?.publicKey === publicKey &&
+    Date.parse(cached.device.expires_at) > Date.now() + 30_000
+  ) {
+    return cached.device;
+  }
+
+  cached = undefined;
+  let device: DeviceRegistration;
   try {
-    return await registerDevice(identity.publicKey);
+    device = await registerDevice(publicKey);
   } catch (error) {
     if (!(error instanceof DeviceCredentialError)) {
       throw error;
     }
-    // Only an explicit device-credential rejection permits identity replacement.
-    device = undefined;
-    const replacement = await vpn.resetRegistration();
-    // Retry once; a second rejection must surface instead of creating a reset loop.
-    return registerDevice(replacement.publicKey);
+    // The server won't let us reclaim an existing public key without its token.
+    // Retry once with a new key; a second rejection must surface.
+    ({ publicKey } = await vpn.resetRegistration());
+    device = await registerDevice(publicKey);
   }
+  cached = { publicKey, device };
+  return device;
 }
 
-// Both manual connection and pairing restore registration through the app’s Keychain credential.
+// Both manual connection and pairing share one in-flight registration.
 export function ensureRegistration(): Promise<DeviceRegistration> {
-  if (device && Date.parse(device.expires_at) > Date.now() + 30_000) {
-    return Promise.resolve(device);
-  }
-  pending ??= registerWithRecovery()
-    .then((registration) => {
-      device = registration;
-      return registration;
-    })
-    .finally(() => {
-      pending = undefined;
-    });
-  return pending;
+  return (pending ??= registerWithRecovery().finally(() => {
+    pending = undefined;
+  }));
 }
 
 export async function ensureTunnel(registration: DeviceRegistration) {
