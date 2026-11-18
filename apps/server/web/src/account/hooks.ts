@@ -15,6 +15,18 @@ export function useAccount() {
 
 export type AccountSnapshot = ReturnType<typeof accountController.snapshot>;
 
+// Keep the sanitized error visible even when the initiating panel unmounts.
+const accountErrorKey = ["account-command-error"] as const;
+
+export function useAccountError() {
+  return useQuery({
+    queryKey: accountErrorKey,
+    queryFn: (): AccountError | null => null,
+    initialData: null,
+    staleTime: Infinity,
+  }).data;
+}
+
 export function useAccountAction(action: () => Promise<void>) {
   const client = useQueryClient();
   return useMutation({
@@ -32,6 +44,12 @@ export function useAccountAction(action: () => Promise<void>) {
       }
     },
     retry: false,
+    onMutate: () => {
+      client.setQueryData(accountErrorKey, null);
+    },
+    onError: (error) => {
+      client.setQueryData(accountErrorKey, error);
+    },
     onSettled: () => client.invalidateQueries({ queryKey: ["account"] }),
     gcTime: 0,
   });

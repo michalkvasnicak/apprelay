@@ -19,7 +19,7 @@ class AccountController {
   private readonly vault = new LocalVault();
   private account?: StoredAccount;
   private anisette?: Anisette;
-  private teams: Team[] = [];
+  private teams?: Team[];
   private challenge?: PendingChallenge;
   private busy = false;
 
@@ -79,22 +79,50 @@ class AccountController {
     if (result.type === "two-factor") {
       this.challenge = { ...result, deadline: Date.now() + 600_000, resendAt: Date.now() + 60_000 };
       this.anisette = anisette;
-      if (!(await trustedDevice(result.challenge))) {
-        this.challenge = undefined;
-        this.anisette = undefined;
-        throw new AccountError("Apple did not confirm code delivery. Start a new sign-in");
-      }
+      await this.sendCode(result.challenge);
       return;
     }
-    const teams = await new DeveloperPortal(result.session, anisette).teams();
-    this.account = {
-      session: result.session,
-      anisette: anisette.snapshot(),
-      teamId: teams.length === 1 ? teams[0].id : undefined,
-    };
-    this.teams = teams;
+    this.account = { session: result.session, anisette: anisette.snapshot() };
     this.anisette = anisette;
     this.challenge = undefined;
+    await this.fetchTeams();
+  }
+
+  private async sendCode(challenge: PendingChallenge["challenge"]) {
+    try {
+      if (await trustedDevice(challenge)) {
+        return;
+      }
+    } catch {
+      // Delivery can still have happened even if the relay failed.
+    }
+    throw new AccountError(
+      "Apple could not confirm code delivery. Enter the code if it arrived, or try resending after 60 seconds",
+    );
+  }
+
+  private async fetchTeams() {
+    const account = this.account;
+    if (!account) {
+      throw new AccountError("Sign in to Apple first");
+    }
+    try {
+      const teams = await this.portal().teams();
+      this.teams = teams;
+      account.teamId = teams.length === 1 ? teams[0].id : undefined;
+    } catch {
+      throw new AccountError(
+        "Signed in to Apple, but could not load development teams. Check your connection and retry loading teams",
+      );
+    }
+  }
+
+  loadTeams() {
+    return this.run("Could not load development teams", async () => {
+      if (!this.teams) {
+        await this.fetchTeams();
+      }
+    });
   }
 
   login(username: string, password: string) {
@@ -105,13 +133,7 @@ class AccountController {
           throw new AccountError("Unlock the saved account or reset the current sign-in first");
         }
         const anisette = await Anisette.create();
-        try {
-          await this.accept(await signIn(anisette, username, password), anisette);
-        } catch (error) {
-          this.challenge = undefined;
-          this.anisette = undefined;
-          throw error;
-        }
+        await this.accept(await signIn(anisette, username, password), anisette);
       },
     );
   }
@@ -127,7 +149,7 @@ class AccountController {
 
   verify(code: string) {
     return this.run(
-      "Verification failed. Start a new sign-in; the code was not replayed",
+      "Could not finish Apple verification. Start a new sign-in; the code was not retried automatically",
       async () => {
         const pending = this.activeChallenge();
         if (!/^\d{6}$/.test(code)) {
@@ -156,21 +178,13 @@ class AccountController {
   }
 
   resend() {
-    return this.run("Apple could not send another code. Start a new sign-in", async () => {
+    return this.run("Apple could not send another code", async () => {
       const pending = this.activeChallenge();
       if (Date.now() < pending.resendAt) {
         throw new AccountError("Wait 60 seconds between code requests");
       }
       pending.resendAt = Date.now() + 60_000;
-      try {
-        if (!(await trustedDevice(pending.challenge))) {
-          throw new Error("Delivery not confirmed");
-        }
-      } catch (error) {
-        this.challenge = undefined;
-        this.anisette = undefined;
-        throw error;
-      }
+      await this.sendCode(pending.challenge);
     });
   }
 
@@ -223,7 +237,7 @@ class AccountController {
 
   selectTeam(teamId: string) {
     return this.run("Could not save the selected team", async () => {
-      if (!this.account || !this.teams.some((team) => team.id === teamId)) {
+      if (!this.account || !this.teams?.some((team) => team.id === teamId)) {
         throw new AccountError("Choose an available team");
       }
       if (this.account.identity && this.account.identity.teamId !== teamId) {
@@ -310,7 +324,7 @@ class AccountController {
     this.account = undefined;
     this.anisette = undefined;
     this.challenge = undefined;
-    this.teams = [];
+    this.teams = undefined;
     this.vault.lock();
   }
 }

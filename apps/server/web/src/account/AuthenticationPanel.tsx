@@ -1,6 +1,6 @@
 import { useRef } from "react";
 
-import { ActionError, buttonClass, inputClass, secondaryClass } from "../components/forms";
+import { buttonClass, inputClass, secondaryClass } from "../components/forms";
 import { accountController } from "./controller";
 import { inputValue, useAccountAction, useAccountBusy, type AccountSnapshot } from "./hooks";
 
@@ -52,7 +52,6 @@ function Login() {
           {login.isPending ? "Signing in…" : "Sign in to Apple"}
         </button>
       </fieldset>
-      <ActionError error={login.error} />
     </form>
   );
 }
@@ -112,7 +111,6 @@ function TwoFactor() {
           Start over
         </button>
       </div>
-      <ActionError error={verify.error ?? resend.error ?? reset.error} />
     </div>
   );
 }
@@ -121,6 +119,33 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
   const select = useRef<HTMLSelectElement>(null);
   const busy = useAccountBusy();
   const choose = useAccountAction(() => accountController.selectTeam(select.current?.value ?? ""));
+  const load = useAccountAction(() => accountController.loadTeams());
+  const reset = useAccountAction(() => accountController.forget());
+  if (!account.teams) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-primary">Signed in to Apple.</p>
+        <div className="flex flex-wrap gap-4">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => load.mutate()}
+            className={buttonClass}
+          >
+            {load.isPending ? "Loading teams…" : "Retry loading development teams"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => reset.mutate()}
+            className={secondaryClass}
+          >
+            Start over
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div>
       <p className="mb-5 text-sm text-primary">Signed in to Apple.</p>
@@ -152,7 +177,6 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
         Personal Teams have short-lived profiles and restrictive quotas and capabilities. Existing
         certificates are never revoked automatically.
       </p>
-      <ActionError error={choose.error} />
     </div>
   );
 }

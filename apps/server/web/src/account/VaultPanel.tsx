@@ -1,6 +1,6 @@
 import { useRef } from "react";
 
-import { ActionError, buttonClass, inputClass, secondaryClass } from "../components/forms";
+import { buttonClass, inputClass, secondaryClass } from "../components/forms";
 import { accountController } from "./controller";
 import { inputValue, useAccountAction, useAccountBusy, type AccountSnapshot } from "./hooks";
 
@@ -66,7 +66,6 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
       >
         Use another Apple account
       </button>
-      <ActionError error={persist.error ?? forget.error} />
     </section>
   );
 }

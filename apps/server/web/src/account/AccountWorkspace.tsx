@@ -8,12 +8,13 @@ import { signingController } from "../signing/controller";
 import { AuthenticationPanel } from "./AuthenticationPanel";
 import { VaultPanel } from "./VaultPanel";
 import { accountController } from "./controller";
-import { useAccount, useAccountAction, useAccountBusy } from "./hooks";
+import { useAccount, useAccountAction, useAccountBusy, useAccountError } from "./hooks";
 
 export function AccountWorkspace({ file }: { file?: File }) {
   const [localFile, setLocalFile] = useState<File>();
   const selectedFile = file ?? localFile;
   const account = useAccount();
+  const actionError = useAccountError();
   const busy = useAccountBusy();
   const client = useQueryClient();
   const lock = useAccountAction(async () => {
@@ -42,6 +43,7 @@ export function AccountWorkspace({ file }: { file?: File }) {
   return (
     <div className="space-y-6" aria-busy={busy}>
       {selectedFile && <p className="break-all text-sm text-muted">App: {selectedFile.name}</p>}
+      <ActionError error={actionError} />
       {!ready ? (
         <div className="space-y-6">
           <h2 className="text-lg font-semibold">Sign in to Apple</h2>
@@ -62,7 +64,6 @@ export function AccountWorkspace({ file }: { file?: File }) {
           >
             Lock Apple account
           </button>
-          <ActionError error={lock.error} />
         </div>
       )}
     </div>

@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { AccountError, accountController } from "../account/controller";
 import { useAccountAction, useAccountBusy } from "../account/hooks";
-import { ActionError, buttonClass, inputClass } from "../components/forms";
+import { buttonClass, inputClass } from "../components/forms";
 import { selectTargetDevice, type PairedDevice } from "../device";
 import { SignedResult } from "./SignedResult";
 import { signingController } from "./controller";
@@ -121,7 +121,6 @@ export function SigningPanel({
           page open.
         </p>
       )}
-      <ActionError error={prepare.error} />
       <details className="mt-5 text-xs leading-5 text-muted">
         <summary className="cursor-pointer">Signing limitations</summary>
         <p className="mt-2">
