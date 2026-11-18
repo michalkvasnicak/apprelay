@@ -62,7 +62,7 @@ impl TestApi {
             RouterConfig {
                 app_key: AppKey::from_env().unwrap(),
                 registration_limiter: RegistrationRateLimiter::from_env().await.unwrap(),
-                https_proxy: HttpsProxy::new().unwrap(),
+                https_proxy: HttpsProxy::new("https://anisette.example.com").unwrap(),
                 artifacts: None,
             },
         );

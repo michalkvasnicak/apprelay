@@ -5,30 +5,49 @@ import { relay, requireSuccess } from "./transport";
 import type { AnisetteData, AnisetteIdentity } from "./types";
 import { integer, record, string } from "./validation";
 
-const provider = "https://mac-ani.jkcoxson.com";
 const clientInfo = "<Mac16,5> <Mac OS X;26.7.2;25G332> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
 
-export class Anisette {
-  private constructor(private readonly identity: AnisetteIdentity) {}
+async function loadProvider() {
+  const response = await fetch("/v1/apple/anisette-provider", {
+    credentials: "omit",
+    cache: "no-store",
+    redirect: "error",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    throw new Error("Anisette provider configuration is unavailable");
+  }
+  return new URL(string(record(await response.json()).url));
+}
 
-  static restore(identity: AnisetteIdentity) {
+export class Anisette {
+  private constructor(
+    private readonly identity: AnisetteIdentity,
+    private readonly provider: URL,
+  ) {}
+
+  static async restore(identity: AnisetteIdentity) {
     if (unbase64(identity.identifier).length !== 16 || !unbase64(identity.adiPb).length) {
       throw new Error("Invalid saved anisette identity");
     }
-    return new Anisette(identity);
+    return new Anisette(identity, await loadProvider());
   }
 
   static async create() {
-    const response = await relay(`${provider}/v3/client_info`, "GET", {
+    const provider = await loadProvider();
+    const response = await relay(new URL("/v3/client_info", provider).href, "GET", {
       accept: "application/json",
     });
     requireSuccess(response.status);
     const info = record(JSON.parse(text(response.body)));
-    const session = new Anisette({
-      identifier: base64(crypto.getRandomValues(new Uint8Array(16))),
-      adiPb: "",
-      userAgent: string(info.user_agent),
-    });
+    const session = new Anisette(
+      {
+        identifier: base64(crypto.getRandomValues(new Uint8Array(16))),
+        adiPb: "",
+        userAgent: string(info.user_agent),
+      },
+      provider,
+    );
     await session.provision();
     return session;
   }
@@ -85,7 +104,9 @@ export class Anisette {
     // The server independently restricts both Apple destinations. The provider
     // receives only its anisette protocol material, never Apple account tokens.
     await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(`${provider.replace("https:", "wss:")}/v3/provisioning_session`);
+      const url = new URL("/v3/provisioning_session", this.provider);
+      url.protocol = "wss:";
+      const socket = new WebSocket(url);
       let phase: "identifier" | "start" | "finish" | "success" = "identifier";
       let settled = false;
       const complete = (success: boolean) => {
@@ -152,7 +173,7 @@ export class Anisette {
 
   async fresh(): Promise<AnisetteData> {
     const response = await relay(
-      `${provider}/v3/get_headers`,
+      new URL("/v3/get_headers", this.provider).href,
       "POST",
       {
         accept: "application/json",

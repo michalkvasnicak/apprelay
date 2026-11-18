@@ -25,7 +25,7 @@ async fn run() -> std::io::Result<()> {
     };
 
     let app_key = http::AppKey::from_env()?;
-    let https_proxy = http::HttpsProxy::new()?;
+    let https_proxy = http::HttpsProxy::from_env()?;
     let registration_limiter = http::RegistrationRateLimiter::from_env().await?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;

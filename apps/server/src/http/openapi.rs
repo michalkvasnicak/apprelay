@@ -15,6 +15,7 @@ use utoipa::{
         super::artifacts::complete,
         super::artifacts::resolve,
         super::register_device,
+        super::https_proxy::anisette_provider,
         super::https_proxy::relay,
         super::pairing_codes::get,
         super::pairing_attempts::create,

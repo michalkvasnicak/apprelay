@@ -185,7 +185,7 @@ class AccountController {
               "The saved Apple session expired. Stored signing assets were kept; session renewal is not implemented yet",
             );
           }
-          const anisette = Anisette.restore(account.anisette);
+          const anisette = await Anisette.restore(account.anisette);
           const teams = await new DeveloperPortal(account.session, anisette).teams();
           if (
             account.identity?.certificate &&

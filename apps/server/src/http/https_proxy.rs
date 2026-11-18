@@ -1,7 +1,7 @@
 //! Stateless relay for the browser Apple runtime. Never log upstream URLs,
 //! headers, bodies, or reqwest errors: they can contain Apple credentials.
 
-use std::{collections::BTreeMap, io, net::IpAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, env, io, net::IpAddr, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -9,11 +9,11 @@ use axum::{
     http::{HeaderName, HeaderValue, StatusCode, header::CACHE_CONTROL},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::{
-    Client, Method, Url,
+    Certificate, Client, Method, Url,
     dns::{Addrs, Name, Resolve, Resolving},
 };
 use serde::{Deserialize, Serialize};
@@ -28,27 +28,79 @@ const MAX_ENVELOPE_BYTES: usize = 2_800_000;
 const MAX_HEADER_BYTES: usize = 32_768;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(75);
+// Apple Root CA from https://www.apple.com/appleca/AppleIncRootCertificate.cer.
+const APPLE_ROOT_CA: &[u8] = include_bytes!("apple-root-ca.crt");
+const ANISETTE_URL_ENV: &str = "APPRELAY_ANISETTE_URL";
 
 #[derive(Clone)]
 pub struct HttpsProxy {
-    client: Client,
+    apple_client: Client,
+    anisette_client: Client,
+    anisette_url: Url,
     permits: Arc<Semaphore>,
 }
 
 impl HttpsProxy {
-    pub fn new() -> io::Result<Self> {
-        let client = Client::builder()
-            .https_only(true)
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(60))
-            .dns_resolver(Arc::new(PublicDns))
+    pub fn from_env() -> io::Result<Self> {
+        let url = env::var(ANISETTE_URL_ENV).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "APPRELAY_ANISETTE_URL is required",
+            )
+        })?;
+        Self::new(&url)
+    }
+
+    pub fn new(anisette_url: &str) -> io::Result<Self> {
+        let invalid_url = || {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "APPRELAY_ANISETTE_URL must be an HTTPS origin on a separate DNS hostname, using port 443 and no credentials, path, query, or fragment",
+            )
+        };
+        let anisette_url = Url::parse(anisette_url).map_err(|_| invalid_url())?;
+        if anisette_url.scheme() != "https"
+            || anisette_url.domain().is_none()
+            || matches!(
+                anisette_url
+                    .host_str()
+                    .map(|host| host.trim_end_matches('.')),
+                Some("gsa.apple.com" | "developerservices2.apple.com")
+            )
+            || anisette_url.port_or_known_default() != Some(443)
+            || !anisette_url.username().is_empty()
+            || anisette_url.password().is_some()
+            || anisette_url.path() != "/"
+            || anisette_url.query().is_some()
+            || anisette_url.fragment().is_some()
+        {
+            return Err(invalid_url());
+        }
+
+        let builder = || {
+            Client::builder()
+                .https_only(true)
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(60))
+                .dns_resolver(Arc::new(PublicDns))
+        };
+        // Extend the default roots for Apple only; keep TLS and hostname verification enabled.
+        let apple_root = Certificate::from_pem(APPLE_ROOT_CA)
+            .map_err(|_| io::Error::other("could not load Apple Root CA"))?;
+        let apple_client = builder()
+            .add_root_certificate(apple_root)
             .build()
-            .map_err(|_| io::Error::other("could not initialize HTTPS proxy"))?;
+            .map_err(|_| io::Error::other("could not initialize Apple HTTPS client"))?;
+        let anisette_client = builder()
+            .build()
+            .map_err(|_| io::Error::other("could not initialize anisette HTTPS client"))?;
         Ok(Self {
-            client,
+            apple_client,
+            anisette_client,
+            anisette_url,
             permits: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
         })
     }
@@ -59,6 +111,7 @@ pub(super) fn router(proxy: HttpsProxy) -> Router<super::AppState> {
         .route("/v1/apple/proxy", post(relay))
         .layer(DefaultBodyLimit::max(MAX_ENVELOPE_BYTES))
         .layer(middleware::from_fn_with_state(proxy.clone(), limit_request))
+        .route("/v1/apple/anisette-provider", get(anisette_provider))
         .with_state(proxy)
 }
 
@@ -84,6 +137,22 @@ async fn limit_request(State(proxy): State<HttpsProxy>, request: Request, next: 
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+#[derive(Serialize, ToSchema)]
+struct AnisetteProvider {
+    url: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/apple/anisette-provider",
+    responses((status = 200, description = "Public anisette provider URL", body = AnisetteProvider))
+)]
+async fn anisette_provider(State(proxy): State<HttpsProxy>) -> Json<AnisetteProvider> {
+    Json(AnisetteProvider {
+        url: proxy.anisette_url.as_str().to_owned(),
+    })
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -144,13 +213,14 @@ async fn relay(
         },
     })?;
     let url = Url::parse(&request.url).map_err(|_| policy_error())?;
+    let anisette = url.host_str() == proxy.anisette_url.host_str();
     if request.url.len() > 2048
         || url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()
         || url.port_or_known_default() != Some(443)
         || url.fragment().is_some()
-        || !allowed_endpoint(&url, &request.method)
+        || !allowed_endpoint(&url, &request.method, anisette)
     {
         return Err(policy_error());
     }
@@ -164,19 +234,23 @@ async fn relay(
     if matches!(request.method, ProxyMethod::Get) && !body.is_empty() {
         return Err(policy_error());
     }
-    let apple = url.host_str() != Some("mac-ani.jkcoxson.com");
+    let client = if anisette {
+        &proxy.anisette_client
+    } else {
+        &proxy.apple_client
+    };
     let method = match request.method {
         ProxyMethod::Get => Method::GET,
         ProxyMethod::Post => Method::POST,
     };
-    let mut outgoing = proxy.client.request(method, url);
+    let mut outgoing = client.request(method, url);
     let mut headers = reqwest::header::HeaderMap::new();
     let mut header_bytes = 0usize;
     for (name, value) in request.headers {
         header_bytes += name.len() + value.len();
         let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| policy_error())?;
         if header_bytes > MAX_HEADER_BYTES
-            || !allowed_header(name.as_str(), apple)
+            || !allowed_header(name.as_str(), !anisette)
             || headers.contains_key(&name)
             || (name == "x-http-method-override"
                 && !matches!(value.as_str(), "GET" | "POST" | "PUT" | "DELETE"))
@@ -228,8 +302,15 @@ async fn relay(
     }))
 }
 
-fn allowed_endpoint(url: &Url, method: &ProxyMethod) -> bool {
+fn allowed_endpoint(url: &Url, method: &ProxyMethod, anisette: bool) -> bool {
     let path = url.path();
+    if anisette {
+        return url.query().is_none()
+            && matches!(
+                (method, path),
+                (ProxyMethod::Get, "/v3/client_info") | (ProxyMethod::Post, "/v3/get_headers")
+            );
+    }
     match (url.host_str(), method) {
         (Some("gsa.apple.com"), ProxyMethod::Get) => matches!(
             path,
@@ -250,8 +331,6 @@ fn allowed_endpoint(url: &Url, method: &ProxyMethod) -> bool {
                 || path == "/services/v1/certificates"
                 || path.starts_with("/services/v1/certificates/")
         }
-        (Some("mac-ani.jkcoxson.com"), ProxyMethod::Get) => path == "/v3/client_info",
-        (Some("mac-ani.jkcoxson.com"), ProxyMethod::Post) => path == "/v3/get_headers",
         _ => false,
     }
 }
