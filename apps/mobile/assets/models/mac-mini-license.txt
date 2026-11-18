@@ -1,0 +1,11 @@
+Model Information:
+* title:	Apple Mac mini M4 pro
+* source:	https://sketchfab.com/3d-models/apple-mac-mini-m4-pro-c0f11a5cfc05448bbefa8c721e5fb0fd
+* author:	mistjs (https://sketchfab.com/mistjs)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Apple Mac mini M4 pro" (https://sketchfab.com/3d-models/apple-mac-mini-m4-pro-c0f11a5cfc05448bbefa8c721e5fb0fd) by mistjs (https://sketchfab.com/mistjs) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
