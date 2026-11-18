@@ -123,12 +123,56 @@ export function PairingWorkspace({
           Pairing is unavailable. Set VITE_APPRELAY_APP_SCHEME for this web build.
         </p>
       )}
-      <p className="mt-3 text-sm leading-6 text-muted">
-        {onIPhone
-          ? "Open AppRelay on this iPhone and confirm pairing. Keep its VPN connected until pairing completes."
-          : "Start pairing here, then copy the pairing link and open it in Safari on the target iPhone with AppRelay installed. Keep this page open and return here after pairing."}
-      </p>
       <TestFlightInvite />
+      <ol className="list-decimal space-y-3 pl-5 text-sm leading-6 text-muted">
+        <li>
+          <strong className="text-text">Enable Developer Mode.</strong> On your iPhone, open
+          Settings → Privacy &amp; Security → Developer Mode. Turn it on, restart your iPhone, then
+          unlock it and confirm that you want to turn on Developer Mode.
+          <img
+            src={`${import.meta.env.BASE_URL}02_privacy_security.webp`}
+            alt=""
+            width={720}
+            height={146}
+            className="mt-2 h-auto w-full max-w-sm rounded-lg"
+          />
+          <img
+            src={`${import.meta.env.BASE_URL}01_enable_developer_mode.webp`}
+            alt=""
+            width={720}
+            height={134}
+            className="mt-2 h-auto w-full max-w-sm rounded-lg"
+          />
+        </li>
+        <li>
+          <strong className="text-text">Connect your iPhone to Wi-Fi.</strong> Stay connected until
+          pairing is complete.
+        </li>
+        <li>
+          <strong className="text-text">Start pairing on this page.</strong>{" "}
+          {onIPhone
+            ? "Tap Start pairing, then confirm pairing in AppRelay."
+            : "Click Start pairing, then copy the pairing link and open it in Safari on the iPhone with AppRelay installed. Confirm pairing in AppRelay."}{" "}
+          Keep the AppRelay VPN connected and leave this page open.
+        </li>
+        <li>
+          <strong className="text-text">Tap Pair with AppRelay.</strong> On your iPhone, return to
+          Settings → Privacy &amp; Security → Developer Mode. Tap Pair with AppRelay and enter your
+          iPhone passcode if prompted.
+          <img
+            src={`${import.meta.env.BASE_URL}03_pair_device.webp`}
+            alt=""
+            width={720}
+            height={224}
+            className="mt-2 h-auto w-full max-w-sm rounded-lg"
+          />
+        </li>
+        <li>
+          <strong className="text-text">Enter the pairing code.</strong> Enter the code shown below
+          when your iPhone asks for it. If you enabled notifications in AppRelay, you can also get
+          the code from the AppRelay notification.
+        </li>
+      </ol>
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button
           type="button"
