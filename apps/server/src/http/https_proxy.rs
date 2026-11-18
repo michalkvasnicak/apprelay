@@ -1,17 +1,30 @@
 //! Stateless relay for the browser Apple runtime. Never log upstream URLs,
 //! headers, bodies, or reqwest errors: they can contain Apple credentials.
 
-use std::{collections::BTreeMap, env, error::Error, io, net::IpAddr, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    env,
+    error::Error,
+    io::{self, Read},
+    net::IpAddr,
+    sync::Arc,
+    time::Duration,
+};
 
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Request, State, rejection::JsonRejection},
-    http::{HeaderName, HeaderValue, StatusCode, header::CACHE_CONTROL},
+    http::{
+        HeaderMap, HeaderName, HeaderValue, StatusCode,
+        header::{CACHE_CONTROL, CONTENT_ENCODING},
+    },
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use brotli_decompressor::Decompressor;
+use flate2::read::{MultiGzDecoder, ZlibDecoder};
 use reqwest::{
     Client, Method, Url,
     dns::{Addrs, Name, Resolve, Resolving},
@@ -84,6 +97,11 @@ impl HttpsProxy {
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
                 .retry(reqwest::retry::never())
+                // Count wire bytes before doing any decompression in the relay.
+                .no_gzip()
+                .no_deflate()
+                .no_brotli()
+                .no_zstd()
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(60))
                 .dns_resolver(Arc::new(PublicDns))
@@ -303,13 +321,8 @@ async fn relay(
     {
         return Err(upstream_error(upstream, "response-too-large"));
     }
-    // Compression is not requested. Fail closed rather than forwarding compressed
-    // bytes as a plist or decompressing an unbounded upstream payload.
-    for encoding in response.headers().get_all("content-encoding") {
-        if !encoding.as_bytes().eq_ignore_ascii_case(b"identity") {
-            return Err(upstream_error(upstream, "response-encoding"));
-        }
-    }
+    // The developer portal can compress replies even when we request identity.
+    let encodings = response_encodings(upstream, response.headers())?;
     let mut headers = BTreeMap::new();
     for name in ["content-type", "retry-after", "x-apple-i-md-rinfo"] {
         if let Some(value) = response.headers().get(name) {
@@ -330,11 +343,73 @@ async fn relay(
         }
         body.extend_from_slice(&chunk);
     }
+    // Content-Encoding lists codings in the order they were applied.
+    for encoding in encodings.into_iter().rev() {
+        body = match encoding {
+            ResponseEncoding::Gzip => decode_response(upstream, MultiGzDecoder::new(&body[..])),
+            ResponseEncoding::Deflate => decode_response(upstream, ZlibDecoder::new(&body[..])),
+            ResponseEncoding::Brotli => {
+                decode_response(upstream, Decompressor::new(&body[..], 4096))
+            }
+        }?;
+    }
     Ok(Json(ProxyResponse {
         status,
         headers,
         body: STANDARD.encode(body),
     }))
+}
+
+enum ResponseEncoding {
+    Gzip,
+    Deflate,
+    Brotli,
+}
+
+fn response_encodings(
+    upstream: &'static str,
+    headers: &HeaderMap,
+) -> Result<Vec<ResponseEncoding>, ApiError> {
+    let mut encodings = Vec::new();
+    let mut count = 0;
+    let encoding_error = || upstream_error(upstream, "response-encoding");
+    for value in headers.get_all(CONTENT_ENCODING) {
+        let value = value.to_str().map_err(|_| encoding_error())?;
+        for encoding in value.split(',').map(str::trim) {
+            count += 1;
+            if count > 3 {
+                return Err(encoding_error());
+            }
+            if encoding.eq_ignore_ascii_case("identity") {
+                continue;
+            }
+            if upstream != "apple-developer" {
+                return Err(encoding_error());
+            }
+            encodings.push(if encoding.eq_ignore_ascii_case("gzip") {
+                ResponseEncoding::Gzip
+            } else if encoding.eq_ignore_ascii_case("deflate") {
+                ResponseEncoding::Deflate
+            } else if encoding.eq_ignore_ascii_case("br") {
+                ResponseEncoding::Brotli
+            } else {
+                return Err(encoding_error());
+            });
+        }
+    }
+    Ok(encodings)
+}
+
+fn decode_response(upstream: &'static str, decoder: impl Read) -> Result<Vec<u8>, ApiError> {
+    let mut decoded = Vec::new();
+    decoder
+        .take(MAX_BODY_BYTES as u64 + 1)
+        .read_to_end(&mut decoded)
+        .map_err(|_| upstream_error(upstream, "response-encoding"))?;
+    if decoded.len() > MAX_BODY_BYTES {
+        return Err(upstream_error(upstream, "response-too-large"));
+    }
+    Ok(decoded)
 }
 
 fn allowed_endpoint(url: &Url, method: &ProxyMethod, anisette: bool) -> bool {

@@ -40,7 +40,9 @@ sentry-debug-images = ["sentry/debug-images"]
 aws-sdk-s3 = { version = "1.115", default-features = false, features = ["rt-tokio", "rustls", "default-https-client"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "tokio"] }
 base64 = "0.22"
+brotli-decompressor = "5"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+flate2 = "1"
 fred = { version = "10.1", default-features = false, features = ["enable-rustls-ring"] }
 hickory-proto = { version = "0.24", default-features = false, features = ["mdns"] }
 idevice = { git = "https://github.com/jkcoxson/idevice", rev = "89702099f4d7552f704f93b4526756abda319ceb", default-features = false, features = ["remote_pairing", "ring"] }
