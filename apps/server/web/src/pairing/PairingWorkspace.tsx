@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { ActionError, buttonClass } from "../components/forms";
+import type { PairedDevice } from "../device";
 import { PairingController, PairingError, type PairingStatus } from "./controller";
 
 const labels = {
@@ -12,7 +13,7 @@ const labels = {
   expired: "This attempt expired or is no longer available. Start a new attempt.",
 } as const satisfies Record<PairingStatus, string>;
 
-export function PairingWorkspace({ onPaired }: { onPaired: () => void }) {
+export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice) => void }) {
   const [controller] = useState(() => new PairingController());
   const [generation, setGeneration] = useState(0);
   const status = useQuery({
@@ -32,9 +33,12 @@ export function PairingWorkspace({ onPaired }: { onPaired: () => void }) {
   });
   useEffect(() => {
     if (status.data === "success") {
-      onPaired();
+      const device = controller.device();
+      if (device) {
+        onPaired(device);
+      }
     }
-  }, [status.data, onPaired]);
+  }, [status.data, onPaired, controller]);
   const create = useMutation({
     mutationFn: async () => {
       try {
@@ -71,8 +75,9 @@ export function PairingWorkspace({ onPaired }: { onPaired: () => void }) {
         Pair your iPhone
       </h2>
       <p className="mt-3 text-sm leading-6 text-muted">
-        Your app is signed. Continue in Safari on the target iPhone with AppRelay installed. Open
-        AppRelay and confirm pairing; keep its VPN connected until pairing completes.
+        Continue in Safari on the target iPhone with AppRelay installed. Open AppRelay and confirm
+        pairing so we can register this device with your Apple development team before signing. Keep
+        its VPN connected until pairing completes.
       </p>
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button

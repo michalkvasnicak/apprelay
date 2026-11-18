@@ -14,9 +14,30 @@ pub struct PairingAttemptRepository {
 pub(crate) enum AttemptStatus {
     Pending,
     Pairing,
-    Success,
+    Success { device: PairedDevice },
     Failed { reason: FailureReason },
     Expired,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PairedDevice {
+    /// Provisionally the remote-pairing identifier, not a verified hardware UDID.
+    pub udid: String,
+    pub name: String,
+    pub model: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct StatusRow {
+    status: String,
+    reason: Option<String>,
+    expired: bool,
+    live_pairing: bool,
+    paired_udid: Option<String>,
+    paired_name: Option<String>,
+    paired_model: Option<String>,
+    expires_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -53,23 +74,43 @@ impl PairingAttemptRepository {
         &self,
         hash: &[u8; 32],
     ) -> Result<Option<AttemptStatus>, sqlx::Error> {
-        let row = sqlx::query_as::<_, (String, Option<String>, bool)>(
-            "SELECT status, reason, expires_at <= clock_timestamp()
-             FROM public_pairing_attempts WHERE token_hash = $1",
+        let row = sqlx::query_as::<_, StatusRow>(
+            "SELECT a.status, a.reason, a.expires_at <= clock_timestamp() AS expired,
+                 a.paired_udid, a.paired_name, a.paired_model, a.expires_at,
+                 EXISTS (SELECT 1 FROM devices d
+                     JOIN device_pairings p ON p.device_id = d.id
+                     WHERE d.id = a.device_id AND d.expires_at = a.device_expires_at
+                       AND d.expires_at > clock_timestamp()
+                       AND p.attempt_started_at = a.pairing_started_at) AS live_pairing
+             FROM public_pairing_attempts a WHERE a.token_hash = $1",
         )
         .bind(hash.as_slice())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|(status, reason, expired)| {
-            if expired {
+        Ok(row.map(|row| {
+            if row.expired {
                 return AttemptStatus::Expired;
             }
-            match status.as_str() {
+            match row.status.as_str() {
                 "pending" => AttemptStatus::Pending,
                 "pairing" => AttemptStatus::Pairing,
-                "success" => AttemptStatus::Success,
+                "success" if row.live_pairing => {
+                    match (row.paired_udid, row.paired_name, row.paired_model) {
+                        (Some(udid), Some(name), Some(model)) if !udid.trim().is_empty() => {
+                            AttemptStatus::Success {
+                                device: PairedDevice {
+                                    udid,
+                                    name,
+                                    model,
+                                    expires_at: row.expires_at,
+                                },
+                            }
+                        }
+                        _ => AttemptStatus::Expired,
+                    }
+                }
                 "failed" => AttemptStatus::Failed {
-                    reason: if reason.as_deref() == Some("timeout") {
+                    reason: if row.reason.as_deref() == Some("timeout") {
                         FailureReason::Timeout
                     } else {
                         FailureReason::PairingFailed

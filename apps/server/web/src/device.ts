@@ -1,16 +1,26 @@
-let targetDevice: { name: string; udid: string } | undefined;
+import type { components } from "./api/schema";
 
-export function selectTargetDevice(udid: string) {
-  const value = udid.trim();
-  if (!/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{8}-[a-fA-F0-9]{16})$/.test(value)) {
-    throw new Error("Enter a valid iPhone hardware UDID");
+export type PairedDevice = components["schemas"]["PairedDevice"];
+
+let targetDevice: PairedDevice | undefined;
+
+export function selectTargetDevice(device: PairedDevice) {
+  // Until hardware identity retrieval is implemented, the server supplies the
+  // remote-pairing identifier as the provisional provisioning UDID.
+  const expiresAt = Date.parse(device.expires_at);
+  if (!device.udid.trim() || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw new Error("Pair your iPhone again before provisioning");
   }
-  targetDevice = { name: "Target iPhone", udid: value };
+  targetDevice = { ...device };
+}
+
+export function clearTargetDevice() {
+  targetDevice = undefined;
 }
 
 export function requireProvisionableDevice() {
-  if (!targetDevice) {
-    throw new Error("Confirm the target iPhone UDID before provisioning");
+  if (!targetDevice || Date.parse(targetDevice.expires_at) <= Date.now()) {
+    throw new Error("Pair your iPhone again before provisioning");
   }
   return targetDevice;
 }

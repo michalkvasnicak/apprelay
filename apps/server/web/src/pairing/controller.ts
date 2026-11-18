@@ -1,3 +1,5 @@
+import type { PairedDevice } from "../device";
+
 const pairingScheme = import.meta.env.DEV ? "apprelay-dev" : "apprelay";
 const statuses = ["pending", "pairing", "success", "failed", "expired"] as const;
 export type PairingStatus = (typeof statuses)[number];
@@ -21,6 +23,11 @@ export class PairingController {
   private nextRequestAt = 0;
   private nextCreateAt = 0;
   private terminal: PairingStatus | null = null;
+  private pairedDevice: PairedDevice | null = null;
+
+  device() {
+    return this.pairedDevice ? { ...this.pairedDevice } : null;
+  }
 
   link() {
     return this.token && !this.terminal && Date.now() < this.expiresAt
@@ -67,6 +74,7 @@ export class PairingController {
     this.expiresAt = Date.parse(data.expires_at);
     this.nextRequestAt = 0;
     this.terminal = null;
+    this.pairedDevice = null;
   }
 
   interval() {
@@ -112,6 +120,35 @@ export class PairingController {
         throw new PairingError("The server returned an invalid status.");
       }
       const status = data.status as PairingStatus;
+      if (status === "success") {
+        const device = "device" in data ? data.device : null;
+        if (
+          !device ||
+          typeof device !== "object" ||
+          !("udid" in device) ||
+          typeof device.udid !== "string" ||
+          !device.udid.trim() ||
+          !("name" in device) ||
+          typeof device.name !== "string" ||
+          !("model" in device) ||
+          typeof device.model !== "string" ||
+          !("expires_at" in device) ||
+          typeof device.expires_at !== "string" ||
+          !Number.isFinite(Date.parse(device.expires_at))
+        ) {
+          throw new PairingError("The server returned invalid paired device information.");
+        }
+        if (Date.parse(device.expires_at) <= Date.now()) {
+          this.finish("expired");
+          return "expired";
+        }
+        this.pairedDevice = {
+          udid: device.udid,
+          name: device.name,
+          model: device.model,
+          expires_at: device.expires_at,
+        };
+      }
       if (status !== "pending" && status !== "pairing") {
         this.finish(status);
       }

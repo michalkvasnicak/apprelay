@@ -1,7 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { ActionError, secondaryClass } from "../components/forms";
-import { SigningPanel } from "../signing/SigningPanel";
+import { clearTargetDevice } from "../device";
+import { SigningWorkspace } from "../signing/SigningWorkspace";
 import { signingController } from "../signing/controller";
 import { AuthenticationPanel } from "./AuthenticationPanel";
 import { VaultPanel } from "./VaultPanel";
@@ -9,11 +11,14 @@ import { accountController } from "./controller";
 import { useAccount, useAccountAction, useAccountBusy } from "./hooks";
 
 export function AccountWorkspace({ file }: { file?: File }) {
+  const [localFile, setLocalFile] = useState<File>();
+  const selectedFile = file ?? localFile;
   const account = useAccount();
   const busy = useAccountBusy();
   const client = useQueryClient();
   const lock = useAccountAction(async () => {
     await accountController.lock();
+    clearTargetDevice();
     signingController.reset();
     await client.invalidateQueries({ queryKey: ["signing"] });
   });
@@ -36,7 +41,7 @@ export function AccountWorkspace({ file }: { file?: File }) {
 
   return (
     <div className="space-y-6" aria-busy={busy}>
-      {file && <p className="break-all text-sm text-muted">App: {file.name}</p>}
+      {selectedFile && <p className="break-all text-sm text-muted">App: {selectedFile.name}</p>}
       {!ready ? (
         <div className="space-y-6">
           <h2 className="text-lg font-semibold">Sign in to Apple</h2>
@@ -48,7 +53,7 @@ export function AccountWorkspace({ file }: { file?: File }) {
         </div>
       ) : (
         <div className="space-y-6">
-          <SigningPanel file={file} />
+          <SigningWorkspace file={selectedFile} onFileSelected={setLocalFile} />
           <button
             type="button"
             className={secondaryClass}

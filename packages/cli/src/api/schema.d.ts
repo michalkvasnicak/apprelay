@@ -190,6 +190,7 @@ export interface components {
           status: "pairing";
         }
       | {
+          device: components["schemas"]["PairedDevice"];
           /** @enum {string} */
           status: "success";
         }
@@ -287,6 +288,14 @@ export interface components {
     FailureReason: "pairing_failed" | "timeout";
     Health: {
       status: string;
+    };
+    PairedDevice: {
+      /** Format: date-time */
+      expires_at: string;
+      model: string;
+      name: string;
+      /** @description Provisionally the remote-pairing identifier, not a verified hardware UDID. */
+      udid: string;
     };
     PairingCodeResponse: {
       code: string;

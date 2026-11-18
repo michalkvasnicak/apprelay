@@ -1,18 +1,24 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { AccountError, accountController } from "../account/controller";
 import { useAccountAction, useAccountBusy } from "../account/hooks";
 import { ActionError, buttonClass, inputClass } from "../components/forms";
-import { selectTargetDevice } from "../device";
+import { selectTargetDevice, type PairedDevice } from "../device";
 import { SignedResult } from "./SignedResult";
 import { signingController } from "./controller";
 import { useSigning } from "./hooks";
 import { SigningError } from "./types";
 
-export function SigningPanel({ file: sharedFile }: { file?: File }) {
-  const input = useRef<HTMLInputElement>(null);
-  const udid = useRef<HTMLInputElement>(null);
+export function SigningPanel({
+  file: sharedFile,
+  device,
+  onFileSelected,
+}: {
+  file?: File;
+  device: PairedDevice;
+  onFileSelected: (file: File) => void;
+}) {
   const client = useQueryClient();
   const busy = useAccountBusy();
   const state = useSigning();
@@ -21,15 +27,15 @@ export function SigningPanel({ file: sharedFile }: { file?: File }) {
     void client.invalidateQueries({ queryKey: ["signing"] });
   };
   const prepare = useAccountAction(async () => {
-    const file = sharedFile ?? input.current?.files?.[0];
+    const file = sharedFile;
     if (!file) {
       throw new AccountError("Choose an IPA first");
     }
     try {
       try {
-        selectTargetDevice(udid.current?.value ?? "");
+        selectTargetDevice(device);
       } catch {
-        throw new AccountError("Enter a valid iPhone hardware UDID before signing");
+        throw new AccountError("Pair your iPhone again before signing");
       }
       setProgress("Inspecting IPA…");
       await signingController.inspect(file, changed);
@@ -80,27 +86,30 @@ export function SigningPanel({ file: sharedFile }: { file?: File }) {
           {!sharedFile && (
             <label className="block text-sm font-medium">
               IPA file
-              <input ref={input} type="file" accept=".ipa" required className={inputClass} />
+              <input
+                type="file"
+                accept=".ipa"
+                required
+                className={inputClass}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  if (file) {
+                    onFileSelected(file);
+                  }
+                }}
+              />
             </label>
           )}
-          <label className="block text-sm font-medium">
-            Target iPhone UDID
-            <input
-              ref={udid}
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              pattern="(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{8}-[a-fA-F0-9]{16})"
-              maxLength={40}
-              required
-              className={inputClass}
-            />
-          </label>
-          <p className="text-xs leading-5 text-muted">
-            Use the hardware UDID shown in Finder or Apple Devices for the iPhone you intend to
-            install on. It will be registered with your Apple development team. This does not pair
-            or connect your phone.
-          </p>
+          <div className="text-sm">
+            <p className="font-medium">Target: {device.name || "Paired iPhone"}</p>
+            <p className="break-all text-muted">{device.model}</p>
+            <p className="break-all text-muted">UDID: {device.udid}</p>
+            <p className="mt-2 text-xs leading-5 text-muted">
+              This device will be registered with your Apple development team if it is not already
+              registered. For now, its remote-pairing identifier is used as the UDID; hardware UDID
+              equivalence has not been verified.
+            </p>
+          </div>
           <button type="submit" className={buttonClass}>
             {prepare.isPending ? "Signing…" : "Sign app"}
           </button>

@@ -117,13 +117,20 @@ impl PairingStore {
         }
         if let Some(public_attempt_id) = public_attempt_id {
             let completed = sqlx::query(
-                "UPDATE public_pairing_attempts SET status = 'success'
+                "UPDATE public_pairing_attempts SET status = 'success',
+                     paired_udid = $4, paired_name = $5, paired_model = $6,
+                     pairing_started_at = $7
                  WHERE id = $1 AND device_id = $2 AND device_expires_at = $3
                    AND status = 'pairing' AND expires_at > clock_timestamp()",
             )
             .bind(public_attempt_id)
             .bind(device_id)
             .bind(expected_expiry)
+            // Provisional: remote-pairing identity is not yet verified as hardware UDID.
+            .bind(&peer.remotepairing_udid)
+            .bind(&peer.name)
+            .bind(&peer.model)
+            .bind(attempt_started_at)
             .execute(&mut *transaction)
             .await
             .map_err(|_| io::Error::other("could not complete public pairing attempt"))?;
