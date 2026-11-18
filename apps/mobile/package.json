@@ -7,9 +7,7 @@
     "api:generate": "node scripts/generate-api.mjs",
     "api:check": "node scripts/generate-api.mjs --check",
     "start": "node scripts/with-env.mjs local expo start",
-    "android": "node scripts/with-env.mjs local expo run:android",
     "ios": "node scripts/with-env.mjs local expo run:ios --device",
-    "web": "node scripts/with-env.mjs local expo start --web",
     "prebuild:ios": "node scripts/with-env.mjs local expo prebuild --platform ios",
     "publish:ios:testflight": "node scripts/publish-testflight-with-build-number.mjs",
     "lint": "oxlint --fix --deny-warnings --react-plugin .",
@@ -18,7 +16,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@expo/metro-runtime": "~58.0.17",
     "@sentry/react-native": "^8.36.0",
     "@tanstack/react-query": "^5.107.1",
     "expo": "~58.0.25",
@@ -26,9 +23,7 @@
     "expo-status-bar": "~58.0.5",
     "openapi-fetch": "^0.17.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "react-native": "0.88.1",
-    "react-native-web": "^0.21.4"
+    "react-native": "0.88.1"
   },
   "devDependencies": {
     "@types/react": "~19.3.0",
