@@ -12,11 +12,6 @@
 
 x-app: &app
   image: ${APPRELAY_IMAGE:-apprelay-server:local}
-  build:
-    context: .
-    dockerfile: apps/server/Dockerfile
-    args:
-      VITE_APPRELAY_APP_SCHEME: ${VITE_APPRELAY_APP_SCHEME}
   restart: unless-stopped
   init: true
   read_only: true
@@ -47,6 +42,13 @@ x-r2-environment: &r2-environment
 services:
   vpn-agent:
     <<: *app
+    # Coolify rewrites the Dockerfile once per build service. Build the shared
+    # image here only; the API and workers use the same tag.
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+      args:
+        VITE_APPRELAY_APP_SCHEME: ${VITE_APPRELAY_APP_SCHEME}
     user: "0:0"
     entrypoint: ["/usr/local/bin/vpn-agent-entrypoint"]
     cap_add:
