@@ -9,7 +9,7 @@ function Login() {
   const busy = useAccountBusy();
   const login = useAccountAction(() => {
     const username = inputValue(form, "username").trim();
-    const password = inputValue(form, "password", true);
+    const password = inputValue(form, "password");
     return accountController.login(username, password);
   });
 

@@ -27,9 +27,6 @@ export function App() {
           <AccountWorkspace />
         )}
       </main>
-      <p className="mt-5 text-xs leading-5 text-muted">
-        Experimental signing. Successful signing does not guarantee installation or launch.
-      </p>
     </div>
   );
 }
