@@ -2,6 +2,7 @@ mod app_key;
 mod artifacts;
 mod auth;
 mod https_proxy;
+mod install_jobs;
 mod openapi;
 mod pairing_attempts;
 mod pairing_codes;
@@ -136,6 +137,19 @@ pub fn router(
                     registration_limiter.clone(),
                     rate_limit::limit_pairing_attempts,
                 )),
+        )
+        .merge(
+            Router::new()
+                .route("/v1/install-jobs", post(install_jobs::create))
+                .route(
+                    "/v1/install-jobs/{job_id}/complete",
+                    post(install_jobs::complete),
+                )
+                .route_layer(middleware::from_fn_with_state(
+                    registration_limiter.clone(),
+                    rate_limit::limit_install_jobs,
+                ))
+                .with_state(artifacts.clone()),
         )
         .merge(artifacts::router(artifacts, registration_limiter))
         .merge(https_proxy::router(https_proxy))
@@ -375,6 +389,7 @@ enum ErrorResponse {
     InvalidRequest { error: &'static str },
     AppKeyRequired { error: &'static str },
     DeviceTokenRequired { error: &'static str },
+    PairingTokenRequired { error: &'static str },
     ServiceUnavailable { error: &'static str },
     NotFound { error: &'static str },
     Conflict { error: &'static str },

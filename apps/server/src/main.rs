@@ -78,6 +78,9 @@ async fn run() -> std::io::Result<()> {
     tracing::info!(%listen_address, "HTTP server listening");
 
     let cleanup = tokio::spawn(cleanup::run(pool.clone(), agent.clone()));
+    let install_cleanup = artifacts
+        .clone()
+        .map(|api| tokio::spawn(api.clean_install_uploads()));
     let attempts = db::pairing_attempts::PairingAttemptRepository::new(pool.clone());
     let reconciliation = tokio::spawn(reconciliation::run(pool, agent.clone()));
     let result = axum::serve(
@@ -104,6 +107,10 @@ async fn run() -> std::io::Result<()> {
         }
     })
     .await;
+    if let Some(install_cleanup) = install_cleanup {
+        install_cleanup.abort();
+        let _ = install_cleanup.await;
+    }
     cleanup.abort();
     reconciliation.abort();
     let _ = cleanup.await;

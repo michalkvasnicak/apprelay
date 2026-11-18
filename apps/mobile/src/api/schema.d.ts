@@ -160,6 +160,38 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/install-jobs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["create_install_job"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/install-jobs/{job_id}/complete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["complete_install_upload"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/pairing-attempts": {
     parameters: {
       query?: never;
@@ -222,6 +254,12 @@ export interface components {
           /** @enum {string} */
           status: "expired";
         };
+    CreateInstallJob: {
+      /** @description Base64-encoded SHA-256 of the exact signed IPA to be uploaded. */
+      sha256: string;
+      /** Format: int64 */
+      size_bytes: number;
+    };
     CreateRequest: {
       file_name: string;
       /** @description Base64-encoded SHA-256 digest of the complete IPA (32 bytes, not hex). */
@@ -270,6 +308,11 @@ export interface components {
         }
       | {
           /** @enum {string} */
+          code: "pairing_token_required";
+          error: string;
+        }
+      | {
+          /** @enum {string} */
           code: "service_unavailable";
           error: string;
         }
@@ -307,6 +350,17 @@ export interface components {
     FailureReason: "pairing_failed" | "timeout";
     Health: {
       status: string;
+    };
+    InstallUpload: {
+      /** Format: uuid */
+      job_id: string;
+      /** Format: date-time */
+      upload_expires_at: string;
+      /** @description Send these headers with the PUT. Browsers set Content-Length automatically. */
+      upload_headers: {
+        [key: string]: string;
+      };
+      upload_url: string;
     };
     PairedDevice: {
       /** Format: date-time */
@@ -1010,6 +1064,154 @@ export interface operations {
         content?: never;
       };
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  create_install_job: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateInstallJob"];
+      };
+    };
+    responses: {
+      /** @description Private R2 upload authorized */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InstallUpload"];
+        };
+      };
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  complete_install_upload: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        job_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Install job durably queued; safe to retry */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
         headers: {
           [name: string]: unknown;
         };

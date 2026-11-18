@@ -74,7 +74,13 @@ impl R2Storage {
         })
     }
 
-    pub async fn upload(&self, key: &str, size: i64, sha256: &str) -> Result<Upload, StorageError> {
+    pub async fn upload(
+        &self,
+        key: &str,
+        size: i64,
+        sha256: &str,
+        expires_in: Duration,
+    ) -> Result<Upload, StorageError> {
         let request = self
             .client
             .put_object()
@@ -88,9 +94,7 @@ impl R2Storage {
             .metadata("sha256", sha256)
             // A still-valid upload URL must not overwrite a completed artifact.
             .if_none_match("*")
-            .presigned(
-                PresigningConfig::expires_in(Duration::from_secs(900)).map_err(|_| StorageError)?,
-            )
+            .presigned(PresigningConfig::expires_in(expires_in).map_err(|_| StorageError)?)
             .await
             .map_err(|_| StorageError)?;
         let headers = request
@@ -137,6 +141,17 @@ impl R2Storage {
         } else {
             Ok(Verification::Mismatch)
         }
+    }
+
+    pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|_| StorageError)
     }
 
     pub async fn download(&self, key: &str, seconds: u64) -> Result<String, StorageError> {

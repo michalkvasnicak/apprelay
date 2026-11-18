@@ -14,6 +14,8 @@ use utoipa::{
         super::artifacts::create,
         super::artifacts::complete,
         super::artifacts::resolve,
+        super::install_jobs::create,
+        super::install_jobs::complete,
         super::register_device,
         super::https_proxy::anisette_provider,
         super::https_proxy::relay,
@@ -39,6 +41,10 @@ impl Modify for Security {
         );
         components.add_security_scheme(
             "device_token",
+            SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+        );
+        components.add_security_scheme(
+            "pairing_token",
             SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
         );
     }

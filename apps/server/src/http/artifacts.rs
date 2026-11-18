@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, io, num::NonZeroU16};
+use std::{collections::BTreeMap, io, num::NonZeroU16, time::Duration};
 
 use axum::{
     Json, Router,
@@ -21,7 +21,10 @@ use uuid::Uuid;
 
 use super::{ApiError, ErrorResponse, RegistrationRateLimiter, auth::Credential, rate_limit};
 use crate::{
-    db::artifacts::{Artifact, ArtifactRepository},
+    db::{
+        artifacts::{Artifact, ArtifactRepository},
+        install_jobs::InstallJobRepository,
+    },
     r2::{R2Storage, Verification},
 };
 
@@ -38,7 +41,8 @@ const ENVIRONMENT: [&str; 6] = [
 #[derive(Clone)]
 pub struct ArtifactApi {
     repository: ArtifactRepository,
-    storage: R2Storage,
+    pub(super) storage: R2Storage,
+    pub(super) install_jobs: InstallJobRepository,
     public_origin: String,
     lifetime_days: Option<NonZeroU16>,
 }
@@ -97,7 +101,8 @@ impl ArtifactApi {
             required("APPRELAY_R2_SECRET_ACCESS_KEY")?,
         )?;
         Ok(Some(Self {
-            repository: ArtifactRepository::new(pool),
+            repository: ArtifactRepository::new(pool.clone()),
+            install_jobs: InstallJobRepository::new(pool),
             storage,
             public_origin: url.origin().ascii_serialization(),
             lifetime_days,
@@ -160,6 +165,20 @@ fn invalid(message: &'static str) -> ApiError {
     }
 }
 
+pub(super) fn validate_upload(size_bytes: i64, sha256: &str) -> Result<(), ApiError> {
+    if !(1..=MAX_BYTES).contains(&size_bytes) {
+        return Err(invalid("size_bytes must be between 1 and 104857600"));
+    }
+    if sha256.len() != 44
+        || STANDARD
+            .decode(sha256)
+            .map_or(true, |bytes| bytes.len() != 32)
+    {
+        return Err(invalid("sha256 must be a base64-encoded 32-byte digest"));
+    }
+    Ok(())
+}
+
 fn missing() -> ApiError {
     ApiError {
         status: StatusCode::NOT_FOUND,
@@ -210,16 +229,7 @@ pub(super) async fn create(
             "file_name must be an IPA basename of at most 200 characters",
         ));
     }
-    if !(1..=MAX_BYTES).contains(&request.size_bytes) {
-        return Err(invalid("size_bytes must be between 1 and 104857600"));
-    }
-    if request.sha256.len() != 44
-        || STANDARD
-            .decode(&request.sha256)
-            .map_or(true, |bytes| bytes.len() != 32)
-    {
-        return Err(invalid("sha256 must be a base64-encoded 32-byte digest"));
-    }
+    validate_upload(request.size_bytes, &request.sha256)?;
     let credential = Credential::generate()?;
     let id = Uuid::new_v4();
     let artifact = Artifact {
@@ -238,7 +248,12 @@ pub(super) async fn create(
     let upload_expires_at = Utc::now() + chrono::Duration::minutes(15);
     let upload = api
         .storage
-        .upload(&artifact.object_key, artifact.size_bytes, &artifact.sha256)
+        .upload(
+            &artifact.object_key,
+            artifact.size_bytes,
+            &artifact.sha256,
+            Duration::from_secs(900),
+        )
         .await
         .map_err(|_| unavailable())?;
     let expires_at = api

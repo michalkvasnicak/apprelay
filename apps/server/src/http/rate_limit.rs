@@ -158,6 +158,22 @@ pub(super) async fn limit_artifacts(
     limit(limiter, request, next, scope, capacity, emission).await
 }
 
+pub(super) async fn limit_install_jobs(
+    State(limiter): State<RegistrationRateLimiter>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    limit(
+        limiter,
+        request,
+        next,
+        "install-write",
+        CAPACITY,
+        EMISSION_INTERVAL,
+    )
+    .await
+}
+
 async fn limit(
     limiter: RegistrationRateLimiter,
     request: Request,
