@@ -116,9 +116,8 @@ function TwoFactor() {
 }
 
 function TeamSelection({ account }: { account: AccountSnapshot }) {
-  const select = useRef<HTMLSelectElement>(null);
   const busy = useAccountBusy();
-  const choose = useAccountAction(() => accountController.selectTeam(select.current?.value ?? ""));
+  const choose = useAccountAction((teamId: string) => accountController.selectTeam(teamId));
   const load = useAccountAction(() => accountController.loadTeams());
   const reset = useAccountAction(() => accountController.forget());
   if (!account.teams) {
@@ -152,10 +151,9 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
       <label className="block text-sm font-medium">
         Development team
         <select
-          ref={select}
           value={account.teamId ?? ""}
           disabled={busy}
-          onChange={() => choose.mutate()}
+          onChange={(event) => choose.mutate(event.currentTarget.value)}
           className={inputClass}
         >
           <option value="" disabled>

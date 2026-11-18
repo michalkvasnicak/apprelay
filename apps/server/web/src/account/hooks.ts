@@ -27,14 +27,14 @@ export function useAccountError() {
   }).data;
 }
 
-export function useAccountAction(action: () => Promise<void>) {
+export function useAccountAction<T = void>(action: (input: T) => Promise<void>) {
   const client = useQueryClient();
   return useMutation({
     mutationKey: ["account-command"],
-    // No mutation variables/results: secrets stay in the operation, not Query.
-    mutationFn: async () => {
+    // Query retains mutation variables, so pass only non-secret inputs.
+    mutationFn: async (input: T) => {
       try {
-        await action();
+        await action(input);
       } catch (error) {
         throw new AccountError(
           error instanceof AccountError
