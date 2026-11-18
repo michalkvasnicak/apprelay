@@ -40,7 +40,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --locked --release --bins --features sentry-debug-images \
     && mkdir /out /symbols \
     && cp target/release/apprelay-server target/release/vpn-agent \
-        target/release/pairing-worker target/release/notification-worker /out/ \
+        target/release/pairing-worker target/release/notification-worker \
+        target/release/install-worker /out/ \
     && for binary in /out/*; do \
         objcopy --only-keep-debug "$binary" "/symbols/$(basename "$binary").debug" || exit 1; \
         objcopy --strip-debug --strip-unneeded "$binary" || exit 1; \

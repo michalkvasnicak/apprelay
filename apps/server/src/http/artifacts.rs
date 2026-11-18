@@ -41,7 +41,7 @@ const ENVIRONMENT: [&str; 6] = [
 #[derive(Clone)]
 pub struct ArtifactApi {
     repository: ArtifactRepository,
-    pub(super) storage: R2Storage,
+    pub(crate) storage: R2Storage,
     pub(super) install_jobs: InstallJobRepository,
     public_origin: String,
     lifetime_days: Option<NonZeroU16>,

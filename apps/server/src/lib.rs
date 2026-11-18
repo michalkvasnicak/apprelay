@@ -28,3 +28,10 @@ mod apns;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod vpn;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod install;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod peer_identity;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub mod temporal_install;

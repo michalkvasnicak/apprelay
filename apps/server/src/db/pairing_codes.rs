@@ -39,6 +39,7 @@ pub(crate) enum NotificationContent {
     Code(ActiveCode),
     Success,
     Timeout,
+    Install { job_id: Uuid, outcome: Option<bool> },
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

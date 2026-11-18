@@ -150,6 +150,35 @@ impl ApnsClient {
                 "Pairing failed",
                 "Pairing wasn't completed within one minute.".to_owned(),
             ),
+            NotificationContent::Install { outcome, .. } => match outcome {
+                None => (
+                    "started",
+                    "Installation started",
+                    "AppRelay is sending the app to this iPhone.".to_owned(),
+                ),
+                Some(true) => (
+                    "success",
+                    "App installed",
+                    "AppRelay finished installing the app.".to_owned(),
+                ),
+                Some(false) => (
+                    "failed",
+                    "Installation failed",
+                    "AppRelay couldn't confirm installation. Check the VPN and try again."
+                        .to_owned(),
+                ),
+            },
+        };
+        let mut payload = json!({
+            "aps": {"alert": {"title": title, "body": body}, "sound": "default"},
+            "expires_at": notification.expires_at,
+        });
+        let collapse = if let NotificationContent::Install { job_id, .. } = &notification.content {
+            payload["install_job_id"] = json!(job_id);
+            format!("install-{kind}-{job_id}")
+        } else {
+            payload["pairing_attempt_id"] = json!(notification_id);
+            format!("pairing-{kind}-{}", notification.device_id)
         };
         let response = self
             .http
@@ -164,19 +193,9 @@ impl ApnsClient {
                 notification.expires_at.timestamp().to_string(),
             )
             .header("apns-id", notification_id.to_string())
-            .header(
-                "apns-collapse-id",
-                format!("pairing-{kind}-{}", notification.device_id),
-            )
+            .header("apns-collapse-id", collapse)
             .timeout(remaining.min(Duration::from_secs(5)))
-            .json(&json!({
-                "aps": {"alert": {
-                    "title": title,
-                    "body": body
-                }, "sound": "default"},
-                "pairing_attempt_id": notification_id,
-                "expires_at": notification.expires_at,
-            }))
+            .json(&payload)
             .send()
             .await
             // reqwest errors can include the URL, which contains the APNs token.

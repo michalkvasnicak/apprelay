@@ -18,7 +18,6 @@ use hickory_proto::{
 };
 use idevice::remote_pairing::{
     PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, PeerDevice, RpPairingFile,
-    RpPairingSocket,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::{
@@ -26,13 +25,17 @@ use tokio::{
     time::interval,
 };
 
-use crate::agent::VpnStatus;
+use crate::{
+    agent::VpnStatus,
+    peer_identity::{IdentitySocket, Transcript},
+};
 
 /// Credentials stay inside the activity and are never a Temporal payload.
 pub(crate) struct PairingRecord {
     pub pairing_file: RpPairingFile,
     pub host_info: PairableHostInfo,
     pub peer: PeerDevice,
+    pub peer_public_key: Option<[u8; 32]>,
 }
 
 pub(crate) struct Session {
@@ -125,8 +128,9 @@ impl Session {
                         continue;
                     }
                     tracing::debug!("Selected iPhone connected for pairing");
+                    let transcript = Transcript::default();
                     let mut host = PairableHost::new(
-                        RpPairingSocket::new_device(stream), self.host_info.clone());
+                        IdentitySocket::new(stream, transcript.clone(), true), self.host_info.clone());
                     // Drop the future (and its mutable borrow) before copying the record.
                     let result = {
                         let (pin_sender, mut pin_receiver) = tokio::sync::oneshot::channel();
@@ -178,6 +182,7 @@ impl Session {
                                 pairing_file: self.pairing_file.clone(),
                                 host_info: self.host_info.clone(),
                                 peer,
+                                peer_public_key: transcript.setup_public_key(host.encryption_key()).ok(),
                             });
                         },
                         Err(_) => tracing::warn!("Pairing exchange failed"),

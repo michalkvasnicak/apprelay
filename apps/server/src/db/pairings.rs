@@ -1,10 +1,11 @@
 //! Version 1: AES-256-GCM over a JSON envelope, bound to the device UUID.
 //! Neither plaintext nor the encryption key enters SQL/Temporal.
 
-use std::io;
+use std::{io, net::Ipv4Addr};
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use idevice::remote_pairing::RpPairingFile;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -25,6 +26,7 @@ struct StoredPairing<'a> {
     pairing_file: &'a [u8],
     host: StoredHost<'a>,
     peer: StoredPeer<'a>,
+    peer_public_key: Option<[u8; 32]>,
 }
 
 #[derive(Serialize)]
@@ -47,7 +49,79 @@ struct StoredPeer<'a> {
     remotepairing_udid: &'a str,
 }
 
+fn associated_data(device_id: Uuid) -> Vec<u8> {
+    let mut data = b"apprelay/device-pairing/".to_vec();
+    data.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
+    data.extend_from_slice(device_id.as_bytes());
+    data
+}
+
+#[derive(Deserialize)]
+struct InstallCredentials {
+    pairing_file: Vec<u8>,
+    peer_public_key: Option<[u8; 32]>,
+}
+
+#[derive(sqlx::FromRow)]
+struct InstallTargetRow {
+    device_id: Uuid,
+    address: String,
+    remote_pairing_port: i32,
+    nonce: Vec<u8>,
+    ciphertext: Vec<u8>,
+    expires_at: DateTime<Utc>,
+}
+
+pub(crate) struct InstallTarget {
+    pub address: Ipv4Addr,
+    pub port: u16,
+    pub record: RpPairingFile,
+    pub peer_key: [u8; 32],
+    pub expires_at: DateTime<Utc>,
+}
+
 impl PairingStore {
+    pub(crate) async fn install_target(&self, job_id: Uuid) -> io::Result<InstallTarget> {
+        let row = sqlx::query_as::<_, InstallTargetRow>(
+            "SELECT d.id AS device_id, host(d.address) AS address, d.remote_pairing_port,
+                 p.nonce, p.ciphertext, LEAST(d.expires_at, j.expires_at) AS expires_at
+             FROM install_jobs j JOIN devices d ON d.id = j.device_id AND d.expires_at = j.device_expires_at
+             JOIN device_pairings p ON p.device_id = d.id AND p.attempt_started_at = j.pairing_started_at
+             WHERE j.id = $1 AND j.queued_at IS NOT NULL AND j.finished_at IS NULL
+               AND j.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
+               AND d.remote_pairing_port IS NOT NULL AND d.remote_pairing_port_expires_at > clock_timestamp()
+               AND p.format_version = $2",
+        )
+        .bind(job_id)
+        .bind(FORMAT_VERSION)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| io::Error::other("install target lookup failed"))?
+        .ok_or_else(|| io::Error::other("paired phone unavailable; connect its VPN"))?;
+        let plaintext =
+            self.key
+                .open(&associated_data(row.device_id), &row.nonce, row.ciphertext)?;
+        let stored: InstallCredentials = serde_json::from_slice(&plaintext)
+            .map_err(|_| io::Error::other("invalid stored pairing"))?;
+        let pairing_file = Zeroizing::new(stored.pairing_file);
+        let peer_key = stored
+            .peer_public_key
+            .ok_or_else(|| io::Error::other("pair the phone again before installing"))?;
+        let record = RpPairingFile::from_bytes(&pairing_file)
+            .map_err(|_| io::Error::other("invalid stored pairing"))?;
+        Ok(InstallTarget {
+            address: row
+                .address
+                .parse()
+                .map_err(|_| io::Error::other("invalid device address"))?,
+            port: u16::try_from(row.remote_pairing_port)
+                .map_err(|_| io::Error::other("invalid device port"))?,
+            record,
+            peer_key,
+            expires_at: row.expires_at,
+        })
+    }
+
     /// Fail startup on missing/malformed configuration; never print the value.
     pub(crate) fn from_env(pool: PgPool) -> io::Result<Self> {
         Ok(Self {
@@ -70,6 +144,7 @@ impl PairingStore {
         let peer = &record.peer;
         let stored = StoredPairing {
             pairing_file: &pairing_file,
+            peer_public_key: record.peer_public_key,
             host: StoredHost {
                 name: &host.name,
                 model: &host.model,
@@ -92,10 +167,7 @@ impl PairingStore {
             .map_err(|_| io::Error::other("could not serialize pairing credentials"))?;
         // Domain separation + format version + device ID prevents moving a
         // ciphertext to a different device or interpreting it as another format.
-        let mut associated_data = b"apprelay/device-pairing/".to_vec();
-        associated_data.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
-        associated_data.extend_from_slice(device_id.as_bytes());
-        let (nonce, ciphertext) = self.key.seal(&associated_data, plaintext)?;
+        let (nonce, ciphertext) = self.key.seal(&associated_data(device_id), plaintext)?;
 
         let mut transaction = self.pool.begin().await.map_err(io::Error::other)?;
         // Coordinate with renewal/cleanup. A completed pairing must never be

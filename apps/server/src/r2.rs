@@ -143,6 +143,47 @@ impl R2Storage {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub async fn read_signed(
+        &self,
+        key: &str,
+        size: i64,
+        sha256: &str,
+    ) -> Result<Vec<u8>, StorageError> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use ring::digest::{Context, SHA256};
+
+        let size = usize::try_from(size).map_err(|_| StorageError)?;
+        if !(1..=100 * 1024 * 1024).contains(&size) {
+            return Err(StorageError);
+        }
+        let response = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|_| StorageError)?;
+        if response.content_length() != Some(size as i64) {
+            return Err(StorageError);
+        }
+        let mut stream = response.body;
+        let mut bytes = Vec::with_capacity(size);
+        let mut digest = Context::new(&SHA256);
+        while let Some(chunk) = stream.try_next().await.map_err(|_| StorageError)? {
+            if chunk.len() > size - bytes.len() {
+                return Err(StorageError);
+            }
+            digest.update(&chunk);
+            bytes.extend_from_slice(&chunk);
+        }
+        if bytes.len() != size || STANDARD.encode(digest.finish().as_ref()) != sha256 {
+            return Err(StorageError);
+        }
+        Ok(bytes)
+    }
+
     pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
         self.client
             .delete_object()

@@ -37,6 +37,13 @@ x-temporal-environment: &temporal-environment
   APPRELAY_TEMPORAL_ADDRESS: ${APPRELAY_TEMPORAL_ADDRESS:?Set the existing Temporal URL}
   APPRELAY_TEMPORAL_NAMESPACE: ${APPRELAY_TEMPORAL_NAMESPACE:-apprelay}
 
+x-r2-environment: &r2-environment
+  APPRELAY_R2_ACCOUNT_ID:
+  APPRELAY_R2_BUCKET:
+  APPRELAY_R2_ACCESS_KEY_ID:
+  APPRELAY_R2_SECRET_ACCESS_KEY:
+  APPRELAY_PUBLIC_ORIGIN:
+
 services:
   vpn-agent:
     <<: *app
@@ -101,7 +108,7 @@ services:
         condition: service_healthy
         restart: true
     environment:
-      <<: [*database-environment, *temporal-environment, *logging-environment]
+      <<: [*database-environment, *temporal-environment, *logging-environment, *r2-environment]
       APPRELAY_HTTP_ADDRESS: 0.0.0.0:8080
       APPRELAY_ANISETTE_URL: ${APPRELAY_ANISETTE_URL:?Set the public HTTPS anisette provider origin}
       APPRELAY_API_KEY: ${APPRELAY_API_KEY:?Set a random 64-character hexadecimal app key}
@@ -167,6 +174,36 @@ services:
           create_host_path: false
     networks:
       - shared
+
+  install-worker:
+    <<: *app
+    profiles: ["install"]
+    command: ["install-worker"]
+    network_mode: "service:vpn-agent"
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=384m,mode=1777
+    depends_on:
+      vpn-agent:
+        condition: service_healthy
+        restart: true
+      api:
+        condition: service_healthy
+        restart: true
+    environment:
+      <<: [*database-environment, *temporal-environment, *logging-environment, *r2-environment]
+      APPRELAY_APNS_SIGNING_KEY_FILE: /run/secrets/apns.p8
+      APPRELAY_APNS_KEY_ID: ${APPRELAY_APNS_KEY_ID:?Set the APNs signing key ID}
+      APPRELAY_APNS_TEAM_ID: ${APPRELAY_APNS_TEAM_ID:?Set the Apple team ID}
+      APPRELAY_APNS_TOPIC: ${APPRELAY_APNS_TOPIC:?Set the app bundle ID}
+    volumes:
+      - type: bind
+        source: ${APPRELAY_APNS_SIGNING_KEY_HOST_FILE}
+        target: /run/secrets/apns.p8
+        read_only: true
+        bind:
+          create_host_path: false
 
 networks:
   shared:
