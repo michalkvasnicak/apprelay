@@ -1,5 +1,6 @@
 import { NativeModules, Platform } from "react-native";
 
+import { getApiUrl } from "../api/client";
 import type { DeviceRegistration } from "./config";
 
 export const vpnStatuses = [
@@ -27,6 +28,8 @@ type NativeVpnModule = {
     clientAddress: string;
     allowedIPs: string[];
     persistentKeepaliveSeconds: number;
+    remotePairingReportURL: string;
+    remotePairingAppKey: string;
   }): Promise<void>;
   preparePairing(): Promise<void>;
   disconnect(): Promise<void>;
@@ -70,6 +73,8 @@ export const vpn = {
       clientAddress: registration.address,
       allowedIPs: wireguard.allowed_ips,
       persistentKeepaliveSeconds: wireguard.persistent_keepalive_seconds,
+      remotePairingReportURL: `${getApiUrl()}/v1/devices/${encodeURIComponent(registration.device_id)}/remote-pairing`,
+      remotePairingAppKey: process.env.EXPO_PUBLIC_API_KEY!,
     });
   },
   preparePairing: () => requireNative().preparePairing(),

@@ -152,6 +152,29 @@ impl DeviceRepository {
         })
     }
 
+    pub async fn set_remote_pairing_port(
+        &self,
+        device_id: Uuid,
+        credential_hash: &[u8; 32],
+        port: u16,
+    ) -> Result<bool, sqlx::Error> {
+        let updated = sqlx::query(
+            "UPDATE devices
+             SET remote_pairing_port = $3,
+                 remote_pairing_port_expires_at = LEAST(
+                     expires_at, clock_timestamp() + INTERVAL '5 minutes'
+                 )
+             WHERE id = $1 AND bearer_token_hash = $2
+               AND expires_at > clock_timestamp()",
+        )
+        .bind(device_id)
+        .bind(credential_hash.as_slice())
+        .bind(i32::from(port))
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() != 0)
+    }
+
     pub async fn lock_for_provisioning(
         &self,
         id: Uuid,

@@ -63,7 +63,10 @@ final class BonjourProxy {
                     let sourcePort = UInt16(bigEndian: sender.sin_port)
                     logger.info("Received UDP announcement: \(count) bytes from \(sourceIP, privacy: .public):\(sourcePort) to \(address, privacy: .public):5354")
                     for announcement in ServiceAnnouncement.decode(Array(bytes.prefix(count))) {
-                        guard allowArbitraryBonjour || declaredServiceTypes.contains(String(announcement.type.dropLast()).lowercased()) else {
+                        let type = String(announcement.type.dropLast()).lowercased()
+                        // This type is reserved for discovering the handset's own service.
+                        guard type != "_remotepairing._tcp" else { continue }
+                        guard allowArbitraryBonjour || declaredServiceTypes.contains(type) else {
                             logger.debug("Skipping Bonjour service type not declared in NSBonjourServices: \(announcement.type, privacy: .public)")
                             continue
                         }

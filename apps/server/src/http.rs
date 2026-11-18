@@ -7,6 +7,7 @@ mod pairing_attempts;
 mod pairing_codes;
 mod push_tokens;
 mod rate_limit;
+mod remote_pairing;
 mod web;
 
 pub use app_key::AppKey;
@@ -118,6 +119,10 @@ pub fn router(
         .route(
             "/v1/devices/{device_id}/pairing",
             post(pairing_attempts::start),
+        )
+        .route(
+            "/v1/devices/{device_id}/remote-pairing",
+            put(remote_pairing::put),
         )
         .route_layer(middleware::from_fn_with_state(
             app_key,

@@ -43,6 +43,7 @@ module.exports = function withWireGuard(config, { allowArbitraryBonjour = false 
       ...new Set([
         ...(mod.modResults.NSBonjourServices ?? []),
         "_remotepairing-pairable-host._tcp",
+        "_remotepairing._tcp",
       ]),
     ];
     return mod;
@@ -93,6 +94,12 @@ module.exports = function withWireGuard(config, { allowArbitraryBonjour = false 
     );
     if (existingExtension) {
       addSource(project, `${DIRECTORY}/BonjourProxy.swift`, existingExtension[0], group.uuid);
+      addSource(
+        project,
+        `${DIRECTORY}/RemotePairingReporter.swift`,
+        existingExtension[0],
+        group.uuid,
+      );
       normalizeVpnFileReferences(project);
       addWireGuardPackage(project, {
         uuid: existingExtension[0],
@@ -120,6 +127,7 @@ module.exports = function withWireGuard(config, { allowArbitraryBonjour = false 
       "VpnKeychain.swift",
       "PacketTunnelProvider.swift",
       "BonjourProxy.swift",
+      "RemotePairingReporter.swift",
     ]) {
       addSource(project, `${DIRECTORY}/${file}`, extension.uuid, group.uuid);
     }

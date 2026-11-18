@@ -8,6 +8,8 @@ struct VpnSettings {
     let clientAddress: String
     let allowedIPs: [String]
     let persistentKeepaliveSeconds: Int
+    let remotePairingReportURL: URL?
+    let remotePairingAppKey: String?
 
     init(_ values: [String: Any]) throws {
         guard let host = values["host"] as? String,
@@ -24,12 +26,27 @@ struct VpnSettings {
         self.clientAddress = clientAddress
         self.allowedIPs = allowedIPs
         self.persistentKeepaliveSeconds = keepalive
+        if let value = values["remotePairingReportURL"] as? String,
+           let url = URL(string: value),
+           url.scheme == "https", url.host != nil, url.user == nil, url.password == nil,
+           let appKey = values["remotePairingAppKey"] as? String {
+            self.remotePairingReportURL = url
+            self.remotePairingAppKey = appKey
+        } else {
+            self.remotePairingReportURL = nil
+            self.remotePairingAppKey = nil
+        }
     }
 
     var dictionary: [String: Any] {
-        ["host": host, "port": port, "publicKey": publicKey,
-         "clientAddress": clientAddress, "allowedIPs": allowedIPs,
-         "persistentKeepaliveSeconds": persistentKeepaliveSeconds]
+        var values: [String: Any] = [
+            "host": host, "port": port, "publicKey": publicKey,
+            "clientAddress": clientAddress, "allowedIPs": allowedIPs,
+            "persistentKeepaliveSeconds": persistentKeepaliveSeconds,
+        ]
+        values["remotePairingReportURL"] = remotePairingReportURL?.absoluteString
+        values["remotePairingAppKey"] = remotePairingAppKey
+        return values
     }
 }
 
