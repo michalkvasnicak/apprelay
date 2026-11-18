@@ -196,10 +196,10 @@ async fn log_request(request: Request, next: Next) -> Response {
             || crate::telemetry::report("HTTP request failed"),
         );
     }
-    response.headers_mut().insert(
-        CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
+    response
+        .headers_mut()
+        .entry(CACHE_CONTROL)
+        .or_insert(axum::http::HeaderValue::from_static("no-store"));
     response.headers_mut().insert(
         axum::http::header::REFERRER_POLICY,
         axum::http::HeaderValue::from_static("no-referrer"),

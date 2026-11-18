@@ -94,6 +94,12 @@ export function Steps({ current }: { current: 0 | 1 | 2 }) {
       {steps.map((name, index) => {
         const done = index < current;
         const active = index === current;
+        let badgeClass = "border-text/20 text-muted";
+        if (done) {
+          badgeClass = "border-primary bg-primary text-background";
+        } else if (active) {
+          badgeClass = "border-primary text-primary";
+        }
         return (
           <li
             key={name}
@@ -101,13 +107,7 @@ export function Steps({ current }: { current: 0 | 1 | 2 }) {
             className="flex flex-1 items-center gap-2"
           >
             <span
-              className={`grid size-6 shrink-0 place-items-center rounded-full border text-[11px] transition ${
-                done
-                  ? "border-primary bg-primary text-background"
-                  : active
-                    ? "border-primary text-primary"
-                    : "border-text/20 text-muted"
-              }`}
+              className={`grid size-6 shrink-0 place-items-center rounded-full border text-[11px] transition ${badgeClass}`}
             >
               {done ? "✓" : index + 1}
             </span>

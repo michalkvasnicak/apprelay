@@ -19,10 +19,16 @@ export function SignedResult({
 }) {
   const queued = progress.stage === "queued";
   const failed = progress.stage === "failed";
+  let title = "Installing…";
+  if (queued) {
+    title = "Install queued";
+  } else if (failed) {
+    title = "Install failed";
+  }
   return (
     <section aria-labelledby="signed-title" className="space-y-5">
       <h2 id="signed-title" className="text-xl font-semibold tracking-tight">
-        {queued ? "Install queued" : failed ? "Install failed" : "Installing…"}
+        {title}
       </h2>
       {progress.stage === "uploading" && (
         <div className="space-y-2 text-sm text-muted">

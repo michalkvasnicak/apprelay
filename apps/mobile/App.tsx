@@ -80,7 +80,7 @@ function VpnScreen() {
       <StatusBar style="light" />
       <View style={styles.content}>
         <View style={styles.brandRow}>
-          {/* PNG rasterized from apps/server/web/public/logo.svg for native Image. */}
+          {/* PNG rasterized from apps/server/web/public/assets/logo.svg for native Image. */}
           <Image source={require("./assets/logo.png")} accessible={false} style={styles.logo} />
           <Text style={styles.brand}>AppRelay</Text>
         </View>

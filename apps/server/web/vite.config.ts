@@ -17,6 +17,8 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     build: {
+      // Keep fingerprinted output separate from public files with stable URLs.
+      assetsDir: "assets/build",
       // Uninstrumented builds don't generate maps that could be served publicly.
       sourcemap: uploadSourceMaps ? "hidden" : false,
     },

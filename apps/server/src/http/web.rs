@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
-use axum::{Router, http::header::CACHE_CONTROL};
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    set_header::SetResponseHeaderLayer,
+use axum::{
+    Router,
+    extract::Request,
+    http::{HeaderValue, StatusCode, header::CACHE_CONTROL},
+    middleware::{self, Next},
+    response::Response,
 };
+use tower_http::services::{ServeDir, ServeFile};
 
 pub(super) fn router<S>() -> Router<S>
 where
@@ -18,8 +21,27 @@ where
         .route_service("/s/{token}", ServeFile::new(directory.join("index.html")))
         .route_service("/pair", ServeFile::new(directory.join("index.html")))
         .fallback_service(ServeDir::new(directory))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            CACHE_CONTROL,
-            axum::http::HeaderValue::from_static("no-cache"),
-        ))
+        .layer(middleware::from_fn(cache_assets))
+}
+
+async fn cache_assets(request: Request, next: Next) -> Response {
+    let path = request.uri().path();
+    let cache_control = if path.starts_with("/assets/build/") {
+        // Vite fingerprints its build outputs; public files keep their names.
+        Some("public, max-age=31536000, immutable")
+    } else if path.starts_with("/assets/") {
+        Some("public, max-age=604800")
+    } else {
+        None
+    };
+
+    let mut response = next.run(request).await;
+    if let Some(cache_control) = cache_control
+        && (response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED)
+    {
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    }
+    response
 }

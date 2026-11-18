@@ -55,7 +55,7 @@ function Guide() {
           ).map(([name, height]) => (
             <img
               key={name}
-              src={`${base}${name}`}
+              src={`${base}assets/${name}`}
               alt=""
               width={720}
               height={height}
