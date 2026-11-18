@@ -40,8 +40,9 @@ This is not a production Temporal deployment and has no authentication.
 
 Run the pairing worker natively, not in Docker: it needs the host's WireGuard
 interface and VPN-agent Unix socket. See [pairing worker](../apps/server/README.md#pairing-worker-macos)
-for startup and manually queueing a device. Only one worker should run for the
-10-active-session limit. Export `DATABASE_URL` in its shell; optional settings
+for startup and manually queueing a device. The 20 concurrent activity slots
+are per worker and shared by VPN readiness checks and interactive pairing.
+Export `DATABASE_URL` in its shell; optional settings
 are `APPRELAY_TEMPORAL_ADDRESS=http://127.0.0.1:7233` and
 `APPRELAY_TEMPORAL_NAMESPACE=default`.
 
