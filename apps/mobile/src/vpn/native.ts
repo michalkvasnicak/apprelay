@@ -31,7 +31,6 @@ type NativeVpnModule = {
     remotePairingReportURL: string;
     remotePairingAppKey: string;
   }): Promise<void>;
-  preparePairing(): Promise<void>;
   disconnect(): Promise<void>;
 };
 
@@ -77,6 +76,5 @@ export const vpn = {
       remotePairingAppKey: process.env.EXPO_PUBLIC_API_KEY!,
     });
   },
-  preparePairing: () => requireNative().preparePairing(),
   disconnect: () => requireNative().disconnect(),
 };

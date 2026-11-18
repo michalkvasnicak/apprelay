@@ -92,7 +92,6 @@ export function usePairing(status: VpnStatus, register: () => Promise<DeviceRegi
         if ((await vpn.getStatus()) !== "connected") {
           throw new PairingError("The VPN disconnected. Reconnect before retrying pairing.");
         }
-        await vpn.preparePairing();
         controller.signal.throwIfAborted();
         // The server waits for actual WireGuard readiness; native startup alone is not proof.
         const { response } = await api.POST("/v1/devices/{device_id}/pairing", {

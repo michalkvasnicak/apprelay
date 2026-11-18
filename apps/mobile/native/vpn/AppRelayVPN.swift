@@ -1,12 +1,10 @@
 import Foundation
-import Network
 import NetworkExtension
 import React
 
 @objc(AppRelayVPN)
 final class AppRelayVPN: NSObject {
     private var operationInProgress = false
-    private var pairingDiscovery: NWBrowser?
     private var providerIdentifier: String { Bundle.main.bundleIdentifier! + ".PacketTunnel" }
 
     @objc static func requiresMainQueueSetup() -> Bool { true }
@@ -85,8 +83,6 @@ final class AppRelayVPN: NSObject {
             }
         }
 
-        pairingDiscovery?.cancel()
-        pairingDiscovery = nil
         try VpnKeychain.clearCredentials()
         if discardPreviousStorage { try VpnKeychain.discardPreviousStorage() }
         return try VpnKeychain.createIdentity()
@@ -139,29 +135,11 @@ final class AppRelayVPN: NSObject {
                 try await save(manager)
                 try await reload(manager)
                 try manager.connection.startVPNTunnel()
-                startPairingDiscovery()
                 // This means startup was requested, not that the peer has handshaken.
                 resolve(nil)
                 #endif
             } catch { reject("VPN_CONNECT", error.localizedDescription, error) }
         }
-    }
-
-    @objc(preparePairing:rejecter:)
-    func preparePairing(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task { @MainActor in
-            startPairingDiscovery()
-            resolve(nil)
-        }
-    }
-
-    // Also needed on a cold launch that reuses an already-running tunnel.
-    @MainActor private func startPairingDiscovery() {
-        pairingDiscovery?.cancel()
-        let browser = NWBrowser(for: .bonjour(type: "_remotepairing-pairable-host._tcp", domain: "local."),
-                                using: .tcp)
-        pairingDiscovery = browser
-        browser.start(queue: .main)
     }
 
     @objc(disconnect:rejecter:)
@@ -176,8 +154,6 @@ final class AppRelayVPN: NSObject {
             do {
                 let manager = try await loadManager()
                 manager?.connection.stopVPNTunnel()
-                pairingDiscovery?.cancel()
-                pairingDiscovery = nil
                 resolve(nil)
             } catch { reject("VPN_DISCONNECT", error.localizedDescription, error) }
         }
