@@ -107,6 +107,7 @@ dependencies = [
  "tower-rate-limit-fred",
  "utoipa",
  "uuid",
+ "webpki-roots 1.0.12",
  "zeroize",
 ]
 

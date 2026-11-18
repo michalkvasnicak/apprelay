@@ -1,7 +1,7 @@
 //! Stateless relay for the browser Apple runtime. Never log upstream URLs,
 //! headers, bodies, or reqwest errors: they can contain Apple credentials.
 
-use std::{collections::BTreeMap, env, io, net::IpAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, env, error::Error, io, net::IpAddr, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -13,9 +13,10 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::{
-    Certificate, Client, Method, Url,
+    Client, Method, Url,
     dns::{Addrs, Name, Resolve, Resolving},
 };
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use tokio::{net::lookup_host, sync::Semaphore, time::timeout};
 use utoipa::ToSchema;
@@ -88,10 +89,27 @@ impl HttpsProxy {
                 .dns_resolver(Arc::new(PublicDns))
         };
         // Extend the default roots for Apple only; keep TLS and hostname verification enabled.
-        let apple_root = Certificate::from_pem(APPLE_ROOT_CA)
+        let apple_root = CertificateDer::from_pem_slice(APPLE_ROOT_CA)
             .map_err(|_| io::Error::other("could not load Apple Root CA"))?;
+        let mut roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        roots
+            .add(apple_root)
+            .map_err(|_| io::Error::other("could not trust Apple Root CA"))?;
+        let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|_| io::Error::other("could not configure Apple TLS protocol versions"))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        // Fresh connections alone do not prevent TLS session resumption.
+        tls.resumption = rustls::client::Resumption::disabled();
         let apple_client = builder()
-            .add_root_certificate(apple_root)
+            .use_preconfigured_tls(tls)
+            .http1_only()
+            .pool_max_idle_per_host(0)
             .build()
             .map_err(|_| io::Error::other("could not initialize Apple HTTPS client"))?;
         let anisette_client = builder()
@@ -243,6 +261,11 @@ async fn relay(
         ProxyMethod::Get => Method::GET,
         ProxyMethod::Post => Method::POST,
     };
+    let upstream = match url.host_str() {
+        Some("gsa.apple.com") => "apple-auth",
+        Some("developerservices2.apple.com") => "apple-developer",
+        _ => "anisette",
+    };
     let mut outgoing = client.request(method, url);
     let mut headers = reqwest::header::HeaderMap::new();
     let mut header_bytes = 0usize;
@@ -266,32 +289,44 @@ async fn relay(
         .headers(headers)
         .header("accept-encoding", "identity")
         .body(body);
-    let mut response = outgoing.send().await.map_err(transport_error)?;
+    if !anisette {
+        outgoing = outgoing.header("connection", "close");
+    }
+    let mut response = outgoing
+        .send()
+        .await
+        .map_err(|error| transport_error(upstream, "send", error))?;
     let status = response.status().as_u16();
     if response
         .content_length()
         .is_some_and(|size| size > MAX_BODY_BYTES as u64)
     {
-        return Err(upstream_error());
+        return Err(upstream_error(upstream, "response-too-large"));
     }
     // Compression is not requested. Fail closed rather than forwarding compressed
     // bytes as a plist or decompressing an unbounded upstream payload.
     for encoding in response.headers().get_all("content-encoding") {
         if !encoding.as_bytes().eq_ignore_ascii_case(b"identity") {
-            return Err(upstream_error());
+            return Err(upstream_error(upstream, "response-encoding"));
         }
     }
     let mut headers = BTreeMap::new();
     for name in ["content-type", "retry-after", "x-apple-i-md-rinfo"] {
         if let Some(value) = response.headers().get(name) {
-            let value = value.to_str().map_err(|_| upstream_error())?;
+            let value = value
+                .to_str()
+                .map_err(|_| upstream_error(upstream, "response-header"))?;
             headers.insert(name.to_owned(), value.to_owned());
         }
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| transport_error(upstream, "response-read", error))?
+    {
         if chunk.len() > MAX_BODY_BYTES - body.len() {
-            return Err(upstream_error());
+            return Err(upstream_error(upstream, "response-too-large"));
         }
         body.extend_from_slice(&chunk);
     }
@@ -427,7 +462,8 @@ fn request_too_large() -> ApiError {
     }
 }
 
-fn upstream_error() -> ApiError {
+fn upstream_error(upstream: &'static str, failure: &'static str) -> ApiError {
+    tag_failure(upstream, failure);
     ApiError {
         status: StatusCode::BAD_GATEWAY,
         body: super::ErrorResponse::UpstreamFailure {
@@ -445,10 +481,41 @@ fn upstream_timeout() -> ApiError {
     }
 }
 
-fn transport_error(error: reqwest::Error) -> ApiError {
+fn transport_error(upstream: &'static str, stage: &'static str, error: reqwest::Error) -> ApiError {
     if error.is_timeout() {
-        upstream_timeout()
-    } else {
-        upstream_error()
+        tag_failure(upstream, "timeout");
+        return upstream_timeout();
     }
+    let mut source = error.source();
+    while let Some(cause) = source {
+        if let Some(tls) = cause.downcast_ref::<rustls::Error>() {
+            let failure = match tls {
+                rustls::Error::InvalidCertificate(_) => "tls-certificate",
+                rustls::Error::DecryptError
+                | rustls::Error::AlertReceived(rustls::AlertDescription::BadRecordMac) => {
+                    "tls-decrypt"
+                }
+                _ => "tls",
+            };
+            return upstream_error(upstream, failure);
+        }
+        source = cause
+            .downcast_ref::<io::Error>()
+            .and_then(io::Error::get_ref)
+            .map(|inner| inner as &dyn Error)
+            .or_else(|| cause.source());
+    }
+    if error.is_connect() {
+        upstream_error(upstream, "connect")
+    } else {
+        upstream_error(upstream, stage)
+    }
+}
+
+// Annotate the existing HTTP failure event without recording upstream request data.
+fn tag_failure(upstream: &'static str, failure: &'static str) {
+    sentry::configure_scope(|scope| {
+        scope.set_tag("apple_proxy.upstream", upstream);
+        scope.set_tag("apple_proxy.failure", failure);
+    });
 }
