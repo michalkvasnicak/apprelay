@@ -64,7 +64,6 @@ function Guide() {
             />
           ))}
         </div>
-        <TestFlightInvite />
       </div>
     </details>
   );
@@ -187,6 +186,9 @@ export function PairingWorkspace({
         Pair your iPhone
       </h2>
       {!pairingConfigured && <Alert error="Pairing is unavailable in this build." />}
+      <p className="text-sm text-muted">
+        Need the app? <TestFlightInvite />
+      </p>
       {!active && !failed && <Guide />}
 
       {!started && (
