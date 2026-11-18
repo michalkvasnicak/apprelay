@@ -122,6 +122,8 @@ dependencies = [
  "tower",
  "tower-http",
  "tower-rate-limit-fred",
+ "tracing",
+ "tracing-subscriber",
  "utoipa",
  "uuid",
  "webpki-roots 1.0.12",

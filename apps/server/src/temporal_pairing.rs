@@ -63,7 +63,7 @@ pub async fn start(device_id: Uuid) -> Result<(), Error> {
                 .build(),
         )
         .await?;
-    eprintln!("Pairing workflow queued: pair-device-{device_id}");
+    tracing::info!("Pairing workflow queued");
     Ok(())
 }
 
@@ -209,7 +209,7 @@ impl PairingActivities {
             let public_key: [u8; 32] = public_key
                 .try_into()
                 .map_err(|_| io::Error::other("invalid device WireGuard public key"))?;
-            eprintln!("Waiting for device {device_id} to establish its WireGuard connection");
+            tracing::info!("Waiting for device to establish its WireGuard connection");
             let mut last_error = None;
             loop {
                 if Utc::now() >= attempt_expiry.unwrap_or(expires_at).min(expires_at) {
@@ -217,13 +217,13 @@ impl PairingActivities {
                 }
                 match self.agent.require_connected_peer(public_key).await {
                     Ok(()) => {
-                        eprintln!("WireGuard connection confirmed for device {device_id}");
+                        tracing::info!("WireGuard connection confirmed");
                         return Ok(());
                     }
                     Err(error) => {
                         let message = error.to_string();
                         if last_error.as_ref() != Some(&message) {
-                            eprintln!("VPN readiness for device {device_id}: {message}");
+                            tracing::debug!(error_kind = ?error.kind(), "WireGuard peer is not ready");
                             last_error = Some(message);
                         }
                     }
@@ -303,7 +303,7 @@ impl PairingActivities {
                     public_attempt_id,
                 )
                 .await?;
-            eprintln!("Starting pairing activity for device {device_id} at {peer}");
+            tracing::info!("Starting pairing activity");
             Ok((
                 session,
                 deadline.min(lease_deadline),
@@ -334,9 +334,7 @@ impl PairingActivities {
                     &record,
                 )
                 .await?;
-            eprintln!(
-                "Encrypted pairing saved for device {device_id}; iOS completion is unverified"
-            );
+            tracing::info!("Encrypted pairing saved; iOS completion is unverified");
             Ok(())
         };
         let result = wait(&ctx, operation, deadline, "pairing session expired").await;
@@ -347,7 +345,9 @@ impl PairingActivities {
         let ended = tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id)).await;
         if !matches!(ended, Ok(Ok(()))) {
             crate::telemetry::report("Could not invalidate pairing code");
-            eprintln!("Could not invalidate pairing code; it will expire at the session deadline");
+            tracing::warn!(
+                "Could not invalidate pairing code; it will expire at the session deadline"
+            );
         }
         result
     }
@@ -410,7 +410,7 @@ async fn dispatch_attempts(pool: PgPool) {
                 ).await;
                 if started.is_err() {
                     dispatch_failed = true;
-                    eprintln!("Could not enqueue pairing attempt {attempt}; will retry");
+                    tracing::warn!("Could not enqueue pairing attempt; will retry");
                     continue;
                 }
                 sqlx::query("UPDATE public_pairing_attempts SET queued_at = clock_timestamp() WHERE id = $1")
@@ -420,7 +420,7 @@ async fn dispatch_attempts(pool: PgPool) {
         }
         .await;
         if result.is_err() {
-            eprintln!("Pairing attempt dispatch unavailable; durable claims will be retried");
+            tracing::warn!("Pairing attempt dispatch unavailable; durable claims will be retried");
         }
         let unavailable = result.is_err() || dispatch_failed;
         if unavailable && !was_unavailable {
@@ -485,9 +485,7 @@ pub async fn run_worker() -> Result<(), Error> {
         .graceful_shutdown_period(Duration::from_secs(1))
         .build();
     let worker = Worker::new(&runtime, client().await?, options)?;
-    eprintln!(
-        "Pairing worker listening on {TASK_QUEUE}: at most 10 activities, up to 120 seconds for VPN readiness, then 60 seconds for pairing"
-    );
+    tracing::info!(task_queue = TASK_QUEUE, "Pairing worker listening");
     let dispatcher = tokio::spawn(dispatch_attempts(pool));
     let result = worker
         .run_until(async {

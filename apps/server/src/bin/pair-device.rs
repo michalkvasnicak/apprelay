@@ -6,6 +6,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if arguments.next().is_some() {
         return Err("usage: pair-device <device-id>".into());
     }
+    apprelay_server::telemetry::init_logging()?;
     apprelay_server::temporal_pairing::start(uuid::Uuid::parse_str(&device_id)?).await
 }
 

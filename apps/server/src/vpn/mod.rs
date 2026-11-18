@@ -48,7 +48,7 @@ impl Vpn {
             }),
             Err(error) => {
                 if let Err(cleanup) = interface.shutdown().await {
-                    eprintln!("VPN startup cleanup failed: {cleanup}");
+                    tracing::warn!(error_kind = ?cleanup.kind(), "VPN startup cleanup failed");
                 }
                 Err(error)
             }

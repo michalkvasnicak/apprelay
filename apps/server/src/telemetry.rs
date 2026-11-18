@@ -1,10 +1,40 @@
 use std::{env, io, time::Duration};
 
+/// Emit newline-delimited application events. Dependency logs are excluded
+/// because their fields may contain SQL, payloads, or credentials.
+pub fn init_logging() -> io::Result<()> {
+    use tracing::level_filters::LevelFilter;
+    use tracing_subscriber::{filter::Targets, layer::SubscriberExt};
+
+    let level = setting("APPRELAY_LOG_LEVEL")?
+        .as_deref()
+        .unwrap_or("info")
+        .parse::<LevelFilter>()
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "APPRELAY_LOG_LEVEL must be off, error, warn, info, debug, or trace",
+            )
+        })?;
+    let logger = tracing_subscriber::fmt::layer()
+        .json()
+        .flatten_event(true)
+        .with_current_span(false)
+        .with_span_list(false)
+        .with_writer(io::stdout);
+    let subscriber = tracing_subscriber::registry()
+        .with(Targets::new().with_target("apprelay_server", level))
+        .with(logger);
+    tracing::subscriber::set_global_default(subscriber).map_err(io::Error::other)
+}
+
 /// Initialize before creating Tokio; retain the guard until after runtime shutdown.
 pub fn init(service: &'static str) -> io::Result<Option<sentry::ClientInitGuard>> {
     // Sentry uses rustls-no-provider; select ring before any TLS clients are built.
     // An error only means a process-wide provider was already installed.
     let _ = rustls::crypto::ring::default_provider().install_default();
+
+    init_logging()?;
 
     let Some(dsn) = setting("SENTRY_DSN")? else {
         return Ok(None);

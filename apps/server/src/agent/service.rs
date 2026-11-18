@@ -28,10 +28,7 @@ pub async fn run() -> io::Result<()> {
     let interrupt = signal(SignalKind::interrupt())?;
     let terminate = signal(SignalKind::terminate())?;
     let mut vpn = Some(Vpn::start(&config).await?);
-    eprintln!(
-        "VPN agent ready at {} for client UID {client_uid}",
-        path.display()
-    );
+    tracing::info!(socket = %path.display(), client_uid, "VPN agent ready");
 
     let outcome = serve(
         &socket.listener,
@@ -89,7 +86,7 @@ async fn serve(
         }
 
         if let Err(error) = handle(&mut stream, config, vpn).await {
-            eprintln!("VPN agent request failed: {error}");
+            tracing::warn!(error_kind = ?error.kind(), "VPN agent request failed");
         }
     }
 }

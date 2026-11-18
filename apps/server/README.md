@@ -123,11 +123,29 @@ Configure your bucket using the [R2 bucket setup](R2.md). Configure reverse-prox
 
 ### Backend telemetry configuration
 
-| Variable             | Process                         | Default          | Description                                                                                                  |
-| -------------------- | ------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
-| `SENTRY_DSN`         | Server, VPN agent, both workers | Empty (disabled) | Runtime Sentry DSN. Missing or empty disables reporting.                                                     |
-| `SENTRY_ENVIRONMENT` | Server, VPN agent, both workers | SDK environment  | Runtime deployment environment; SDK uses `development` for debug builds and `production` for release builds. |
-| `SENTRY_RELEASE`     | Server, VPN agent, both workers | Unset            | Runtime release identifier; Docker embeds the supplied build argument, which can be overridden at runtime.   |
+The HTTP server, VPN agent, and both workers emit one JSON event per line to
+stdout. HTTP events use the matched route template (or `unmatched`), not the raw
+URL. Sentry remains separate from log collection.
+
+On the current Coolify host, Alloy already collects Docker stdout and stderr and
+sends them to Loki. Redeploy the AppRelay stack to pick up JSON logging; no
+Coolify log drain or Alloy configuration change is needed. In **Grafana → Explore
+→ Loki**, run:
+
+```logql
+{project="apprelay", source="docker"} | json | __error__="" | level="ERROR"
+```
+
+Add `service="api"` to the selector to narrow the query to HTTP events. Parsed
+HTTP fields include `method`, `route`, `status`, and `elapsed_ms`. Tempo is for
+traces and does not receive these log events.
+
+| Variable             | Process                         | Default          | Description                                                                                                       |
+| -------------------- | ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `APPRELAY_LOG_LEVEL` | Server, VPN agent, both workers | `info`           | Minimum application log level: `error`, `warn`, `info`, `debug`, `trace`, or `off`. Dependency logs are excluded. |
+| `SENTRY_DSN`         | Server, VPN agent, both workers | Empty (disabled) | Runtime Sentry DSN. Missing or empty disables reporting.                                                          |
+| `SENTRY_ENVIRONMENT` | Server, VPN agent, both workers | SDK environment  | Runtime deployment environment; SDK uses `development` for debug builds and `production` for release builds.      |
+| `SENTRY_RELEASE`     | Server, VPN agent, both workers | Unset            | Runtime release identifier; Docker embeds the supplied build argument, which can be overridden at runtime.        |
 
 ### Build telemetry configuration
 

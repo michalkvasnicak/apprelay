@@ -60,8 +60,11 @@ async fn run() -> std::io::Result<()> {
 
     let agent = Client::from_env()?;
     match agent.status().await {
-        Ok(status) => eprintln!("Connected to VPN agent: {status:?}"),
-        Err(error) => eprintln!("VPN agent unavailable (HTTP liveness is independent): {error}"),
+        Ok(_) => tracing::info!("Connected to VPN agent"),
+        Err(error) => tracing::warn!(
+            error_kind = ?error.kind(),
+            "VPN agent unavailable; HTTP liveness is independent"
+        ),
     }
 
     let address = std::env::var("APPRELAY_HTTP_ADDRESS")
@@ -71,7 +74,8 @@ async fn run() -> std::io::Result<()> {
         })
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
     let listener = TcpListener::bind(&address).await?;
-    eprintln!("HTTP server listening on {}", listener.local_addr()?);
+    let listen_address = listener.local_addr()?;
+    tracing::info!(%listen_address, "HTTP server listening");
 
     let cleanup = tokio::spawn(cleanup::run(pool.clone(), agent.clone()));
     let attempts = db::pairing_attempts::PairingAttemptRepository::new(pool.clone());

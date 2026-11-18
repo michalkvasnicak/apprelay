@@ -161,14 +161,6 @@ async fn log_request(request: Request, next: Next) -> Response {
         scope.set_tag("http.method", method.as_str());
         scope.set_tag("http.route", &route);
     });
-    let path = if request.uri().path().starts_with("/v1/pairing-attempts/")
-        || request.uri().path().starts_with("/v1/artifacts/")
-        || request.uri().path().starts_with("/s/")
-    {
-        route.clone()
-    } else {
-        request.uri().path().to_owned()
-    };
     let started = Instant::now();
     let mut response = next.run(request).await;
     if response.status().is_server_error() {
@@ -193,11 +185,25 @@ async fn log_request(request: Request, next: Next) -> Response {
         axum::http::header::REFERRER_POLICY,
         axum::http::HeaderValue::from_static("no-referrer"),
     );
-    eprintln!(
-        "HTTP {method} {path:?} -> {} ({} ms)",
-        response.status().as_u16(),
-        started.elapsed().as_millis(),
-    );
+    let status = response.status();
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    if status.is_server_error() {
+        tracing::error!(
+            method = method.as_str(),
+            route = route.as_str(),
+            status = status.as_u16(),
+            elapsed_ms,
+            "HTTP request completed"
+        );
+    } else {
+        tracing::info!(
+            method = method.as_str(),
+            route = route.as_str(),
+            status = status.as_u16(),
+            elapsed_ms,
+            "HTTP request completed"
+        );
+    }
     response
 }
 
@@ -396,12 +402,12 @@ impl ApiError {
     }
 
     fn database(_: sqlx::Error) -> Self {
-        eprintln!("Device registration database operation failed");
+        tracing::error!("Device registration database operation failed");
         Self::unavailable("device database is unavailable")
     }
 
     fn agent(error: std::io::Error) -> Self {
-        eprintln!("Device registration VPN agent error: {error}");
+        tracing::warn!(error_kind = ?error.kind(), "Device registration VPN agent error");
         Self::unavailable("VPN provisioning is unavailable; retry registration")
     }
 }

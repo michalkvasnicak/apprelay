@@ -70,10 +70,7 @@ impl Session {
         let port = listener.local_addr()?.port();
         let goodbye = announcement(&host_info, &pairing_file, status.address, port, 0)?;
         let announcement = announcement(&host_info, &pairing_file, status.address, port, 10)?;
-        eprintln!(
-            "Pairing: VPN interface {interface}, TCP {}, unicast mDNS only to {peer}:5354. Identity is new for this pairing attempt.",
-            listener.local_addr()?
-        );
+        tracing::debug!(interface, port, "Pairing listener ready");
         Ok(Self {
             listener,
             discovery,
@@ -91,10 +88,7 @@ impl Session {
             .send_to(&self.goodbye, (self.peer, 5354))
             .await
         {
-            eprintln!(
-                "Could not withdraw pairing advertisement for {}: {error}",
-                self.peer
-            );
+            tracing::warn!(error_kind = ?error.kind(), "Could not withdraw pairing advertisement");
         }
     }
 
@@ -110,7 +104,7 @@ impl Session {
             tokio::select! {
                 _ = announcements.tick() => {
                     self.discovery.send_to(&self.announcement, destination).await?;
-                    eprintln!("Pairing: unicast mDNS announcement sent to {destination}");
+                    tracing::debug!("Pairing mDNS announcement sent");
                 }
                 received = self.discovery.recv_from(&mut receiving) => {
                     let (length, source) = received?;
@@ -120,17 +114,17 @@ impl Session {
                     if let Ok(message) = Message::from_vec(&receiving[..length])
                         && message.message_type() == MessageType::Query
                     {
-                        eprintln!("Pairing: DNS query received from {source}");
+                        tracing::debug!("Pairing DNS query received");
                         self.discovery.send_to(&self.announcement, destination).await?;
                     }
                 }
                 accepted = self.listener.accept() => {
                     let (stream, source) = accepted?;
                     if source.ip() != self.peer {
-                        eprintln!("Pairing: rejecting TCP connection from {source}");
+                        tracing::debug!("Rejected pairing connection from unexpected peer");
                         continue;
                     }
-                    eprintln!("Pairing: selected iPhone connected from {source}");
+                    tracing::debug!("Selected iPhone connected for pairing");
                     let mut host = PairableHost::new(
                         RpPairingSocket::new_device(stream), self.host_info.clone());
                     // Drop the future (and its mutable borrow) before copying the record.
@@ -179,14 +173,14 @@ impl Session {
                     on_code(None).await?;
                     match result {
                         Ok(peer) => {
-                            eprintln!("Pair-setup response sent; iOS completion is not yet confirmed.");
+                            tracing::info!("Pair-setup response sent; iOS completion is not yet confirmed");
                             return Ok(PairingRecord {
                                 pairing_file: self.pairing_file.clone(),
                                 host_info: self.host_info.clone(),
                                 peer,
                             });
                         },
-                        Err(error) => eprintln!("Pairing failed: {error}"),
+                        Err(_) => tracing::warn!("Pairing exchange failed"),
                     }
                 }
             }

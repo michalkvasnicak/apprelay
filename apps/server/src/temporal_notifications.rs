@@ -135,7 +135,7 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
         let pending = match codes.pending_notifications().await {
             Ok(pending) => pending,
             Err(_) => {
-                eprintln!("Could not read pairing notification outbox; will retry");
+                tracing::warn!("Could not read pairing notification outbox; will retry");
                 if !was_unavailable {
                     crate::telemetry::report("Pairing notification dispatch unavailable");
                 }
@@ -159,12 +159,12 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
                 Ok(Ok(_)) => {
                     if codes.mark_queued(notification_id).await.is_err() {
                         unavailable = true;
-                        eprintln!("Could not mark pairing notification queued; will retry");
+                        tracing::warn!("Could not mark pairing notification queued; will retry");
                     }
                 }
                 _ => {
                     unavailable = true;
-                    eprintln!("Could not queue pairing notification; will retry while active");
+                    tracing::warn!("Could not queue pairing notification; will retry while active");
                 }
             }
         }
@@ -201,7 +201,7 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .build();
     let worker = Worker::new(&runtime, temporal.clone(), options)?;
     let dispatch = tokio::spawn(dispatch(codes, temporal));
-    eprintln!("Notification worker listening on {TASK_QUEUE}");
+    tracing::info!(task_queue = TASK_QUEUE, "Notification worker listening");
     let result = worker
         .run_until(async {
             tokio::select! {

@@ -24,6 +24,9 @@ x-app: &app
     - ALL
   stop_grace_period: 30s
 
+x-logging-environment: &logging-environment
+  APPRELAY_LOG_LEVEL: ${APPRELAY_LOG_LEVEL:-info}
+
 x-database-environment: &database-environment
   DATABASE_URL: ${DATABASE_URL:?Set the existing AppRelay PostgreSQL database URL}
   PAIRING_ENCRYPTION_KEY: ${PAIRING_ENCRYPTION_KEY:?Set a persistent Base64-encoded 32-byte key}
@@ -45,6 +48,7 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
+      <<: *logging-environment
       APPRELAY_VPN_PRIVATE_KEY_FILE: /run/secrets/wireguard.key
       APPRELAY_VPN_ADDRESS: ${APPRELAY_VPN_ADDRESS:-10.77.0.1/24}
       APPRELAY_VPN_PORT: ${APPRELAY_VPN_PORT:-51820}
@@ -95,7 +99,7 @@ services:
         condition: service_healthy
         restart: true
     environment:
-      <<: [*database-environment, *temporal-environment]
+      <<: [*database-environment, *temporal-environment, *logging-environment]
       APPRELAY_HTTP_ADDRESS: 0.0.0.0:8080
       APPRELAY_ANISETTE_URL: ${APPRELAY_ANISETTE_URL:?Set the public HTTPS anisette provider origin}
       APPRELAY_API_KEY: ${APPRELAY_API_KEY:?Set a random 64-character hexadecimal app key}
@@ -131,7 +135,7 @@ services:
         condition: service_healthy
         restart: true
     environment:
-      <<: [*database-environment, *temporal-environment]
+      <<: [*database-environment, *temporal-environment, *logging-environment]
       APPRELAY_VPN_AGENT_SOCKET: /run/apprelay/vpn-agent.sock
     volumes:
       - agent-socket:/run/apprelay:ro
@@ -146,7 +150,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      <<: [*database-environment, *temporal-environment]
+      <<: [*database-environment, *temporal-environment, *logging-environment]
       APPRELAY_APNS_SIGNING_KEY_FILE: /run/secrets/apns.p8
       APPRELAY_APNS_KEY_ID: ${APPRELAY_APNS_KEY_ID:?Set the APNs signing key ID}
       APPRELAY_APNS_TEAM_ID: ${APPRELAY_APNS_TEAM_ID:?Set the Apple team ID}

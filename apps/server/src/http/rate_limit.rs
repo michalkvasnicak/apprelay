@@ -191,7 +191,7 @@ async fn limit(
             Ok(response)
         }
         _ => {
-            eprintln!("HTTP rate-limit Redis check failed");
+            tracing::error!("HTTP rate-limit Redis check failed");
             Err(ApiError::unavailable("rate limiter is unavailable"))
         }
     }

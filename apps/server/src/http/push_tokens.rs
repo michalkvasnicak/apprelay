@@ -101,7 +101,7 @@ async fn update(
         .await
         .map_err(|_| {
             // Do not print SQL errors: constraint details may include the token.
-            eprintln!("Push token database operation failed");
+            tracing::error!("Push token database operation failed");
             ApiError::unavailable("push token storage is unavailable")
         })?;
     if !authorized {
