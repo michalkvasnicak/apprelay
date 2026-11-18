@@ -5,6 +5,7 @@ import { useAccountBusy } from "../account/hooks";
 import { secondaryClass } from "../components/forms";
 import { clearTargetDevice, type PairedDevice } from "../device";
 import { PairingWorkspace } from "../pairing/PairingWorkspace";
+import { PairingController } from "../pairing/controller";
 import { SigningPanel } from "./SigningPanel";
 import { signingController } from "./controller";
 
@@ -15,6 +16,7 @@ export function SigningWorkspace({
   file?: File;
   onFileSelected: (file: File) => void;
 }) {
+  const [pairing, setPairing] = useState(() => new PairingController());
   const [device, setDevice] = useState<PairedDevice | null>(null);
   const busy = useAccountBusy();
   const client = useQueryClient();
@@ -22,12 +24,12 @@ export function SigningWorkspace({
   useEffect(() => clearTargetDevice, []);
 
   if (!device) {
-    return <PairingWorkspace onPaired={onPaired} />;
+    return <PairingWorkspace controller={pairing} onPaired={onPaired} />;
   }
 
   return (
     <div className="space-y-6">
-      <SigningPanel file={file} device={device} onFileSelected={onFileSelected} />
+      <SigningPanel file={file} device={device} pairing={pairing} onFileSelected={onFileSelected} />
       <button
         type="button"
         className={secondaryClass}
@@ -36,6 +38,7 @@ export function SigningWorkspace({
           clearTargetDevice();
           signingController.reset();
           void client.invalidateQueries({ queryKey: ["signing"] });
+          setPairing(new PairingController());
           setDevice(null);
         }}
       >

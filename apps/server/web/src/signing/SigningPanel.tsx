@@ -1,28 +1,58 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { AccountError, accountController } from "../account/controller";
 import { useAccountAction, useAccountBusy } from "../account/hooks";
 import { buttonClass, inputClass } from "../components/forms";
 import { selectTargetDevice, type PairedDevice } from "../device";
-import { SignedResult } from "./SignedResult";
+import { PairingError, type PairingController } from "../pairing/controller";
+import { SignedResult, type InstallProgress } from "./SignedResult";
 import { signingController } from "./controller";
 import { useSigning } from "./hooks";
+import { queueInstall, uploadSignedIpa } from "./install";
 import { SigningError } from "./types";
 
 export function SigningPanel({
   file: sharedFile,
   device,
+  pairing,
   onFileSelected,
 }: {
   file?: File;
   device: PairedDevice;
+  pairing: PairingController;
   onFileSelected: (file: File) => void;
 }) {
   const client = useQueryClient();
   const busy = useAccountBusy();
   const state = useSigning();
   const [progress, setProgress] = useState("");
+  const [installProgress, setInstallProgress] = useState<InstallProgress>({ stage: "preparing" });
+  const uploadedJob = useRef<string | null>(null);
+  const submitInstall = async () => {
+    try {
+      if (!uploadedJob.current) {
+        setInstallProgress({ stage: "preparing" });
+        uploadedJob.current = await uploadSignedIpa(
+          signingController.signedFile(),
+          pairing.installAuthorization(),
+          (percent) => setInstallProgress({ stage: "uploading", percent }),
+        );
+      }
+      // Completion is idempotent: retry the same job if the response is lost.
+      setInstallProgress({ stage: "queueing" });
+      await queueInstall(uploadedJob.current, pairing.installAuthorization());
+      setInstallProgress({ stage: "queued" });
+    } catch (error) {
+      setInstallProgress({ stage: "failed" });
+      throw new AccountError(
+        error instanceof SigningError || error instanceof PairingError
+          ? error.message
+          : "Could not submit the install. Check your connection and try again.",
+      );
+    }
+  };
+  const retryInstall = useAccountAction(submitInstall);
   const changed = () => {
     void client.invalidateQueries({ queryKey: ["signing"] });
   };
@@ -60,10 +90,13 @@ export function SigningPanel({
     } finally {
       setProgress("");
     }
+    await submitInstall();
   });
 
   if (state.data?.status === "signed") {
-    return <SignedResult />;
+    return (
+      <SignedResult progress={installProgress} busy={busy} onRetry={() => retryInstall.mutate()} />
+    );
   }
 
   return (
@@ -72,8 +105,8 @@ export function SigningPanel({
         {sharedFile ? "Sign this app" : "Choose an IPA"}
       </h2>
       <p className="mt-3 text-sm leading-6 text-muted">
-        We’ll prepare the signing assets and sign your app automatically. Signing happens in this
-        browser; your private signing key stays here.
+        We’ll sign your app in this browser, then upload the signed IPA for installation on your
+        paired iPhone. Your private signing key stays in the browser.
       </p>
       <form
         className="mt-5"
@@ -111,7 +144,7 @@ export function SigningPanel({
             </p>
           </div>
           <button type="submit" className={buttonClass}>
-            {prepare.isPending ? "Signing…" : "Sign app"}
+            {prepare.isPending ? "Signing…" : "Sign and install"}
           </button>
         </fieldset>
       </form>

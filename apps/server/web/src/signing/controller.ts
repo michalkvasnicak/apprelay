@@ -69,7 +69,7 @@ class SigningController {
 
   signedFile() {
     if (this.status !== "signed" || !this.result) {
-      throw new SigningError("Sign an IPA before downloading");
+      throw new SigningError("Sign an IPA before installing");
     }
     return new File([this.result], this.fileName.replace(/\.ipa$/i, "") + "-signed.ipa", {
       type: "application/octet-stream",
@@ -99,7 +99,7 @@ class SigningController {
         }
         this.result = response.bytes;
         this.status = "signed";
-        this.message = "Your app is signed and ready to download.";
+        this.message = "Your app is signed and ready to install.";
       });
     } catch (error) {
       if (revision === this.revision) {

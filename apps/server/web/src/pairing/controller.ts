@@ -31,6 +31,15 @@ export class PairingController {
     return !this.terminal && Date.now() < this.expiresAt ? this.token : null;
   }
 
+  installAuthorization() {
+    const expiresAt =
+      this.terminal?.status === "done" ? Date.parse(this.terminal.device.expires_at) : 0;
+    if (!this.token || !(Date.now() < Math.min(this.expiresAt, expiresAt))) {
+      throw new PairingError("Pair your iPhone again before installing.");
+    }
+    return { Authorization: `Bearer ${this.token}` };
+  }
+
   appLink() {
     const token = this.activeToken();
     return token ? pairingAppLink(token) : null;
@@ -139,7 +148,10 @@ export class PairingController {
 
   private finish(status: TerminalStatus) {
     this.terminal = status;
-    this.token = null;
+    // After success the token can authorize installs, but no longer produces pairing links.
+    if (status.status === "failed") {
+      this.token = null;
+    }
     return status;
   }
 }

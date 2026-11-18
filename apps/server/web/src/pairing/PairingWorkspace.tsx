@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import { ActionError, buttonClass, inputClass } from "../components/forms";
 import type { PairedDevice } from "../device";
-import { PairingController, PairingError, type PairingStatus } from "./controller";
+import { PairingError, type PairingController, type PairingStatus } from "./controller";
 import { pairingConfigured } from "./links";
 import { TestFlightInvite } from "./TestFlightInvite";
 
@@ -15,8 +15,13 @@ const labels = {
   failed: "Pairing failed. You can start a new attempt.",
 } as const satisfies Record<PairingStatus, string>;
 
-export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice) => void }) {
-  const [controller] = useState(() => new PairingController());
+export function PairingWorkspace({
+  controller,
+  onPaired,
+}: {
+  controller: PairingController;
+  onPaired: (device: PairedDevice) => void;
+}) {
   const [generation, setGeneration] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "manual">("idle");
   const onIPhone = /\biPhone\b/i.test(navigator.userAgent);
