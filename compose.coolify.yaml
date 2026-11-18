@@ -3,10 +3,11 @@
 # Host cloudflared targets http://127.0.0.1:18080; no Coolify domain is required.
 # Do not assign domains to api/workers or publicly publish HTTP/pairing/database ports.
 # The external network must contain PostgreSQL and Temporal.
-# Inspect Coolify's generated Compose: api/pairing-worker must NOT get networks.
+# Inspect Coolify's generated Compose: services sharing vpn-agent's network
+# namespace (api, pairing-worker, install-worker) must NOT get networks.
 #
-# Recreate the whole stack on deployments (not rolling updates): api and the
-# pairing worker must be recreated when vpn-agent's network namespace changes.
+# Recreate the whole stack on deployments (not rolling updates): services
+# sharing vpn-agent's network namespace must be recreated when it changes.
 # Host prerequisite: kernel WireGuard support (modprobe wireguard if needed).
 # Open the UDP port in the host/provider firewall; no host networking or TUN mount.
 
@@ -179,13 +180,13 @@ services:
 
   install-worker:
     <<: *app
-    profiles: ["install"]
     command: ["install-worker"]
     network_mode: "service:vpn-agent"
     security_opt:
       - no-new-privileges:true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=384m,mode=1777
+      # Five concurrent installs can each stage up to 256 MiB, plus filesystem overhead.
+      - /tmp:rw,noexec,nosuid,size=1536m,mode=1777
     depends_on:
       vpn-agent:
         condition: service_healthy

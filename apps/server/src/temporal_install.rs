@@ -298,7 +298,7 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let runtime = Runtime::from_current_tokio(Default::default())?;
     let tuner = TunerHolder::builder()
         .workflow_task_slot_supplier(FixedSizeSlotSupplier::new(4))
-        .activity_task_slot_supplier(FixedSizeSlotSupplier::new(1))
+        .activity_task_slot_supplier(FixedSizeSlotSupplier::new(5))
         .local_activity_task_slot_supplier(FixedSizeSlotSupplier::new(1))
         .nexus_task_slot_supplier(FixedSizeSlotSupplier::new(1))
         .build();
