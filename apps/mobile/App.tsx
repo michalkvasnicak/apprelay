@@ -35,24 +35,18 @@ export default function App() {
 function VpnScreen() {
   const { identity, status: statusQuery, registration, connection } = useVpn();
   const status = statusQuery.isError ? "unknown" : (statusQuery.data ?? "unknown");
-  const pairing = usePairing(status, () => registration.mutateAsync());
+  usePairing(registration.mutateAsync);
   const connected = status === "connected";
   const transitioning =
     status === "unknown" ||
     status === "connecting" ||
     status === "reconnecting" ||
     status === "disconnecting";
-  const busy = connection.isPending || pairing.start.isPending || transitioning;
+  const busy = connection.isPending || transitioning;
   const notifications = usePushNotifications(registration.data, connected && !busy);
-  const paired = pairing.available && pairing.start.isSuccess;
-  const waitingToPair = pairing.available && connected && !pairing.start.isError && !paired;
-  const loading = isVpnAvailable && (busy || waitingToPair);
+  const loading = isVpnAvailable && busy;
   const disabled = !isVpnAvailable || loading || (!connected && !identity.data);
-
-  let buttonLabel = connected ? "Disconnect" : "Connect";
-  if (pairing.available && connected) {
-    buttonLabel = paired ? "Done" : "Retry pairing";
-  }
+  const buttonLabel = connected ? "Disconnect" : "Connect";
 
   let led: LedState = "off";
   if (loading) {
@@ -64,24 +58,10 @@ function VpnScreen() {
   const statusLabel = isVpnAvailable ? statusLabels[status] : "Unavailable";
 
   const error =
-    pairing.notice ??
-    pairing.start.error?.message ??
     connection.error?.message ??
     identity.error?.message ??
     statusQuery.error?.message ??
     notifications.error;
-
-  function handlePress() {
-    if (paired) {
-      pairing.dismiss();
-    } else if (pairing.available && connected) {
-      pairing.start.mutate();
-    } else {
-      connection.mutate(connected);
-    }
-  }
-
-  const outline = connected && !pairing.available;
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -111,15 +91,15 @@ function VpnScreen() {
           accessibilityRole="button"
           accessibilityState={{ disabled }}
           disabled={disabled}
-          onPress={handlePress}
+          onPress={() => connection.mutate(connected)}
           style={({ pressed }) => [
             styles.button,
-            outline && styles.outlineButton,
+            connected && styles.outlineButton,
             disabled && styles.disabledButton,
             pressed && styles.pressedButton,
           ]}
         >
-          <Text style={[styles.buttonText, outline && styles.outlineButtonText]}>
+          <Text style={[styles.buttonText, connected && styles.outlineButtonText]}>
             {buttonLabel}
           </Text>
         </Pressable>

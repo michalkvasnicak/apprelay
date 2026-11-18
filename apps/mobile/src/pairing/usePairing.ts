@@ -1,14 +1,26 @@
-import { useMutation } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { Linking } from "react-native";
+import * as Sentry from "@sentry/react-native";
+import { scheduleNotificationAsync } from "expo-notifications";
+import { useEffect } from "react";
+import { AppState, Linking } from "react-native";
 
 import { createApiClient } from "../api/client";
 import type { DeviceRegistration } from "../vpn/config";
-import { vpn, type VpnStatus } from "../vpn/native";
 
 const pairingScheme = process.env.EXPO_PUBLIC_APP_SCHEME;
+const maxRetries = 3;
+const requestTimeoutMs = 15_000;
 
-class PairingError extends Error {}
+function notifyPairingFailure() {
+  if (AppState.currentState !== "active") {
+    return;
+  }
+  void scheduleNotificationAsync({
+    content: { title: "Pairing couldn't be started." },
+    trigger: null,
+  }).catch(() => {
+    // Notifications may be unavailable; pairing failures are already reported to Sentry.
+  });
+}
 
 function pairingToken(value: string): string | null {
   if (!pairingScheme) {
@@ -37,151 +49,106 @@ function pairingToken(value: string): string | null {
   }
 }
 
-export function usePairing(status: VpnStatus, register: () => Promise<DeviceRegistration>) {
-  const token = useRef<string | null>(null);
-  const automaticallyStarted = useRef(false);
-  const request = useRef<AbortController | null>(null);
-  const retryAt = useRef(0);
-  const [available, setAvailable] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const start = useMutation({
-    mutationFn: async () => {
-      const capability = token.current;
-      if (!capability) {
-        throw new PairingError("Open the pairing link from your browser first.");
-      }
-      if (Date.now() < retryAt.current) {
-        throw new PairingError("Please wait before retrying the status request.");
-      }
-      const controller = new AbortController();
-      request.current = controller;
-      const timeout = setTimeout(() => controller.abort(), 90_000);
-      try {
-        if ((await vpn.getStatus()) !== "connected") {
-          throw new PairingError("Connect the VPN before pairing.");
-        }
-        const api = createApiClient();
-        const { data: attempt, response: statusResponse } = await api.GET(
-          "/v1/pairing-attempts/{token}",
-          {
-            params: { path: { token: capability } },
-            signal: controller.signal,
-          },
-        );
-        if (statusResponse.status === 429) {
-          const value = statusResponse.headers.get("Retry-After");
-          const seconds = value ? Number(value) : NaN;
-          const delay = Number.isFinite(seconds)
-            ? seconds * 1000
-            : Date.parse(value ?? "") - Date.now();
-          retryAt.current = Date.now() + (Number.isFinite(delay) ? Math.max(2000, delay) : 10_000);
-        }
-        if (!attempt || statusResponse.status !== 200) {
-          throw new PairingError(
-            `Could not check pairing (HTTP ${statusResponse.status}). Return to the browser for its status.`,
-          );
-        }
-        if (attempt.status === "done") {
-          return;
-        }
-        if (attempt.status === "failed") {
-          throw new PairingError("This attempt has ended. Start a new attempt in the browser.");
-        }
-        const device = await register();
-        controller.signal.throwIfAborted();
-        if ((await vpn.getStatus()) !== "connected") {
-          throw new PairingError("The VPN disconnected. Reconnect before retrying pairing.");
-        }
-        controller.signal.throwIfAborted();
-        // The server waits for actual WireGuard readiness; native startup alone is not proof.
-        const { response } = await api.POST("/v1/devices/{device_id}/pairing", {
-          params: { path: { device_id: device.device_id } },
-          headers: { Authorization: `Bearer ${device.token}` },
-          body: { token: capability },
-          signal: controller.signal,
-        });
-        if (response.status !== 201) {
-          throw new PairingError(
-            `Pairing was not accepted (HTTP ${response.status}). Check the browser before retrying.`,
-          );
-        }
-      } catch (error) {
-        // Never expose native/fetch errors that might contain the capability URL.
-        throw new PairingError(
-          error instanceof PairingError
-            ? error.message
-            : "Could not start pairing. Check VPN and local-network permissions, then check the browser before retrying.",
-        );
-      } finally {
-        clearTimeout(timeout);
-        request.current = null;
-      }
-    },
-    retry: false,
-    gcTime: 0,
-  });
-
-  useEffect(() => {
-    let mounted = true;
-    function receive(value: string) {
-      if (!mounted) {
-        return;
-      }
-      const incoming = pairingToken(value);
-      if (!incoming) {
-        setNotice("Invalid pairing link. Open a new link from the browser.");
-        return;
-      }
-      if (incoming === token.current) {
-        return;
-      }
-      if (token.current) {
-        setNotice(
-          "Another pairing link is already open. Dismiss it before opening a different link.",
-        );
-        return;
-      }
-      token.current = incoming;
-      setAvailable(true);
-      setNotice(null);
+async function startPairing(
+  token: string,
+  device: DeviceRegistration,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const api = createApiClient();
+  // Same-device claims are idempotent, including when the first response was lost.
+  for (let attempt = 1; attempt <= 1 + maxRetries; attempt++) {
+    if (signal.aborted) {
+      return false;
     }
-    const subscription = Linking.addEventListener("url", ({ url }) => receive(url));
-    void Linking.getInitialURL()
-      .then((url) => {
-        if (url) {
-          receive(url);
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setNotice("Could not read the pairing link. Open it again from the browser.");
-        }
+    const request = new AbortController();
+    const abortRequest = () => request.abort();
+    signal.addEventListener("abort", abortRequest);
+    const timeout = setTimeout(abortRequest, requestTimeoutMs);
+    let status: number | undefined;
+    try {
+      const { response } = await api.POST("/v1/devices/{device_id}/pairing", {
+        params: { path: { device_id: device.device_id } },
+        headers: { Authorization: `Bearer ${device.token}` },
+        body: { token },
+        signal: request.signal,
       });
-    return () => {
-      mounted = false;
-      subscription.remove();
-      request.current?.abort();
-    };
-  }, []);
-
-  const { mutate: startPairing } = start;
-  useEffect(() => {
-    if (available && status === "connected" && !automaticallyStarted.current) {
-      automaticallyStarted.current = true;
-      startPairing();
+      if (response.status === 201) {
+        return true;
+      }
+      status = response.status;
+    } catch {
+      // Report below without forwarding a fetch error that might include credentials.
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abortRequest);
     }
-  }, [available, status, startPairing]);
-
-  function dismiss() {
-    if (start.isPending) {
-      return;
+    if (signal.aborted) {
+      return false;
     }
-    token.current = null;
-    automaticallyStarted.current = false;
-    setAvailable(false);
-    setNotice(null);
-    start.reset();
+    let failure = "request";
+    if (status !== undefined) {
+      failure = "http";
+    } else if (request.signal.aborted) {
+      failure = "timeout";
+    }
+    Sentry.captureException(new Error(`Pairing POST failed on attempt ${attempt}`), {
+      tags: {
+        operation: "start_pairing",
+        attempt: String(attempt),
+        failure,
+        ...(status !== undefined ? { http_status: String(status) } : {}),
+      },
+    });
+    if (attempt <= maxRetries) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1000 * 2 ** (attempt - 1)));
+    }
   }
+  return false;
+}
 
-  return { available, notice, start, dismiss };
+export function usePairing(register: () => Promise<DeviceRegistration>) {
+  useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    const inFlight = new Set<string>();
+
+    async function receive(url: string) {
+      const token = pairingToken(url);
+      if (signal.aborted || !token || inFlight.has(token)) {
+        return;
+      }
+      inFlight.add(token);
+      try {
+        const device = await register();
+        if (!(await startPairing(token, device, signal)) && !signal.aborted) {
+          notifyPairingFailure();
+        }
+      } catch {
+        if (!signal.aborted) {
+          Sentry.captureException(new Error("Could not prepare pairing request"), {
+            tags: { operation: "start_pairing" },
+          });
+          notifyPairingFailure();
+        }
+      } finally {
+        inFlight.delete(token);
+      }
+    }
+
+    const subscription = Linking.addEventListener("url", ({ url }) => void receive(url));
+    void Linking.getInitialURL().then(
+      (url) => {
+        if (url) {
+          void receive(url);
+        }
+      },
+      () => {
+        // Without a link, there is no pairing attempt to start.
+      },
+    );
+    return () => {
+      controller.abort();
+      subscription.remove();
+    };
+  }, [register]);
 }
