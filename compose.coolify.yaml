@@ -24,6 +24,9 @@ x-app: &app
 
 x-logging-environment: &logging-environment
   APPRELAY_LOG_LEVEL: ${APPRELAY_LOG_LEVEL:-info}
+  SENTRY_DSN:
+  SENTRY_ENVIRONMENT:
+  SENTRY_RELEASE:
 
 x-database-environment: &database-environment
   DATABASE_URL: ${DATABASE_URL:?Set the existing AppRelay PostgreSQL database URL}

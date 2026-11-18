@@ -81,7 +81,7 @@ pub(crate) struct InstallTarget {
 }
 
 impl PairingStore {
-    pub(crate) async fn install_target(&self, job_id: Uuid) -> io::Result<InstallTarget> {
+    pub(crate) async fn install_target(&self, job_id: Uuid) -> Result<InstallTarget, &'static str> {
         let row = sqlx::query_as::<_, InstallTargetRow>(
             "SELECT d.id AS device_id, host(d.address) AS address, d.remote_pairing_port,
                  p.nonce, p.ciphertext, LEAST(d.expires_at, j.expires_at) AS expires_at
@@ -96,26 +96,23 @@ impl PairingStore {
         .bind(FORMAT_VERSION)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|_| io::Error::other("install target lookup failed"))?
-        .ok_or_else(|| io::Error::other("paired phone unavailable; connect its VPN"))?;
-        let plaintext =
-            self.key
-                .open(&associated_data(row.device_id), &row.nonce, row.ciphertext)?;
-        let stored: InstallCredentials = serde_json::from_slice(&plaintext)
-            .map_err(|_| io::Error::other("invalid stored pairing"))?;
+        .map_err(|_| "install target lookup failed")?
+        .ok_or("paired phone unavailable; connect its VPN")?;
+        let plaintext = self
+            .key
+            .open(&associated_data(row.device_id), &row.nonce, row.ciphertext)
+            .map_err(|_| "could not decrypt stored pairing")?;
+        let stored: InstallCredentials =
+            serde_json::from_slice(&plaintext).map_err(|_| "invalid stored pairing")?;
         let pairing_file = Zeroizing::new(stored.pairing_file);
         let peer_key = stored
             .peer_public_key
-            .ok_or_else(|| io::Error::other("pair the phone again before installing"))?;
-        let record = RpPairingFile::from_bytes(&pairing_file)
-            .map_err(|_| io::Error::other("invalid stored pairing"))?;
+            .ok_or("pair the phone again before installing")?;
+        let record =
+            RpPairingFile::from_bytes(&pairing_file).map_err(|_| "invalid stored pairing")?;
         Ok(InstallTarget {
-            address: row
-                .address
-                .parse()
-                .map_err(|_| io::Error::other("invalid device address"))?,
-            port: u16::try_from(row.remote_pairing_port)
-                .map_err(|_| io::Error::other("invalid device port"))?,
+            address: row.address.parse().map_err(|_| "invalid device address")?,
+            port: u16::try_from(row.remote_pairing_port).map_err(|_| "invalid device port")?,
             record,
             peer_key,
             expires_at: row.expires_at,

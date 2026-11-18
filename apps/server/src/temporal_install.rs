@@ -24,6 +24,7 @@ use crate::{
     http::ArtifactApi,
     install::{Application, deliver},
     r2::R2Storage,
+    telemetry,
     temporal_pairing::client,
 };
 
@@ -113,6 +114,7 @@ impl InstallActivities {
         ctx: ActivityContext,
         id: Uuid,
     ) -> Result<(), ActivityError> {
+        tracing::info!(job_id = %id, "Install activity started");
         let operation = async {
             let (size, checksum) = sqlx::query_as::<_, (i64, String)>(
                 "SELECT size_bytes, sha256 FROM install_jobs WHERE id = $1 AND queued_at IS NOT NULL
@@ -121,8 +123,8 @@ impl InstallActivities {
             .bind(id)
             .fetch_optional(&self.pool)
             .await
-            .map_err(database)?
-            .ok_or_else(|| io::Error::other("install job expired"))?;
+            .map_err(|_| "install job storage unavailable")?
+            .ok_or("install job expired")?;
             // Check that the authorized pairing is still usable before downloading.
             self.pairings.install_target(id).await?;
             let bytes = tokio::time::timeout(
@@ -130,32 +132,40 @@ impl InstallActivities {
                 self.storage.read_signed(&object_key(id), size, &checksum),
             )
             .await
-            .map_err(|_| io::Error::other("signed IPA download timed out"))?
-            .map_err(|_| io::Error::other("signed IPA missing or failed integrity check"))?;
+            .map_err(|_| "signed IPA download timed out")?
+            .map_err(|_| "signed IPA missing or failed integrity check")?;
             let app = tokio::task::spawn_blocking(move || Application::unpack(bytes))
                 .await
-                .map_err(|_| io::Error::other("IPA staging interrupted"))?
-                .map_err(io::Error::other)?;
+                .map_err(|_| "IPA staging interrupted")??;
             // Refresh the leased endpoint and confirm no re-pairing during preparation.
             let target = self.pairings.install_target(id).await?;
             let remaining = (target.expires_at - Utc::now())
                 .to_std()
-                .map_err(|_| io::Error::other("install authorization expired"))?;
+                .map_err(|_| "install authorization expired")?;
             tokio::time::timeout(
                 remaining.min(Duration::from_secs(540)),
                 deliver(id, target, app),
             )
             .await
-            .map_err(|_| io::Error::other("phone installation timed out"))?
-            .map_err(io::Error::other)
+            .map_err(|_| "phone installation timed out")?
         };
         tokio::pin!(operation);
         let mut ticks = tokio::time::interval(Duration::from_secs(2));
         loop {
             tokio::select! {
-                _ = ctx.cancelled() => return Err(ActivityError::cancelled()),
-                _ = ticks.tick() => ctx.record_heartbeat(()).await?,
-                result = &mut operation => return result.map_err(Into::into),
+                _ = ctx.cancelled() => {
+                    tracing::warn!(job_id = %id, "Install activity cancelled");
+                    return Err(ActivityError::cancelled());
+                },
+                _ = ticks.tick() => ctx.record_heartbeat(()).await.inspect_err(|_| {
+                    tracing::error!(job_id = %id, "Install activity heartbeat failed");
+                    telemetry::report("Install activity heartbeat failed");
+                })?,
+                result = &mut operation => return result.map_err(|reason| {
+                    tracing::error!(job_id = %id, reason, "Phone installation failed");
+                    telemetry::report_with_reason("Phone installation failed", reason);
+                    io::Error::other(reason).into()
+                }),
             }
         }
     }
@@ -169,16 +179,26 @@ impl InstallActivities {
         let Some(installed) = notice.outcome else {
             return Err(io::Error::other("missing install outcome").into());
         };
+        let outcome = if installed { "installed" } else { "failed" };
         sqlx::query(
             "UPDATE install_jobs SET outcome = COALESCE(outcome, $2),
                  finished_at = COALESCE(finished_at, clock_timestamp())
              WHERE id = $1 AND queued_at IS NOT NULL",
         )
         .bind(notice.id)
-        .bind(if installed { "installed" } else { "failed" })
+        .bind(outcome)
         .execute(&self.pool)
         .await
-        .map_err(database)?;
+        .map_err(database)
+        .inspect_err(|_| {
+            tracing::error!(job_id = %notice.id, outcome, "Could not record install outcome");
+            telemetry::report("Could not record install outcome");
+        })?;
+        if installed {
+            tracing::info!(job_id = %notice.id, outcome, "Install finished");
+        } else {
+            tracing::warn!(job_id = %notice.id, outcome, "Install finished");
+        }
         Ok(())
     }
 
@@ -222,9 +242,14 @@ impl InstallActivities {
         // Deterministic for APNs retries, distinct for start and terminal events.
         let push_id =
             Uuid::from_u128(notice.id.as_u128() ^ if notice.outcome.is_some() { 1 } else { 0 });
-        match apns.send(push_id, &notification).await? {
+        match apns.send(push_id, &notification).await.inspect_err(|_| {
+            tracing::error!(job_id = %notice.id, state, "Install notification delivery failed");
+            telemetry::report("Install notification delivery failed");
+        })? {
             SendOutcome::Accepted | SendOutcome::Expired => {}
-            SendOutcome::Rejected => tracing::warn!("APNs rejected install notification"),
+            SendOutcome::Rejected => {
+                tracing::warn!(job_id = %notice.id, state, "APNs rejected install notification");
+            }
             SendOutcome::InvalidToken(invalidated_at) => {
                 if invalidated_at
                     .is_none_or(|time| notification.token_updated_at.timestamp_millis() <= time)

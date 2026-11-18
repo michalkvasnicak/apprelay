@@ -79,6 +79,11 @@ pub fn report(message: &'static str) {
     sentry::capture_message(message, sentry::Level::Error);
 }
 
+/// Attach a code-defined failure reason without forwarding the underlying error.
+pub fn report_with_reason(message: &'static str, reason: &'static str) {
+    sentry::with_scope(|scope| scope.set_tag("reason", reason), || report(message));
+}
+
 fn setting(name: &str) -> io::Result<Option<String>> {
     match env::var(name) {
         Ok(value) if value.trim().is_empty() => Ok(None),
