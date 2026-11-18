@@ -24,13 +24,13 @@ pub(crate) enum CodeLookup {
 }
 
 #[derive(sqlx::FromRow)]
-struct CodeRow {
-    id: Uuid,
-    device_id: Uuid,
-    code_id: Uuid,
-    nonce: Vec<u8>,
-    ciphertext: Vec<u8>,
-    expires_at: DateTime<Utc>,
+pub(crate) struct CodeRow {
+    pub id: Uuid,
+    pub device_id: Uuid,
+    pub code_id: Uuid,
+    pub nonce: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+    pub expires_at: DateTime<Utc>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -73,7 +73,7 @@ impl PairingCodeRepository {
         })
     }
 
-    fn decrypt(&self, row: CodeRow) -> io::Result<ActiveCode> {
+    pub(crate) fn decrypt(&self, row: CodeRow) -> io::Result<ActiveCode> {
         let plaintext = self.key.open(
             &associated_data(row.id, row.code_id, row.device_id),
             &row.nonce,
@@ -166,11 +166,12 @@ impl PairingCodeRepository {
         }
         let saved = sqlx::query(
             "INSERT INTO pairing_attempts
-                 (id, device_id, device_expires_at, started_at, expires_at, timeout_notification_id)
-             VALUES ($1, $2, $3, $4, LEAST($3, $5), $6)
+                 (id, device_id, device_expires_at, started_at, expires_at, timeout_notification_id, public_attempt_id)
+             VALUES ($1, $2, $3, $4, LEAST($3, $5), $6, $7)
              ON CONFLICT (device_id) DO UPDATE SET
                id = EXCLUDED.id, device_expires_at = EXCLUDED.device_expires_at,
                started_at = EXCLUDED.started_at, expires_at = EXCLUDED.expires_at,
+               public_attempt_id = EXCLUDED.public_attempt_id,
                ended_at = NULL, code_id = NULL, nonce = NULL, ciphertext = NULL,
                notification_queued_at = NULL, notification_sent_at = NULL,
                started_notification_queued_at = NULL, started_notification_sent_at = NULL,
@@ -187,6 +188,7 @@ impl PairingCodeRepository {
         .bind(started_at)
         .bind(expires_at)
         .bind(Uuid::new_v4())
+        .bind(public_attempt_id)
         .execute(&mut *tx)
         .await
         .map_err(storage_error)?;

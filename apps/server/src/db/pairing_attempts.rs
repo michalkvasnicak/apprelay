@@ -1,8 +1,12 @@
+use std::io;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 use utoipa::ToSchema;
 use uuid::Uuid;
+
+use super::pairing_codes::{CodeRow, PairingCodeRepository};
 
 #[derive(Clone)]
 pub struct PairingAttemptRepository {
@@ -12,11 +16,18 @@ pub struct PairingAttemptRepository {
 #[derive(Serialize, ToSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum AttemptStatus {
-    Pending,
-    Pairing,
-    Success { device: PairedDevice },
-    Failed { reason: FailureReason },
-    Expired,
+    Waiting,
+    Connecting,
+    Pairing {
+        code: String,
+        expires_at: DateTime<Utc>,
+    },
+    Done {
+        device: PairedDevice,
+    },
+    Failed {
+        reason: FailureReason,
+    },
 }
 
 #[derive(Serialize, ToSchema)]
@@ -33,7 +44,14 @@ struct StatusRow {
     status: String,
     reason: Option<String>,
     expired: bool,
+    worker_started: bool,
+    live_device_id: Option<Uuid>,
     live_pairing: bool,
+    session_id: Option<Uuid>,
+    code_id: Option<Uuid>,
+    nonce: Option<Vec<u8>>,
+    ciphertext: Option<Vec<u8>>,
+    code_expires_at: Option<DateTime<Utc>>,
     paired_udid: Option<String>,
     paired_name: Option<String>,
     paired_model: Option<String>,
@@ -73,31 +91,76 @@ impl PairingAttemptRepository {
     pub(crate) async fn status(
         &self,
         hash: &[u8; 32],
-    ) -> Result<Option<AttemptStatus>, sqlx::Error> {
+        codes: &PairingCodeRepository,
+    ) -> io::Result<Option<AttemptStatus>> {
         let row = sqlx::query_as::<_, StatusRow>(
-            "SELECT a.status, a.reason, a.expires_at <= clock_timestamp() AS expired,
+            "SELECT a.status, a.reason, a.expires_at <= statement_timestamp() AS expired,
+                 a.worker_started_at IS NOT NULL AS worker_started,
+                 d.id AS live_device_id,
                  a.paired_udid, a.paired_name, a.paired_model, a.expires_at,
-                 EXISTS (SELECT 1 FROM devices d
-                     JOIN device_pairings p ON p.device_id = d.id
-                     WHERE d.id = a.device_id AND d.expires_at = a.device_expires_at
-                       AND d.expires_at > clock_timestamp()
-                       AND p.attempt_started_at = a.pairing_started_at) AS live_pairing
-             FROM public_pairing_attempts a WHERE a.token_hash = $1",
+                 EXISTS (SELECT 1 FROM device_pairings p WHERE p.device_id = d.id
+                     AND p.attempt_started_at = a.pairing_started_at) AS live_pairing,
+                 s.id AS session_id, s.code_id, s.nonce, s.ciphertext,
+                 CASE WHEN s.id IS NOT NULL THEN LEAST(s.expires_at, a.expires_at)
+                 END AS code_expires_at
+             FROM public_pairing_attempts a
+             LEFT JOIN devices d ON d.id = a.device_id AND d.expires_at = a.device_expires_at
+                 AND d.expires_at > statement_timestamp()
+             LEFT JOIN pairing_attempts s ON s.public_attempt_id = a.id AND s.device_id = d.id
+                 AND s.device_expires_at = d.expires_at AND s.ended_at IS NULL
+                 AND s.code_id IS NOT NULL AND s.expires_at > statement_timestamp()
+             WHERE a.token_hash = $1",
         )
         .bind(hash.as_slice())
         .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(|row| {
-            if row.expired {
-                return AttemptStatus::Expired;
-            }
+        .await
+        .map_err(|_| io::Error::other("could not read pairing attempt"))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let failed = |reason| AttemptStatus::Failed { reason };
+        let status = if row.expired || row.status == "expired" {
+            failed(FailureReason::Timeout)
+        } else {
             match row.status.as_str() {
-                "pending" => AttemptStatus::Pending,
-                "pairing" => AttemptStatus::Pairing,
+                "pending" => AttemptStatus::Waiting,
+                "pairing" => match (
+                    row.live_device_id,
+                    row.session_id,
+                    row.code_id,
+                    row.nonce,
+                    row.ciphertext,
+                    row.code_expires_at,
+                ) {
+                    (None, ..) => failed(FailureReason::PairingFailed),
+                    (
+                        Some(device_id),
+                        Some(id),
+                        Some(code_id),
+                        Some(nonce),
+                        Some(ciphertext),
+                        Some(expires_at),
+                    ) => {
+                        let active = codes.decrypt(CodeRow {
+                            id,
+                            device_id,
+                            code_id,
+                            nonce,
+                            ciphertext,
+                            expires_at,
+                        })?;
+                        AttemptStatus::Pairing {
+                            code: active.code,
+                            expires_at: active.expires_at,
+                        }
+                    }
+                    _ if row.worker_started => AttemptStatus::Connecting,
+                    _ => AttemptStatus::Waiting,
+                },
                 "success" if row.live_pairing => {
                     match (row.paired_udid, row.paired_name, row.paired_model) {
                         (Some(udid), Some(name), Some(model)) if !udid.trim().is_empty() => {
-                            AttemptStatus::Success {
+                            AttemptStatus::Done {
                                 device: PairedDevice {
                                     udid,
                                     name,
@@ -106,19 +169,16 @@ impl PairingAttemptRepository {
                                 },
                             }
                         }
-                        _ => AttemptStatus::Expired,
+                        _ => failed(FailureReason::PairingFailed),
                     }
                 }
-                "failed" => AttemptStatus::Failed {
-                    reason: if row.reason.as_deref() == Some("timeout") {
-                        FailureReason::Timeout
-                    } else {
-                        FailureReason::PairingFailed
-                    },
-                },
-                _ => AttemptStatus::Expired,
+                "failed" if row.reason.as_deref() == Some("timeout") => {
+                    failed(FailureReason::Timeout)
+                }
+                _ => failed(FailureReason::PairingFailed),
             }
-        }))
+        };
+        Ok(Some(status))
     }
 
     pub(crate) async fn claim(

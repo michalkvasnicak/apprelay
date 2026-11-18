@@ -234,25 +234,28 @@ export interface components {
     AttemptStatus:
       | {
           /** @enum {string} */
-          status: "pending";
+          status: "waiting";
         }
       | {
+          /** @enum {string} */
+          status: "connecting";
+        }
+      | {
+          code: string;
+          /** Format: date-time */
+          expires_at: string;
           /** @enum {string} */
           status: "pairing";
         }
       | {
           device: components["schemas"]["PairedDevice"];
           /** @enum {string} */
-          status: "success";
+          status: "done";
         }
       | {
           reason: components["schemas"]["FailureReason"];
           /** @enum {string} */
           status: "failed";
-        }
-      | {
-          /** @enum {string} */
-          status: "expired";
         };
     CreateInstallJob: {
       /** @description Base64-encoded SHA-256 of the exact signed IPA to be uploaded. */

@@ -1,12 +1,8 @@
-import createClient from "openapi-fetch";
-
-import type { paths } from "../api/schema";
+import { api } from "../api/client";
 import { base64 } from "../apple/encoding";
 import { signingLimits } from "../signing/types";
 
 export class ArtifactError extends Error {}
-
-const client = createClient<paths>({ baseUrl: window.location.origin });
 
 async function readBytes(response: Response, size: number) {
   if (!response.body) {
@@ -44,7 +40,7 @@ export async function downloadArtifact(token: string, signal: AbortSignal): Prom
     throw new ArtifactError("This share link is invalid.");
   }
   try {
-    const { data, response } = await client.GET("/v1/artifacts/{token}", {
+    const { data, response } = await api.GET("/v1/artifacts/{token}", {
       params: { path: { token } },
       signal,
       cache: "no-store",

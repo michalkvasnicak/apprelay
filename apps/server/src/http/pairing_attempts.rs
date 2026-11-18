@@ -84,9 +84,9 @@ pub(super) async fn get(
 ) -> Result<impl IntoResponse, ApiError> {
     let status = state
         .attempts
-        .status(&token_hash(&token)?)
+        .status(&token_hash(&token)?, &state.codes)
         .await
-        .map_err(ApiError::database)?
+        .map_err(|_| ApiError::unavailable("pairing attempt status is unavailable"))?
         .ok_or(ApiError {
             status: StatusCode::NOT_FOUND,
             body: super::ErrorResponse::NotFound {

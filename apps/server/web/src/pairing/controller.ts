@@ -1,9 +1,11 @@
-import type { PairedDevice } from "../device";
+import { api } from "../api/client";
+import type { components } from "../api/schema";
 
 import { isPairingToken, pairingAppLink, pairingHandoffPath } from "./links";
 
-const statuses = ["pending", "pairing", "success", "failed", "expired"] as const;
-export type PairingStatus = (typeof statuses)[number];
+type AttemptStatus = components["schemas"]["AttemptStatus"];
+export type PairingStatus = AttemptStatus["status"];
+type TerminalStatus = Extract<AttemptStatus, { status: "done" | "failed" }>;
 
 export class PairingError extends Error {}
 
@@ -23,12 +25,7 @@ export class PairingController {
   private expiresAt = 0;
   private nextRequestAt = 0;
   private nextCreateAt = 0;
-  private terminal: PairingStatus | null = null;
-  private pairedDevice: PairedDevice | null = null;
-
-  device() {
-    return this.pairedDevice ? { ...this.pairedDevice } : null;
-  }
+  private terminal: TerminalStatus | null = null;
 
   private activeToken() {
     return !this.terminal && Date.now() < this.expiresAt ? this.token : null;
@@ -49,41 +46,32 @@ export class PairingController {
     if (Date.now() < this.nextCreateAt) {
       throw new PairingError("Please wait before creating another attempt.");
     }
-    let response: Response;
     try {
-      response = await fetch("/v1/pairing-attempts", {
-        method: "POST",
+      const { data, response } = await api.POST("/v1/pairing-attempts", {
         cache: "no-store",
         referrerPolicy: "no-referrer",
         signal: AbortSignal.timeout(20_000),
       });
-    } catch {
+      if (response.status === 429) {
+        this.nextCreateAt = Date.now() + retryDelay(response);
+        throw new PairingError("Too many requests. Please wait before trying again.");
+      }
+      if (response.status !== 201) {
+        throw new PairingError(`Could not create an attempt (HTTP ${response.status}).`);
+      }
+      if (!data || !isPairingToken(data.token)) {
+        throw new PairingError("The server returned an invalid attempt.");
+      }
+      this.token = data.token;
+      this.expiresAt = Date.parse(data.expires_at);
+      this.nextRequestAt = 0;
+      this.terminal = null;
+    } catch (error) {
+      if (error instanceof PairingError) {
+        throw error;
+      }
       throw new PairingError("Could not create an attempt. No request was retried automatically.");
     }
-    if (response.status === 429) {
-      this.nextCreateAt = Date.now() + retryDelay(response);
-      throw new PairingError("Too many requests. Please wait before trying again.");
-    }
-    if (response.status !== 201) {
-      throw new PairingError(`Could not create an attempt (HTTP ${response.status}).`);
-    }
-    const data: unknown = await response.json();
-    if (
-      !data ||
-      typeof data !== "object" ||
-      !("token" in data) ||
-      !("expires_at" in data) ||
-      !isPairingToken(data.token) ||
-      typeof data.expires_at !== "string" ||
-      !Number.isFinite(Date.parse(data.expires_at))
-    ) {
-      throw new PairingError("The server returned an invalid attempt.");
-    }
-    this.token = data.token;
-    this.expiresAt = Date.parse(data.expires_at);
-    this.nextRequestAt = 0;
-    this.terminal = null;
-    this.pairedDevice = null;
   }
 
   interval() {
@@ -91,19 +79,19 @@ export class PairingController {
     return Math.max(1000, Math.min(delay, this.expiresAt - Date.now()));
   }
 
-  async status(signal: AbortSignal): Promise<PairingStatus> {
+  async status(signal: AbortSignal): Promise<AttemptStatus> {
     if (this.terminal) {
       return this.terminal;
     }
     if (!this.token || Date.now() >= this.expiresAt) {
-      this.finish("expired");
-      return "expired";
+      return this.finish({ status: "failed", reason: "timeout" });
     }
     if (Date.now() < this.nextRequestAt) {
       throw new PairingError("Status requests are paused. Waiting before retrying.");
     }
     try {
-      const response = await fetch(`/v1/pairing-attempts/${encodeURIComponent(this.token)}`, {
+      const { data, response } = await api.GET("/v1/pairing-attempts/{token}", {
+        params: { path: { token: this.token } },
         cache: "no-store",
         referrerPolicy: "no-referrer",
         signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
@@ -113,55 +101,34 @@ export class PairingController {
         throw new PairingError("Too many status requests. Waiting before retrying.");
       }
       if (response.status === 404) {
-        this.finish("expired");
-        return "expired";
+        return this.finish({ status: "failed", reason: "timeout" });
       }
       if (!response.ok) {
         throw new PairingError(`Status unavailable (HTTP ${response.status}).`);
       }
-      const data: unknown = await response.json();
-      if (
-        !data ||
-        typeof data !== "object" ||
-        !("status" in data) ||
-        !statuses.some((status) => status === data.status)
-      ) {
+      if (!data) {
         throw new PairingError("The server returned an invalid status.");
       }
-      const status = data.status as PairingStatus;
-      if (status === "success") {
-        const device = "device" in data ? data.device : null;
-        if (
-          !device ||
-          typeof device !== "object" ||
-          !("udid" in device) ||
-          typeof device.udid !== "string" ||
-          !device.udid.trim() ||
-          !("name" in device) ||
-          typeof device.name !== "string" ||
-          !("model" in device) ||
-          typeof device.model !== "string" ||
-          !("expires_at" in device) ||
-          typeof device.expires_at !== "string" ||
-          !Number.isFinite(Date.parse(device.expires_at))
-        ) {
-          throw new PairingError("The server returned invalid paired device information.");
+      switch (data.status) {
+        case "waiting":
+        case "connecting":
+        case "pairing":
+          return data;
+        case "failed":
+          return this.finish(data);
+        case "done": {
+          const expiresAt = Date.parse(data.device.expires_at);
+          if (!data.device.udid.trim() || !Number.isFinite(expiresAt)) {
+            throw new PairingError("The server returned invalid paired device information.");
+          }
+          if (expiresAt <= Date.now()) {
+            return this.finish({ status: "failed", reason: "timeout" });
+          }
+          return this.finish(data);
         }
-        if (Date.parse(device.expires_at) <= Date.now()) {
-          this.finish("expired");
-          return "expired";
-        }
-        this.pairedDevice = {
-          udid: device.udid,
-          name: device.name,
-          model: device.model,
-          expires_at: device.expires_at,
-        };
+        default:
+          throw new PairingError("The server returned an invalid status.");
       }
-      if (status !== "pending" && status !== "pairing") {
-        this.finish(status);
-      }
-      return status;
     } catch (error) {
       if (error instanceof PairingError) {
         throw error;
@@ -170,8 +137,9 @@ export class PairingController {
     }
   }
 
-  private finish(status: PairingStatus) {
+  private finish(status: TerminalStatus) {
     this.terminal = status;
     this.token = null;
+    return status;
   }
 }

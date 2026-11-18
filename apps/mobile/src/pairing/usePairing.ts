@@ -81,10 +81,10 @@ export function usePairing(status: VpnStatus, register: () => Promise<DeviceRegi
             `Could not check pairing (HTTP ${statusResponse.status}). Return to the browser for its status.`,
           );
         }
-        if (attempt.status === "success") {
+        if (attempt.status === "done") {
           return;
         }
-        if (attempt.status === "failed" || attempt.status === "expired") {
+        if (attempt.status === "failed") {
           throw new PairingError("This attempt has ended. Start a new attempt in the browser.");
         }
         const device = await register();

@@ -196,6 +196,19 @@ impl PairingActivities {
     ) -> Result<(), ActivityError> {
         let (device_id, public_attempt_id) = activity_ids(&device_id)?;
         let operation = async {
+            if let Some(attempt_id) = public_attempt_id {
+                sqlx::query(
+                    "UPDATE public_pairing_attempts
+                     SET worker_started_at = COALESCE(worker_started_at, clock_timestamp())
+                     WHERE id = $1 AND device_id = $2 AND status = 'pairing'
+                       AND expires_at > clock_timestamp()",
+                )
+                .bind(attempt_id)
+                .bind(device_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|_| io::Error::other("could not mark pairing attempt as started"))?;
+            }
             let attempt_expiry = self.require_attempt(device_id, public_attempt_id).await?;
             let (public_key, expires_at) = sqlx::query_as::<_, (Vec<u8>, DateTime<Utc>)>(
                 "SELECT wireguard_public_key, expires_at FROM devices

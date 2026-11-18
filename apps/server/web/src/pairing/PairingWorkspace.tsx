@@ -8,11 +8,11 @@ import { pairingConfigured } from "./links";
 import { TestFlightInvite } from "./TestFlightInvite";
 
 const labels = {
-  pending: "Open AppRelay on this iPhone and confirm pairing.",
-  pairing: "Pairing is in progress. Keep the VPN connected and follow any iPhone prompts.",
-  success: "Pairing completed successfully.",
+  waiting: "Open AppRelay on your iPhone and confirm pairing.",
+  connecting: "Connecting to your iPhone. Keep the VPN connected.",
+  pairing: "Enter this code when prompted on your iPhone.",
+  done: "Pairing completed successfully.",
   failed: "Pairing failed. You can start a new attempt.",
-  expired: "This attempt expired or is no longer available. Start a new attempt.",
 } as const satisfies Record<PairingStatus, string>;
 
 export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice) => void }) {
@@ -28,21 +28,34 @@ export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice
     gcTime: 0,
     refetchOnWindowFocus: "always",
     refetchInterval: (query) => {
-      const value = query.state.data;
-      if (value && value !== "pending" && value !== "pairing") {
+      const value = query.state.data?.status;
+      if (value === "done" || value === "failed") {
         return false;
       }
       return controller.interval();
     },
   });
   useEffect(() => {
-    if (status.data === "success") {
-      const device = controller.device();
-      if (device) {
-        onPaired(device);
-      }
+    if (status.data?.status === "done") {
+      onPaired(status.data.device);
     }
-  }, [status.data, onPaired, controller]);
+  }, [status.data, onPaired]);
+
+  const pairing = status.data?.status === "pairing" ? status.data : null;
+  const codeExpiresAt = pairing ? Date.parse(pairing.expires_at) : null;
+  const [expiredThrough, setExpiredThrough] = useState(0);
+  useEffect(() => {
+    if (codeExpiresAt === null) {
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setExpiredThrough((previous) => Math.max(previous, codeExpiresAt)),
+      Math.max(0, codeExpiresAt - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [codeExpiresAt]);
+  const visibleCode =
+    pairing && codeExpiresAt !== null && codeExpiresAt > expiredThrough ? pairing.code : null;
   const create = useMutation({
     mutationFn: async () => {
       try {
@@ -58,6 +71,7 @@ export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice
     onSuccess: () => {
       setGeneration((value) => value + 1);
       setCopyState("idle");
+      setExpiredThrough(0);
       const link = onIPhone ? controller.appLink() : null;
       if (link) {
         // Safari may block navigation after an asynchronous request. The real anchor below
@@ -70,8 +84,14 @@ export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice
       }
     },
   });
-  const active =
-    generation > 0 && (!status.data || status.data === "pending" || status.data === "pairing");
+  const phase = status.data?.status ?? "waiting";
+  const active = generation > 0 && phase !== "done" && phase !== "failed";
+  let label: string = labels[phase];
+  if (status.data?.status === "failed" && status.data.reason === "timeout") {
+    label = "This attempt expired or is no longer available. Start a new attempt.";
+  } else if (phase === "pairing" && !visibleCode) {
+    label = "Waiting for an updated pairing status.";
+  }
   const appLink = onIPhone ? controller.appLink() : null;
   const handoffLink = onIPhone ? null : controller.handoffLink();
 
@@ -142,7 +162,10 @@ export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice
         </label>
       )}
       <p role="status" className="mt-4 text-sm leading-6 text-muted">
-        {generation > 0 ? labels[status.data ?? "pending"] : "Pairing progress will appear here."}
+        {generation > 0 ? label : "Pairing progress will appear here."}
+        {visibleCode && (
+          <strong className="mt-1 block font-mono text-2xl tracking-widest">{visibleCode}</strong>
+        )}
       </p>
       <ActionError error={create.error ?? status.error} />
       {active && appLink && (
