@@ -6,6 +6,7 @@ const prepareWireGuardPackage = require("./prepare-wireguard-package");
 const TARGET = "AppRelayPacketTunnel";
 const DIRECTORY = "AppRelayVPN";
 const WIREGUARD_PACKAGE_PATH = `${DIRECTORY}/WireGuardKit`;
+const BONJOUR_SERVICES = ["_remotepairing-pairable-host._tcp", "_remotepairing._tcp"];
 const quote = (value) => JSON.stringify(value);
 
 module.exports = function withWireGuard(config, { allowArbitraryBonjour = false } = {}) {
@@ -40,11 +41,7 @@ module.exports = function withWireGuard(config, { allowArbitraryBonjour = false 
     mod.modResults.NSLocalNetworkUsageDescription =
       "Advertise VPN services on your local network while the VPN is connected.";
     mod.modResults.NSBonjourServices = [
-      ...new Set([
-        ...(mod.modResults.NSBonjourServices ?? []),
-        "_remotepairing-pairable-host._tcp",
-        "_remotepairing._tcp",
-      ]),
+      ...new Set([...(mod.modResults.NSBonjourServices ?? []), ...BONJOUR_SERVICES]),
     ];
     return mod;
   });
@@ -75,7 +72,7 @@ module.exports = function withWireGuard(config, { allowArbitraryBonjour = false 
       <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
       <key>AppRelayKeychainGroup</key><string>${keychainGroup}</string>
       <key>NSLocalNetworkUsageDescription</key><string>Advertise VPN services on your local network while the VPN is connected.</string>
-      <key>NSBonjourServices</key><array><string>_remotepairing-pairable-host._tcp</string></array>
+      <key>NSBonjourServices</key><array>${BONJOUR_SERVICES.map((type) => `<string>${type}</string>`).join("")}</array>
       <key>AppRelayAllowArbitraryBonjour</key><${allowArbitraryBonjour ? "true" : "false"}/>
       <key>NSExtension</key><dict>
         <key>NSExtensionPointIdentifier</key><string>com.apple.networkextension.packet-tunnel</string>

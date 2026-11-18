@@ -57,7 +57,10 @@ final class RemotePairingReporter {
     private func report(port: Int, url: URL, appKey: String) {
         let token: String
         do {
-            guard let saved = try VpnKeychain.registrationToken() else { return }
+            guard let saved = try VpnKeychain.registrationToken() else {
+                logger.error("Device token missing for RemotePairing report")
+                return
+            }
             token = saved
         } catch {
             logger.error("Device token unavailable for RemotePairing report")
@@ -71,10 +74,16 @@ final class RemotePairingReporter {
         report.httpBody = Data("{\"port\":\(port)}".utf8)
         let task = session.dataTask(with: report) { [weak self] _, response, error in
             if (error as? URLError)?.code == .cancelled { return }
-            if (response as? HTTPURLResponse)?.statusCode == 204 {
-                self?.logger.debug("Reported local RemotePairing port")
+            if let status = (response as? HTTPURLResponse)?.statusCode {
+                if status == 204 {
+                    self?.logger.info("Reported local RemotePairing port")
+                } else {
+                    self?.logger.error("RemotePairing port report rejected: HTTP \(status)")
+                }
+            } else if let error = error as? URLError {
+                self?.logger.error("RemotePairing port report failed: URL error \(error.code.rawValue)")
             } else {
-                self?.logger.error("RemotePairing port report failed")
+                self?.logger.error("RemotePairing port report failed without an HTTP response")
             }
         }
         request = task
@@ -92,6 +101,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 }
 
 private final class RemotePairingDiscovery: NSObject, NetServiceBrowserDelegate, NetServiceDelegate {
+    private let logger = Logger(subsystem: "AppRelay", category: "RemotePairingReporter")
     private let browser = NetServiceBrowser()
     private var services: [NetService] = []
     private var completion: ((Int?) -> Void)?
@@ -104,7 +114,9 @@ private final class RemotePairingDiscovery: NSObject, NetServiceBrowserDelegate,
         browser.delegate = self
         browser.searchForServices(ofType: "_remotepairing._tcp.", inDomain: "local.")
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-            self?.finish(nil)
+            guard let self, completion != nil else { return }
+            logger.error("No local RemotePairing service resolved before timeout")
+            finish(nil)
         }
     }
 
@@ -126,6 +138,8 @@ private final class RemotePairingDiscovery: NSObject, NetServiceBrowserDelegate,
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
+        let code = errorDict[NetService.errorCode]?.intValue ?? 0
+        logger.error("RemotePairing Bonjour browse failed: code \(code)")
         finish(nil)
     }
 
