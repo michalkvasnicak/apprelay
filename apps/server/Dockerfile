@@ -7,6 +7,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/web/package.json ./apps/server/web/package.json
 RUN pnpm install --filter @apprelay/web --frozen-lockfile --ignore-scripts
 COPY apps/server/web ./apps/server/web
+ARG VITE_APPRELAY_APP_SCHEME
 ARG VITE_SENTRY_DSN
 ARG VITE_SENTRY_ENVIRONMENT=production
 ARG SENTRY_ORG

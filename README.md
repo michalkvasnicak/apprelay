@@ -41,7 +41,10 @@ Use `pnpm --filter @apprelay/mobile <command>` to target the app directly. Add E
 
 ### Browser signing frontend
 
-Run `pnpm web:dev` to open the signing preview at `http://localhost:5173`.
+Copy `apps/server/web/.env.example` to `apps/server/web/.env.local` and set
+`VITE_APPRELAY_APP_SCHEME` to the same value as `EXPO_PUBLIC_APP_SCHEME` in your
+mobile env file (`apprelay-dev` in the local mobile example). Then run
+`pnpm web:dev` to open the signing preview at `http://localhost:5173`.
 Vite proxies API requests to the Rust server at `127.0.0.1:8080`; start it separately with `pnpm server`.
 Apple authentication, trusted-device 2FA, and basic certificate/profile preparation are experimental and not live-verified. IPA signing is not integrated yet.
 Optional sessions and signing assets use a passphrase-encrypted localStorage vault. Apple passwords and verification codes are never saved.

@@ -1,6 +1,7 @@
 import type { PairedDevice } from "../device";
 
-const pairingScheme = import.meta.env.DEV ? "apprelay-dev" : "apprelay";
+import { isPairingToken, pairingAppLink, pairingHandoffPath } from "./links";
+
 const statuses = ["pending", "pairing", "success", "failed", "expired"] as const;
 export type PairingStatus = (typeof statuses)[number];
 
@@ -29,10 +30,19 @@ export class PairingController {
     return this.pairedDevice ? { ...this.pairedDevice } : null;
   }
 
-  link() {
-    return this.token && !this.terminal && Date.now() < this.expiresAt
-      ? `${pairingScheme}://pair?token=${encodeURIComponent(this.token)}`
-      : null;
+  private activeToken() {
+    return !this.terminal && Date.now() < this.expiresAt ? this.token : null;
+  }
+
+  appLink() {
+    const token = this.activeToken();
+    return token ? pairingAppLink(token) : null;
+  }
+
+  handoffLink() {
+    const token = this.activeToken();
+    // Keep the capability out of HTTP request URLs.
+    return token ? `${window.location.origin}${pairingHandoffPath}#${token}` : null;
   }
 
   async create() {
@@ -63,8 +73,7 @@ export class PairingController {
       typeof data !== "object" ||
       !("token" in data) ||
       !("expires_at" in data) ||
-      typeof data.token !== "string" ||
-      !/^[A-Za-z0-9_-]{43}$/.test(data.token) ||
+      !isPairingToken(data.token) ||
       typeof data.expires_at !== "string" ||
       !Number.isFinite(Date.parse(data.expires_at))
     ) {

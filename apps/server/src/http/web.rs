@@ -16,6 +16,7 @@ where
 
     Router::new()
         .route_service("/s/{token}", ServeFile::new(directory.join("index.html")))
+        .route_service("/pair", ServeFile::new(directory.join("index.html")))
         .fallback_service(ServeDir::new(directory))
         .layer(SetResponseHeaderLayer::if_not_present(
             CACHE_CONTROL,

@@ -13,6 +13,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     );
   }
 
+  const scheme = process.env.EXPO_PUBLIC_APP_SCHEME;
+  if (!scheme || !/^[a-z][a-z0-9+.-]*$/.test(scheme)) {
+    throw new Error("Set EXPO_PUBLIC_APP_SCHEME to a lowercase URL scheme without ://.");
+  }
+
   const apiUrl = process.env.EXPO_PUBLIC_VPN_API_URL?.trim();
   if (!apiUrl) {
     throw new Error("Set EXPO_PUBLIC_VPN_API_URL to the VPN server's HTTPS base URL.");
@@ -80,7 +85,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           ]
         : []),
     ],
-    scheme: process.env.EXPO_PUBLIC_APP_SCHEME ?? "apprelay",
+    scheme,
     ios: {
       ...config.ios,
       bundleIdentifier,

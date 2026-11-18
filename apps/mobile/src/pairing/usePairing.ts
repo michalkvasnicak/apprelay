@@ -6,11 +6,14 @@ import { createApiClient } from "../api/client";
 import type { DeviceRegistration } from "../vpn/config";
 import { vpn, type VpnStatus } from "../vpn/native";
 
-const pairingScheme = process.env.EXPO_PUBLIC_APP_SCHEME ?? "apprelay";
+const pairingScheme = process.env.EXPO_PUBLIC_APP_SCHEME;
 
 class PairingError extends Error {}
 
 function pairingToken(value: string): string | null {
+  if (!pairingScheme) {
+    return null;
+  }
   try {
     const url = new URL(value);
     const tokens = url.searchParams.getAll("token");

@@ -1,7 +1,17 @@
 import { AccountWorkspace } from "./account/AccountWorkspace";
 import { SharedArtifact } from "./artifacts/SharedArtifact";
+import { PairingHandoff } from "./pairing/PairingHandoff";
+import { pairingHandoffPath } from "./pairing/links";
 
 export function App() {
+  if (window.location.pathname === pairingHandoffPath) {
+    return (
+      <main className="mx-auto max-w-xl px-6 py-10">
+        <PairingHandoff />
+      </main>
+    );
+  }
+
   return (
     <div className="mx-auto min-h-svh max-w-xl px-6 py-10 sm:py-16">
       <header className="mb-10">

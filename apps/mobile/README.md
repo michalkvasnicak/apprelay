@@ -33,7 +33,7 @@ If you already have `.env.local`, keep it; do not overwrite it. Fill in the foll
 
 | Variable                         | Value                                                                                                                                                                               |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EXPO_PUBLIC_APP_SCHEME`         | Set automatically by the package scripts: `apprelay-dev` for local development, `apprelay` for TestFlight/production. Do not set it in env files.                                   |
+| `EXPO_PUBLIC_APP_SCHEME`         | Required pairing URL scheme (without `://`). Must match `VITE_APPRELAY_APP_SCHEME` in the corresponding web environment.                                                            |
 | `APPLE_TEAM_ID`                  | Your Apple Developer Team ID.                                                                                                                                                       |
 | `APPLE_BUNDLE_IDENTIFIER`        | The app's bundle identifier. Required for every build.                                                                                                                              |
 | `EXPO_PUBLIC_VPN_API_URL`        | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment.                                                       |
@@ -47,7 +47,7 @@ If you already have `.env.local`, keep it; do not overwrite it. Fill in the foll
 | `SENTRY_URL`                     | HTTPS upload API base URL for your Sentry region. Required for TestFlight when a DSN is configured. No configured default.                                                          |
 | `SENTRY_AUTH_TOKEN`              | Build-only token with permission to upload source maps and debug symbols. Required for TestFlight when a DSN is configured. Never use an `EXPO_PUBLIC_` variable for this token.    |
 
-Pairing links use `apprelay-dev://pair?token=…` locally and `apprelay://pair?token=…` in TestFlight/production. The Vite dev server generates the local scheme; production web builds generate the production scheme. Each mobile build accepts only its configured scheme. Scheme changes require regenerating and rebuilding the native app, not just restarting Metro.
+The example env files use `apprelay-dev` for local development and `apprelay` for TestFlight. Each mobile build accepts pairing links only for its configured scheme. If you change it, regenerate and rebuild the native app, and restart Vite or rebuild the deployed web app with the matching value.
 
 Choose your own reverse-DNS bundle identifiers registered with your Apple Developer team. For example, replace `com.example.apprelay.dev` for local development and `com.example.apprelay` for distribution with identifiers you own. A separate local identifier lets both apps coexist; TestFlight and any future App Store release can share the same distribution identifier.
 

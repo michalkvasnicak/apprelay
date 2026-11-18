@@ -1,9 +1,13 @@
 import * as Sentry from "@sentry/react";
 
-const dsn = import.meta.env.VITE_SENTRY_DSN;
+import { pairingHandoffPath } from "./pairing/links";
 
-// Share tokens are capabilities; do not initialize telemetry on secret-link pages.
-const enabled = import.meta.env.PROD && dsn && !window.location.pathname.startsWith("/s/");
+const dsn = import.meta.env.VITE_SENTRY_DSN;
+const pathname = window.location.pathname;
+
+// Share and pairing tokens are capabilities; do not initialize telemetry on secret-link pages.
+const enabled =
+  import.meta.env.PROD && dsn && !pathname.startsWith("/s/") && pathname !== pairingHandoffPath;
 if (enabled) {
   Sentry.init({
     dsn,
