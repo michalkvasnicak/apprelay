@@ -20,10 +20,24 @@
 
   body {
     @apply m-0 min-w-80 bg-background text-text antialiased;
+    background-image:
+      radial-gradient(60rem 30rem at 50% -10rem, rgb(33 120 255 / 0.18), transparent),
+      radial-gradient(40rem 20rem at 100% 0, rgb(0 239 192 / 0.08), transparent);
+    background-repeat: no-repeat;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 
   button,
-  a {
+  a,
+  summary {
     @apply focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent;
   }
 

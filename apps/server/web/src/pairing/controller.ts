@@ -83,6 +83,13 @@ export class PairingController {
     }
   }
 
+  reset() {
+    this.token = null;
+    this.expiresAt = 0;
+    this.nextRequestAt = 0;
+    this.terminal = null;
+  }
+
   interval() {
     const delay = Math.max(2000, this.nextRequestAt - Date.now());
     return Math.max(1000, Math.min(delay, this.expiresAt - Date.now()));

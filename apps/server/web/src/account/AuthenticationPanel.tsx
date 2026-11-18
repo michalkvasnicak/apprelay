@@ -1,6 +1,6 @@
 import { useRef } from "react";
 
-import { buttonClass, inputClass, secondaryClass } from "../components/forms";
+import { Pending, Status, buttonClass, inputClass, secondaryClass } from "../components/forms";
 import { accountController } from "./controller";
 import { inputValue, useAccountAction, useAccountBusy, type AccountSnapshot } from "./hooks";
 
@@ -33,7 +33,7 @@ function Login() {
           />
         </label>
         <label className="block text-sm font-medium">
-          Apple password
+          Password
           <input
             name="password"
             type="password"
@@ -43,14 +43,12 @@ function Login() {
             className={inputClass}
           />
         </label>
-        <p className="text-xs leading-5 text-muted">
-          Your Apple password is used only on this device for sign-in and is never stored. Your
-          saved session stays on this device; the HTTPS relay can read Apple session tokens in
-          transit.
-        </p>
-        <button type="submit" className={buttonClass}>
-          {login.isPending ? "Signing in…" : "Sign in to Apple"}
+        <button type="submit" className={buttonClass + " w-full"}>
+          <Pending active={login.isPending} label="Signing in…">
+            Sign in
+          </Pending>
         </button>
+        <p className="text-center text-xs text-muted">Your password is never stored.</p>
       </fieldset>
     </form>
   );
@@ -63,11 +61,8 @@ function TwoFactor() {
   const resend = useAccountAction(() => accountController.resend());
   const reset = useAccountAction(() => accountController.forget());
   return (
-    <div>
-      <p className="mb-5 text-sm leading-6 text-muted">
-        Enter the six-digit code sent to your trusted Apple device. This challenge expires after ten
-        minutes. SMS is not supported yet.
-      </p>
+    <div className="space-y-5">
+      <p className="text-sm text-muted">Enter the code sent to your trusted Apple device.</p>
       <form
         ref={form}
         onSubmit={(event) => {
@@ -76,31 +71,35 @@ function TwoFactor() {
         }}
       >
         <fieldset disabled={busy} className="space-y-4">
-          <label className="block text-sm font-medium">
-            Verification code
-            <input
-              name="code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              pattern="[0-9]{6}"
-              maxLength={6}
-              required
-              className={inputClass}
-            />
-          </label>
-          <button type="submit" className={buttonClass}>
-            {verify.isPending ? "Verifying…" : "Verify code"}
+          <input
+            name="code"
+            aria-label="Verification code"
+            placeholder="000000"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]{6}"
+            maxLength={6}
+            required
+            autoFocus
+            className={inputClass + " text-center font-mono text-2xl tracking-[0.4em]"}
+          />
+          <button type="submit" className={buttonClass + " w-full"}>
+            <Pending active={verify.isPending} label="Verifying…">
+              Verify
+            </Pending>
           </button>
         </fieldset>
       </form>
-      <div className="mt-5 flex gap-5">
+      <div className="flex gap-3">
         <button
           type="button"
           disabled={busy}
           onClick={() => resend.mutate()}
           className={secondaryClass}
         >
-          Resend code
+          <Pending active={resend.isPending} label="Sending…">
+            Resend code
+          </Pending>
         </button>
         <button
           type="button"
@@ -123,15 +122,17 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
   if (!account.teams) {
     return (
       <div className="space-y-4">
-        <p className="text-sm text-primary">Signed in to Apple.</p>
-        <div className="flex flex-wrap gap-4">
+        <p className="text-sm text-muted">Signed in, but teams could not be loaded.</p>
+        <div className="flex flex-wrap gap-3">
           <button
             type="button"
             disabled={busy}
             onClick={() => load.mutate()}
             className={buttonClass}
           >
-            {load.isPending ? "Loading teams…" : "Retry loading development teams"}
+            <Pending active={load.isPending} label="Loading teams…">
+              Retry
+            </Pending>
           </button>
           <button
             type="button"
@@ -146,8 +147,7 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
     );
   }
   return (
-    <div>
-      <p className="mb-5 text-sm text-primary">Signed in to Apple.</p>
+    <div className="space-y-3">
       <label className="block text-sm font-medium">
         Development team
         <select
@@ -166,15 +166,10 @@ function TeamSelection({ account }: { account: AccountSnapshot }) {
           ))}
         </select>
       </label>
+      {choose.isPending && <Status>Selecting team…</Status>}
       {account.teams.length === 0 && (
-        <p className="mt-3 text-sm text-error">
-          Apple returned no development teams for this account.
-        </p>
+        <p className="text-sm text-error">No development teams found for this account.</p>
       )}
-      <p className="mt-3 text-xs leading-5 text-muted">
-        Personal Teams have short-lived profiles and restrictive quotas and capabilities. Existing
-        certificates are never revoked automatically.
-      </p>
     </div>
   );
 }
@@ -187,11 +182,7 @@ export function AuthenticationPanel({ account }: { account: AccountSnapshot }) {
     return <TeamSelection account={account} />;
   }
   if (account.vaultExists) {
-    return (
-      <p className="text-sm leading-6 text-muted">
-        Your Apple account is saved on this device. Unlock it below to continue.
-      </p>
-    );
+    return <p className="text-sm text-muted">Your Apple account is saved on this device.</p>;
   }
   return <Login />;
 }

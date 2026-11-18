@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { AccountWorkspace } from "../account/AccountWorkspace";
-import { buttonClass, secondaryClass } from "../components/forms";
+import { Alert, Status, buttonClass, secondaryClass } from "../components/forms";
 import { ArtifactError, downloadArtifact } from "./download";
 
 type DownloadState =
@@ -38,18 +38,12 @@ export function SharedArtifact({ token }: { token: string }) {
     return <AccountWorkspace file={state.file} />;
   }
   if (state.status === "loading") {
-    return (
-      <p role="status" className="text-sm text-muted">
-        Downloading and verifying IPA…
-      </p>
-    );
+    return <Status>Downloading and verifying IPA…</Status>;
   }
   return (
-    <section>
-      <p role="alert" className="text-sm text-error">
-        {state.message}
-      </p>
-      <div className="mt-5 flex items-center gap-5">
+    <section className="space-y-5">
+      <Alert error={state.message} />
+      <div className="flex flex-wrap gap-3">
         <button
           type="button"
           className={buttonClass}

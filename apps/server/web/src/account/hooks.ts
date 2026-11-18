@@ -27,6 +27,11 @@ export function useAccountError() {
   }).data;
 }
 
+export function useDismissAccountError() {
+  const client = useQueryClient();
+  return () => client.setQueryData(accountErrorKey, null);
+}
+
 export function useAccountAction<T = void>(action: (input: T) => Promise<void>) {
   const client = useQueryClient();
   return useMutation({

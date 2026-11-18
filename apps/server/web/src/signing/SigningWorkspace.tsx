@@ -28,7 +28,7 @@ export function SigningWorkspace({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <SigningPanel file={file} device={device} pairing={pairing} onFileSelected={onFileSelected} />
       <button
         type="button"
@@ -42,7 +42,7 @@ export function SigningWorkspace({
           setDevice(null);
         }}
       >
-        Pair again or choose another iPhone
+        Change iPhone
       </button>
     </div>
   );

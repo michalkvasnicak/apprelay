@@ -1,7 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { ActionError, buttonClass, inputClass } from "../components/forms";
+import {
+  Alert,
+  Pending,
+  Spinner,
+  Steps,
+  buttonClass,
+  inputClass,
+  secondaryClass,
+} from "../components/forms";
 import type { PairedDevice } from "../device";
 import { PairingError, type PairingController, type PairingStatus } from "./controller";
 import { pairingConfigured } from "./links";
@@ -9,11 +17,58 @@ import { TestFlightInvite } from "./TestFlightInvite";
 
 const labels = {
   waiting: "Open AppRelay on your iPhone and confirm pairing.",
-  connecting: "Connecting to your iPhone. Keep the VPN connected.",
-  pairing: "Enter this code when prompted on your iPhone.",
-  done: "Pairing completed successfully.",
-  failed: "Pairing failed. You can start a new attempt.",
+  connecting: "Connecting to your iPhone…",
+  pairing: "Enter this code on your iPhone.",
+  done: "Paired.",
+  failed: "Pairing failed.",
 } as const satisfies Record<PairingStatus, string>;
+
+const base = import.meta.env.BASE_URL;
+
+function Guide() {
+  return (
+    <details className="group rounded-xl border border-text/10 bg-background/40 text-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 font-medium">
+        Setup checklist
+        <span aria-hidden="true" className="text-muted transition group-open:rotate-180">
+          ⌄
+        </span>
+      </summary>
+      <div className="space-y-4 border-t border-text/10 px-4 py-4 text-muted">
+        <ul className="list-disc space-y-1.5 pl-4">
+          <li>
+            Developer Mode on: Settings → Privacy &amp; Security → Developer Mode, then restart.
+          </li>
+          <li>iPhone on Wi-Fi (not cellular) with the AppRelay VPN connected.</li>
+          <li>
+            In Developer Mode settings, tap{" "}
+            <strong className="text-text">Pair with AppRelay</strong> when the code is shown below.
+          </li>
+        </ul>
+        <div className="grid gap-2">
+          {(
+            [
+              ["02_privacy_security.webp", 146],
+              ["01_enable_developer_mode.webp", 134],
+              ["03_pair_device.webp", 224],
+            ] as const
+          ).map(([name, height]) => (
+            <img
+              key={name}
+              src={`${base}${name}`}
+              alt=""
+              width={720}
+              height={height}
+              loading="lazy"
+              className="h-auto w-full max-w-sm rounded-lg"
+            />
+          ))}
+        </div>
+        <TestFlightInvite />
+      </div>
+    </details>
+  );
+}
 
 export function PairingWorkspace({
   controller,
@@ -23,12 +78,13 @@ export function PairingWorkspace({
   onPaired: (device: PairedDevice) => void;
 }) {
   const [generation, setGeneration] = useState(0);
+  const [started, setStarted] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "manual">("idle");
   const onIPhone = /\biPhone\b/i.test(navigator.userAgent);
   const status = useQuery({
     queryKey: ["browser-pairing", generation],
     queryFn: ({ signal }) => controller.status(signal),
-    enabled: generation > 0,
+    enabled: started,
     retry: false,
     gcTime: 0,
     refetchOnWindowFocus: "always",
@@ -75,6 +131,7 @@ export function PairingWorkspace({
     gcTime: 0,
     onSuccess: () => {
       setGeneration((value) => value + 1);
+      setStarted(true);
       setCopyState("idle");
       setExpiredThrough(0);
       const link = onIPhone ? controller.appLink() : null;
@@ -89,13 +146,23 @@ export function PairingWorkspace({
       }
     },
   });
+
+  function cancel() {
+    controller.reset();
+    create.reset();
+    setStarted(false);
+    setCopyState("idle");
+    setExpiredThrough(0);
+  }
+
   const phase = status.data?.status ?? "waiting";
-  const active = generation > 0 && phase !== "done" && phase !== "failed";
+  const failed = started && phase === "failed";
+  const active = started && phase !== "done" && !failed;
   let label: string = labels[phase];
-  if (status.data?.status === "failed" && status.data.reason === "timeout") {
-    label = "This attempt expired or is no longer available. Start a new attempt.";
+  if (failed && status.data?.status === "failed" && status.data.reason === "timeout") {
+    label = "This attempt expired.";
   } else if (phase === "pairing" && !visibleCode) {
-    label = "Waiting for an updated pairing status.";
+    label = "Waiting for a new code…";
   }
   const appLink = onIPhone ? controller.appLink() : null;
   const handoffLink = onIPhone ? null : controller.handoffLink();
@@ -114,93 +181,69 @@ export function PairingWorkspace({
   }
 
   return (
-    <section aria-labelledby="pairing-title" className="space-y-4">
-      <h2 id="pairing-title" className="text-lg font-semibold">
+    <section aria-labelledby="pairing-title" className="space-y-5">
+      <Steps current={1} />
+      <h2 id="pairing-title" className="text-xl font-semibold tracking-tight">
         Pair your iPhone
       </h2>
-      {!pairingConfigured && (
-        <p role="alert" className="text-sm text-error">
-          Pairing is unavailable. Set VITE_APPRELAY_APP_SCHEME for this web build.
-        </p>
-      )}
-      <TestFlightInvite />
-      <ol className="list-decimal space-y-3 pl-5 text-sm leading-6 text-muted">
-        <li>
-          <strong className="text-text">Enable Developer Mode.</strong> On your iPhone, open
-          Settings → Privacy &amp; Security → Developer Mode. Turn it on, restart your iPhone, then
-          unlock it and confirm that you want to turn on Developer Mode.
-          <img
-            src={`${import.meta.env.BASE_URL}02_privacy_security.webp`}
-            alt=""
-            width={720}
-            height={146}
-            className="mt-2 h-auto w-full max-w-sm rounded-lg"
-          />
-          <img
-            src={`${import.meta.env.BASE_URL}01_enable_developer_mode.webp`}
-            alt=""
-            width={720}
-            height={134}
-            className="mt-2 h-auto w-full max-w-sm rounded-lg"
-          />
-        </li>
-        <li>
-          <strong className="text-text">Keep your iPhone connected to Wi-Fi.</strong> Wi-Fi is
-          required throughout pairing and every app upload. Neither works over cellular data.
-        </li>
-        <li>
-          <strong className="text-text">Start pairing on this page.</strong>{" "}
-          {onIPhone
-            ? "Tap Start pairing, then confirm pairing in AppRelay."
-            : "Click Start pairing, then copy the pairing link and open it in Safari on the iPhone with AppRelay installed. Confirm pairing in AppRelay."}{" "}
-          Keep the AppRelay VPN connected and leave this page open.
-        </li>
-        <li>
-          <strong className="text-text">Tap Pair with AppRelay.</strong> On your iPhone, return to
-          Settings → Privacy &amp; Security → Developer Mode. Tap Pair with AppRelay and enter your
-          iPhone passcode if prompted.
-          <img
-            src={`${import.meta.env.BASE_URL}03_pair_device.webp`}
-            alt=""
-            width={720}
-            height={224}
-            className="mt-2 h-auto w-full max-w-sm rounded-lg"
-          />
-        </li>
-        <li>
-          <strong className="text-text">Enter the pairing code.</strong> Enter the code shown below
-          when your iPhone asks for it. If you enabled notifications in AppRelay, you can also get
-          the code from the AppRelay notification.
-        </li>
-      </ol>
-      <div className="mt-5 flex flex-wrap items-center gap-4">
+      {!pairingConfigured && <Alert error="Pairing is unavailable in this build." />}
+      {!active && !failed && <Guide />}
+
+      {!started && (
         <button
           type="button"
-          className={buttonClass}
-          disabled={!pairingConfigured || create.isPending || active}
+          className={buttonClass + " w-full"}
+          disabled={!pairingConfigured || create.isPending}
           onClick={() => create.mutate()}
         >
-          {create.isPending ? "Creating attempt…" : "Start pairing"}
+          <Pending active={create.isPending} label="Creating attempt…">
+            Start pairing
+          </Pending>
         </button>
-        {appLink && (
-          <a href={appLink} rel="noreferrer" className="text-sm underline underline-offset-4">
-            Open AppRelay
-          </a>
-        )}
-        {handoffLink && (
-          <button type="button" className={buttonClass} onClick={() => void copyPairingLink()}>
-            Copy pairing link
+      )}
+
+      {started && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="space-y-4 rounded-2xl border border-text/10 bg-background/50 p-5 text-center"
+        >
+          <p className="flex items-center justify-center gap-2.5 text-sm text-muted">
+            {active && <Spinner className="size-4 text-primary" />}
+            {label}
+          </p>
+          {visibleCode && (
+            <strong className="block font-mono text-4xl tracking-[0.3em] text-primary">
+              {visibleCode}
+            </strong>
+          )}
+        </div>
+      )}
+
+      {active && (
+        <div className="flex flex-wrap gap-3">
+          {appLink && (
+            <a href={appLink} rel="noreferrer" className={buttonClass + " flex-1"}>
+              Open AppRelay
+            </a>
+          )}
+          {handoffLink && (
+            <button
+              type="button"
+              className={secondaryClass + " flex-1"}
+              onClick={() => void copyPairingLink()}
+            >
+              {copyState === "copied" ? "Link copied ✓" : "Copy link for iPhone"}
+            </button>
+          )}
+          <button type="button" className={secondaryClass} onClick={cancel}>
+            Cancel
           </button>
-        )}
-      </div>
-      {handoffLink && copyState === "copied" && (
-        <p role="status" className="text-sm text-muted">
-          Link copied. Open it in Safari on the target iPhone before it expires.
-        </p>
+        </div>
       )}
       {handoffLink && copyState === "manual" && (
         <label className="block text-sm text-muted">
-          Clipboard unavailable. Copy this pairing link manually:
+          Copy this link manually
           <input
             type="text"
             readOnly
@@ -210,16 +253,31 @@ export function PairingWorkspace({
           />
         </label>
       )}
-      <p role="status" className="mt-4 text-sm leading-6 text-muted">
-        {generation > 0 ? label : "Pairing progress will appear here."}
-        {visibleCode && (
-          <strong className="mt-1 block font-mono text-2xl tracking-widest">{visibleCode}</strong>
-        )}
-      </p>
-      <ActionError error={create.error ?? status.error} />
-      {active && appLink && (
-        <p className="mt-2 text-xs leading-5 text-muted">
-          If the app did not open, tap Open AppRelay. Return here for the final result.
+
+      {failed && (
+        <div className="space-y-3">
+          <div className="flex gap-3">
+            <button
+              type="button"
+              className={buttonClass + " flex-1"}
+              disabled={create.isPending}
+              onClick={() => create.mutate()}
+            >
+              <Pending active={create.isPending} label="Creating attempt…">
+                Try again
+              </Pending>
+            </button>
+            <button type="button" className={secondaryClass} onClick={cancel}>
+              Back
+            </button>
+          </div>
+        </div>
+      )}
+
+      <Alert error={create.error} onDismiss={create.error ? () => create.reset() : undefined} />
+      {status.error && active && (
+        <p role="alert" className="text-sm text-muted">
+          {status.error.message} Retrying…
         </p>
       )}
     </section>

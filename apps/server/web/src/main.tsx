@@ -6,6 +6,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { buttonClass } from "./components/forms";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -22,12 +23,11 @@ createRoot(root, {
   <StrictMode>
     <Sentry.ErrorBoundary
       fallback={
-        <main role="alert" className="mx-auto max-w-xl px-6 py-10">
-          <h1 className="text-xl font-semibold">Something went wrong.</h1>
-          <p className="mt-3">Reload the page to try again.</p>
+        <main role="alert" className="mx-auto max-w-md px-6 py-16">
+          <h1 className="text-xl font-semibold">Something went wrong</h1>
           <button
             type="button"
-            className="mt-5 rounded-lg bg-primary px-4 py-2 text-background"
+            className={buttonClass + " mt-5"}
             onClick={() => window.location.reload()}
           >
             Reload

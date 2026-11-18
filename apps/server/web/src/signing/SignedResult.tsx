@@ -1,4 +1,4 @@
-import { buttonClass, secondaryClass } from "../components/forms";
+import { Alert, Pending, Spinner, buttonClass, secondaryClass } from "../components/forms";
 
 export type InstallProgress =
   | { stage: "preparing" | "queueing" | "queued" | "failed" }
@@ -7,49 +7,56 @@ export type InstallProgress =
 export function SignedResult({
   progress,
   busy,
+  retrying,
+  error,
   onRetry,
 }: {
   progress: InstallProgress;
   busy: boolean;
+  retrying: boolean;
+  error?: Error | null;
   onRetry: () => void;
 }) {
   const queued = progress.stage === "queued";
   const failed = progress.stage === "failed";
   return (
-    <section aria-labelledby="signed-title">
-      <h2 id="signed-title" className="text-lg font-semibold">
-        Your app is signed
+    <section aria-labelledby="signed-title" className="space-y-5">
+      <h2 id="signed-title" className="text-xl font-semibold tracking-tight">
+        {queued ? "Install queued" : failed ? "Install failed" : "Installing…"}
       </h2>
-      <p className="mt-3 text-sm leading-6 text-muted">
-        Keep your iPhone connected to the AppRelay VPN for installation.
-      </p>
-      {progress.stage === "uploading" ? (
-        <div className="mt-4 text-sm text-muted">
-          <label className="block" htmlFor="install-upload">
-            Uploading signed IPA… {progress.percent}%
+      {progress.stage === "uploading" && (
+        <div className="space-y-2 text-sm text-muted">
+          <label className="flex justify-between" htmlFor="install-upload">
+            <span>Uploading signed IPA</span>
+            <span className="tabular-nums">{progress.percent}%</span>
           </label>
           <progress
             id="install-upload"
-            className="mt-2 w-full"
+            className="h-2 w-full overflow-hidden rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:bg-text/10 [&::-webkit-progress-value]:bg-primary [&::-webkit-progress-value]:transition-all"
             value={progress.percent}
             max={100}
           />
         </div>
-      ) : (
-        !failed && (
-          <p role="status" className="mt-4 text-sm text-muted">
-            {progress.stage === "preparing" && "Preparing upload…"}
-            {progress.stage === "queueing" && "Upload complete. Queueing install…"}
-            {queued &&
-              "Install queued. Your iPhone must stay connected while the app is delivered."}
-          </p>
-        )
       )}
+      {(progress.stage === "preparing" || progress.stage === "queueing") && (
+        <p role="status" className="flex items-center gap-2.5 text-sm text-muted">
+          <Spinner className="size-4 text-primary" />
+          {progress.stage === "preparing" ? "Preparing upload…" : "Queueing install…"}
+        </p>
+      )}
+      {queued && (
+        <p role="status" className="text-sm text-muted">
+          Keep your iPhone on Wi-Fi with the VPN connected until the app appears.
+        </p>
+      )}
+      {failed && <Alert error={error ?? "Could not submit the install."} />}
       {(failed || queued) && (
-        <div className="mt-5 flex flex-wrap items-center gap-5">
+        <div className="flex flex-wrap gap-3">
           {failed && (
             <button type="button" disabled={busy} className={buttonClass} onClick={onRetry}>
-              Retry install
+              <Pending active={retrying} label="Retrying…">
+                Retry install
+              </Pending>
             </button>
           )}
           {!busy && (

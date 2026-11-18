@@ -1,6 +1,6 @@
 import { useRef } from "react";
 
-import { buttonClass, inputClass, secondaryClass } from "../components/forms";
+import { Pending, buttonClass, inputClass, secondaryClass } from "../components/forms";
 import { accountController } from "./controller";
 import { inputValue, useAccountAction, useAccountBusy, type AccountSnapshot } from "./hooks";
 
@@ -16,7 +16,7 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
   const forget = useAccountAction(async () => {
     if (
       window.confirm(
-        "Delete the Apple session and signing assets saved on this device? This cannot be undone and does not revoke assets at Apple.",
+        "Delete the Apple session and signing assets saved on this device? This cannot be undone.",
       )
     ) {
       await accountController.forget();
@@ -24,14 +24,10 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
   });
 
   return (
-    <section aria-labelledby="vault-title">
-      <h3 id="vault-title" className="text-sm font-semibold">
-        {account.vaultExists ? "Unlock your saved account" : "Keep your account on this device"}
+    <section aria-labelledby="vault-title" className="border-t border-text/10 pt-6">
+      <h3 id="vault-title" className="text-base font-semibold">
+        {account.vaultExists ? "Unlock your account" : "Protect with a passphrase"}
       </h3>
-      <p className="mt-2 text-xs leading-5 text-muted">
-        Your session and signing key are encrypted in this browser. Choose a separate passphrase,
-        not your Apple password. It cannot be recovered.
-      </p>
       <form
         ref={form}
         className="mt-4"
@@ -53,8 +49,18 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
               className={inputClass}
             />
           </label>
-          <button type="submit" className={buttonClass}>
-            {persist.isPending ? "Opening…" : "Continue"}
+          {!account.vaultExists && (
+            <p className="text-xs text-muted">
+              At least 12 characters. Encrypts your session in this browser and can’t be recovered.
+            </p>
+          )}
+          <button type="submit" className={buttonClass + " w-full"}>
+            <Pending
+              active={persist.isPending}
+              label={account.vaultExists ? "Unlocking…" : "Saving…"}
+            >
+              {account.vaultExists ? "Unlock" : "Continue"}
+            </Pending>
           </button>
         </fieldset>
       </form>

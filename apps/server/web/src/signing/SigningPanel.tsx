@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 
 import { AccountError, accountController } from "../account/controller";
 import { useAccountAction, useAccountBusy } from "../account/hooks";
-import { buttonClass, inputClass } from "../components/forms";
+import { Pending, Steps, buttonClass, inputClass } from "../components/forms";
 import { selectTargetDevice, type PairedDevice } from "../device";
 import { PairingError, type PairingController } from "../pairing/controller";
 import { SignedResult, type InstallProgress } from "./SignedResult";
@@ -95,27 +95,35 @@ export function SigningPanel({
 
   if (state.data?.status === "signed") {
     return (
-      <SignedResult progress={installProgress} busy={busy} onRetry={() => retryInstall.mutate()} />
+      <SignedResult
+        progress={installProgress}
+        busy={busy}
+        retrying={retryInstall.isPending}
+        error={retryInstall.error}
+        onRetry={() => retryInstall.mutate()}
+      />
     );
   }
 
+  const message = state.data?.status === "signing" ? state.data.message || progress : progress;
+
   return (
-    <section aria-labelledby="sign-title">
-      <h2 id="sign-title" className="text-lg font-semibold">
+    <section aria-labelledby="sign-title" className="space-y-5">
+      <Steps current={2} />
+      <h2 id="sign-title" className="text-xl font-semibold tracking-tight">
         {sharedFile ? "Sign this app" : "Choose an IPA"}
       </h2>
-      <p className="mt-3 text-sm leading-6 text-muted">
-        We’ll sign your app in this browser, then upload the signed IPA for installation on your
-        paired iPhone. Your private signing key stays in the browser.
-      </p>
+      <div className="rounded-xl border border-text/10 bg-background/50 px-4 py-3 text-sm">
+        <p className="font-medium">{device.name || "Paired iPhone"}</p>
+        <p className="break-all text-muted">{device.model}</p>
+      </div>
       <form
-        className="mt-5"
         onSubmit={(event) => {
           event.preventDefault();
           prepare.mutate();
         }}
       >
-        <fieldset disabled={busy} className="space-y-5">
+        <fieldset disabled={busy} className="space-y-4">
           {!sharedFile && (
             <label className="block text-sm font-medium">
               IPA file
@@ -123,7 +131,10 @@ export function SigningPanel({
                 type="file"
                 accept=".ipa"
                 required
-                className={inputClass}
+                className={
+                  inputClass +
+                  " file:mr-3 file:rounded-lg file:border-0 file:bg-text/10 file:px-3 file:py-1.5 file:text-text"
+                }
                 onChange={(event) => {
                   const file = event.currentTarget.files?.[0];
                   if (file) {
@@ -133,34 +144,23 @@ export function SigningPanel({
               />
             </label>
           )}
-          <div className="text-sm">
-            <p className="font-medium">Target: {device.name || "Paired iPhone"}</p>
-            <p className="break-all text-muted">{device.model}</p>
-            <p className="break-all text-muted">UDID: {device.udid}</p>
-            <p className="mt-2 text-xs leading-5 text-muted">
-              This device will be registered with your Apple development team if it is not already
-              registered. For now, its remote-pairing identifier is used as the UDID; hardware UDID
-              equivalence has not been verified.
-            </p>
-          </div>
-          <button type="submit" className={buttonClass}>
-            {prepare.isPending ? "Signing…" : "Sign and install"}
+          <button type="submit" className={buttonClass + " w-full"}>
+            <Pending active={prepare.isPending} label={message || "Signing…"}>
+              Sign and install
+            </Pending>
           </button>
         </fieldset>
       </form>
       {prepare.isPending && (
-        <p role="status" className="mt-4 text-sm text-muted">
-          {state.data?.status === "signing" ? state.data.message || progress : progress} Keep this
-          page open.
+        <p role="status" className="text-center text-xs text-muted">
+          Keep this page open.
         </p>
       )}
-      <details className="mt-5 text-xs leading-5 text-muted">
-        <summary className="cursor-pointer">Signing limitations</summary>
+      <details className="text-xs leading-5 text-muted">
+        <summary className="cursor-pointer">Limits</summary>
         <p className="mt-2">
-          Up to 100 MiB compressed and 256 MiB expanded. Basic development apps only; extensions,
-          frameworks, custom capabilities, and encrypted binaries are unsupported. Apple certificate
-          quotas apply; existing certificates are never revoked automatically. Certificate chain and
-          profile signature verification are incomplete.
+          Up to 100 MiB compressed, 256 MiB expanded. Basic development apps only: no extensions,
+          frameworks, custom capabilities, or encrypted binaries.
         </p>
       </details>
     </section>
