@@ -1,5 +1,6 @@
 import { buttonClass } from "../components/forms";
 import { pairingAppLink, pairingConfigured } from "./links";
+import { TestFlightInvite } from "./TestFlightInvite";
 
 export function PairingHandoff() {
   const link = pairingAppLink(window.location.hash.slice(1));
@@ -18,6 +19,7 @@ export function PairingHandoff() {
           <a href={link} rel="noreferrer" className={buttonClass}>
             Open AppRelay
           </a>
+          <TestFlightInvite />
         </>
       ) : (
         <p role="alert" className="text-sm text-error">

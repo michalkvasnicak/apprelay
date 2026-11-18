@@ -5,6 +5,7 @@ import { ActionError, buttonClass, inputClass } from "../components/forms";
 import type { PairedDevice } from "../device";
 import { PairingController, PairingError, type PairingStatus } from "./controller";
 import { pairingConfigured } from "./links";
+import { TestFlightInvite } from "./TestFlightInvite";
 
 const labels = {
   pending: "Open AppRelay on this iPhone and confirm pairing.",
@@ -102,6 +103,7 @@ export function PairingWorkspace({ onPaired }: { onPaired: (device: PairedDevice
           ? "Open AppRelay on this iPhone and confirm pairing. Keep its VPN connected until pairing completes."
           : "Start pairing here, then copy the pairing link and open it in Safari on the target iPhone with AppRelay installed. Keep this page open and return here after pairing."}
       </p>
+      <TestFlightInvite />
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button
           type="button"
