@@ -145,8 +145,8 @@ export function PairingWorkspace({
           />
         </li>
         <li>
-          <strong className="text-text">Connect your iPhone to Wi-Fi.</strong> Stay connected until
-          pairing is complete.
+          <strong className="text-text">Keep your iPhone connected to Wi-Fi.</strong> Wi-Fi is
+          required throughout pairing and every app upload. Neither works over cellular data.
         </li>
         <li>
           <strong className="text-text">Start pairing on this page.</strong>{" "}
