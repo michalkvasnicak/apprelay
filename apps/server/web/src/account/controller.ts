@@ -3,7 +3,8 @@ import { signIn, trustedDevice, type SignInResult } from "../apple/authenticatio
 import { DeveloperPortal } from "../apple/developer";
 import { ensureCertificate, provisionApp } from "../apple/provisioning";
 import { certificateExpiry, matchingCertificate } from "../apple/signing-assets";
-import type { StoredAccount, Team } from "../apple/types";
+import type { Session, StoredAccount, Team } from "../apple/types";
+import { reportAppleIntegrationFailure } from "../sentry";
 import { LocalVault } from "../storage/vault";
 import { signingAssets } from "../signing/assets";
 import { SigningError, type SigningAssets } from "../signing/types";
@@ -14,6 +15,17 @@ type PendingChallenge = Extract<SignInResult, { type: "two-factor" }> & {
   deadline: number;
   resendAt: number;
 };
+
+async function listDevelopmentTeams(session: Session, anisette: Anisette) {
+  try {
+    return await new DeveloperPortal(session, anisette).teams();
+  } catch (error) {
+    if (session.expiresAt === undefined || session.expiresAt > Date.now()) {
+      reportAppleIntegrationFailure("list-teams");
+    }
+    throw error;
+  }
+}
 
 class AccountController {
   private readonly vault = new LocalVault();
@@ -103,11 +115,12 @@ class AccountController {
 
   private async fetchTeams() {
     const account = this.account;
-    if (!account) {
+    const anisette = this.anisette;
+    if (!account || !anisette) {
       throw new AccountError("Sign in to Apple first");
     }
     try {
-      const teams = await this.portal().teams();
+      const teams = await listDevelopmentTeams(account.session, anisette);
       this.teams = teams;
       account.teamId = teams.length === 1 ? teams[0].id : undefined;
     } catch {
@@ -132,7 +145,10 @@ class AccountController {
         if (this.vault.exists() || this.account || this.challenge) {
           throw new AccountError("Unlock the saved account or reset the current sign-in first");
         }
-        const anisette = await Anisette.create();
+        const anisette = await Anisette.create().catch((error: unknown) => {
+          reportAppleIntegrationFailure("anisette-setup");
+          throw error;
+        });
         await this.accept(await signIn(anisette, username, password), anisette);
       },
     );
@@ -200,7 +216,7 @@ class AccountController {
             );
           }
           const anisette = await Anisette.restore(account.anisette);
-          const teams = await new DeveloperPortal(account.session, anisette).teams();
+          const teams = await listDevelopmentTeams(account.session, anisette);
           if (
             account.identity?.certificate &&
             !matchingCertificate(account.identity.certificate, account.identity)

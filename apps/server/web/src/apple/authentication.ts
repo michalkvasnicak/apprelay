@@ -1,3 +1,4 @@
+import { reportAppleIntegrationFailure } from "../sentry";
 import { Anisette } from "./anisette";
 import { decryptAppToken, decryptSession, hmac, verifyNegotiation } from "./crypto";
 import { text, utf8 } from "./encoding";
@@ -42,6 +43,7 @@ async function request(
   const result = record(decodePlist(response.body).Response);
   const status = record(result.Status);
   if (status.hsc === 433 || status.hsc === 434) {
+    reportAppleIntegrationFailure("anisette-rejected");
     throw new Error("Apple requires anisette reprovisioning or unsupported resynchronization");
   }
   const code = integer(status.ec);
@@ -62,7 +64,10 @@ export async function signIn(
   }
   // Fresh identity data per exchange, but one unchanged snapshot across all
   // messages within that exchange. Never retry credentials or proofs blindly.
-  const data = await anisette.fresh();
+  const data = await anisette.fresh().catch((error: unknown) => {
+    reportAppleIntegrationFailure("anisette-headers");
+    throw error;
+  });
   const srp = startSrp();
   const initialized = await request(data, "init", {
     u: username,
