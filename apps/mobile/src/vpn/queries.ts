@@ -20,6 +20,7 @@ focusManager.setEventListener((setFocused) => {
 
 export const queryClient = new QueryClient();
 const statusKey = ["vpn", "status"] as const;
+export const wifiRequiredMessage = "Connect to Wi-Fi to change the VPN connection.";
 
 export function useVpn() {
   const client = useQueryClient();
@@ -38,6 +39,14 @@ export function useVpn() {
     refetchOnWindowFocus: "always",
     retry: false,
   });
+  const wifi = useQuery({
+    queryKey: ["vpn", "wifi"],
+    queryFn: vpn.getWifiConnected,
+    enabled: isVpnAvailable,
+    refetchInterval: 1000,
+    refetchOnWindowFocus: "always",
+    retry: false,
+  });
   const registration = useMutation({
     mutationFn: ensureRegistration,
     // Recovery may replace the native identity even if its registration retry fails.
@@ -46,6 +55,9 @@ export function useVpn() {
   });
   const connection = useMutation({
     mutationFn: async (active: boolean): Promise<VpnStatus> => {
+      if ((await vpn.getWifiConnected()) !== true) {
+        throw new Error(wifiRequiredMessage);
+      }
       // Avoid a poll racing the transition written below.
       await client.cancelQueries({ queryKey: statusKey });
       if (active) {
@@ -62,5 +74,5 @@ export function useVpn() {
     onSettled: () => client.invalidateQueries({ queryKey: statusKey }),
     retry: false,
   });
-  return { identity, status, registration, connection };
+  return { identity, status, wifi, registration, connection };
 }

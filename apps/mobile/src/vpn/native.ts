@@ -16,6 +16,7 @@ export type VpnStatus = (typeof vpnStatuses)[number];
 export type VpnIdentity = { publicKey: string };
 
 type NativeVpnModule = {
+  getWifiConnected(): Promise<boolean | null>;
   getIdentity(): Promise<VpnIdentity>;
   getRegistrationToken(): Promise<string | null>;
   saveRegistrationToken(token: string, publicKey: string): Promise<void>;
@@ -50,6 +51,7 @@ function requireNative(): NativeVpnModule {
 let pendingIdentity: Promise<VpnIdentity> | undefined;
 
 export const vpn = {
+  getWifiConnected: () => requireNative().getWifiConnected(),
   getIdentity: () =>
     (pendingIdentity ??= requireNative()
       .getIdentity()

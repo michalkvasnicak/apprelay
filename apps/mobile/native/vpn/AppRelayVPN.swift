@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import NetworkExtension
 import React
 
@@ -6,8 +7,34 @@ import React
 final class AppRelayVPN: NSObject {
     private var operationInProgress = false
     private var providerIdentifier: String { Bundle.main.bundleIdentifier! + ".PacketTunnel" }
+    // Monitor Wi-Fi specifically so a VPN route cannot mask the underlying interface.
+    private let wifiMonitor = NWPathMonitor(requiredInterfaceType: .wifi)
+    private var wifiConnected: Bool?
+
+    override init() {
+        super.init()
+        wifiMonitor.pathUpdateHandler = { [weak self] path in
+            self?.wifiConnected = path.status == .satisfied
+        }
+        wifiMonitor.start(queue: .main)
+    }
+
+    deinit { wifiMonitor.cancel() }
 
     @objc static func requiresMainQueueSetup() -> Bool { true }
+
+    @objc(getWifiConnected:rejecter:)
+    func getWifiConnected(_ resolve: @escaping RCTPromiseResolveBlock,
+                          rejecter _: @escaping RCTPromiseRejectBlock) {
+        Task { @MainActor in
+            if let wifiConnected { resolve(wifiConnected) }
+            else { resolve(NSNull()) }
+        }
+    }
+
+    @MainActor private func requireWifi() throws {
+        guard wifiConnected == true else { throw VpnError.wifiRequired }
+    }
 
     @objc(getIdentity:rejecter:)
     func getIdentity(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
@@ -112,6 +139,7 @@ final class AppRelayVPN: NSObject {
                 #if targetEnvironment(simulator)
                 throw VpnError.simulator
                 #else
+                try requireWifi()
                 let settings = try VpnSettings(values)
                 guard let identity = try VpnKeychain.identity() else { throw VpnError.missingKey }
                 let manager = try await loadManager() ?? NETunnelProviderManager()
@@ -134,6 +162,7 @@ final class AppRelayVPN: NSObject {
                 manager.onDemandRules = []
                 try await save(manager)
                 try await reload(manager)
+                try requireWifi()
                 try manager.connection.startVPNTunnel()
                 // This means startup was requested, not that the peer has handshaken.
                 resolve(nil)
@@ -153,6 +182,7 @@ final class AppRelayVPN: NSObject {
             defer { operationInProgress = false }
             do {
                 let manager = try await loadManager()
+                try requireWifi()
                 manager?.connection.stopVPNTunnel()
                 resolve(nil)
             } catch { reject("VPN_DISCONNECT", error.localizedDescription, error) }

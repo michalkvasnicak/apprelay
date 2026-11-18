@@ -57,6 +57,7 @@ enum VpnError: LocalizedError {
     case missingKey
     case busy
     case simulator
+    case wifiRequired
 
     var errorDescription: String? {
         switch self {
@@ -72,6 +73,8 @@ enum VpnError: LocalizedError {
             return "A VPN operation is already in progress."
         case .simulator:
             return "WireGuard requires a signed build on a physical iPhone."
+        case .wifiRequired:
+            return "Connect to Wi-Fi to change the VPN connection."
         }
     }
 }

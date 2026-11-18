@@ -8,7 +8,7 @@ import { type LedState, MacMini } from "./src/MacMini";
 import { usePushNotifications } from "./src/notifications/usePushNotifications";
 import { usePairing } from "./src/pairing/usePairing";
 import { isVpnAvailable, type VpnStatus } from "./src/vpn/native";
-import { queryClient, useVpn } from "./src/vpn/queries";
+import { queryClient, useVpn, wifiRequiredMessage } from "./src/vpn/queries";
 
 const modelUrl =
   "https://sketchfab.com/3d-models/apple-mac-mini-m4-pro-c0f11a5cfc05448bbefa8c721e5fb0fd";
@@ -33,7 +33,7 @@ export default function App() {
 }
 
 function VpnScreen() {
-  const { identity, status: statusQuery, registration, connection } = useVpn();
+  const { identity, status: statusQuery, wifi, registration, connection } = useVpn();
   const status = statusQuery.isError ? "unknown" : (statusQuery.data ?? "unknown");
   usePairing(registration.mutateAsync);
   const connected = status === "connected";
@@ -45,7 +45,8 @@ function VpnScreen() {
   const busy = connection.isPending || transitioning;
   const notifications = usePushNotifications(registration.data, connected && !busy);
   const loading = isVpnAvailable && busy;
-  const disabled = !isVpnAvailable || loading || (!connected && !identity.data);
+  const wifiConnected = !wifi.isError && wifi.data === true;
+  const disabled = !isVpnAvailable || !wifiConnected || loading || (!connected && !identity.data);
   const buttonLabel = connected ? "Disconnect" : "Connect";
 
   let led: LedState = "off";
@@ -56,6 +57,17 @@ function VpnScreen() {
   }
 
   const statusLabel = isVpnAvailable ? statusLabels[status] : "Unavailable";
+
+  let wifiMessage: string | undefined;
+  if (isVpnAvailable && !wifiConnected) {
+    if (wifi.isError) {
+      wifiMessage = "Unable to check the Wi-Fi connection.";
+    } else if (wifi.data === false) {
+      wifiMessage = wifiRequiredMessage;
+    } else {
+      wifiMessage = "Checking Wi-Fi…";
+    }
+  }
 
   const error =
     connection.error?.message ??
@@ -80,7 +92,12 @@ function VpnScreen() {
           <Text accessibilityLiveRegion="polite" style={styles.status}>
             {statusLabel}
           </Text>
-          {error && (
+          {wifiMessage && (
+            <Text accessibilityLiveRegion="polite" style={styles.wifiMessage}>
+              {wifiMessage}
+            </Text>
+          )}
+          {error && error !== wifiMessage && (
             <Text accessibilityRole="alert" style={styles.error}>
               {error}
             </Text>
@@ -124,6 +141,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 28 },
   model: { width: "100%", height: 280 },
   status: { fontSize: 28, fontWeight: "700", letterSpacing: -0.5, color: colors.text },
+  wifiMessage: { color: colors.muted, fontSize: 14, textAlign: "center" },
   error: {
     color: colors.error,
     backgroundColor: colors.errorSurface,
