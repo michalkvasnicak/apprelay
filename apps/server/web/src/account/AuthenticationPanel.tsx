@@ -48,7 +48,17 @@ function Login() {
             Sign in
           </Pending>
         </button>
-        <p className="text-center text-xs text-muted">Your password is never stored.</p>
+        <div className="space-y-1.5 rounded-xl border border-text/10 bg-background/40 px-4 py-3 text-xs leading-5 text-muted">
+          <p className="font-medium text-text">Your credentials stay on this device</p>
+          <ul className="list-disc space-y-1 pl-4">
+            <li>Your Apple ID and password are never saved, here or on our server.</li>
+            <li>Sign-in runs in this browser; your password is not sent to AppRelay.</li>
+            <li>
+              Only if you set a passphrase, your Apple session is kept encrypted in this browser.
+            </li>
+            <li>Requests to Apple pass through our relay over HTTPS, including session tokens.</li>
+          </ul>
+        </div>
       </fieldset>
     </form>
   );
