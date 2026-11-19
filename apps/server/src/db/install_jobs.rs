@@ -7,7 +7,7 @@ use crate::error::OperationError;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::{
     pairing_codes::{Notification, NotificationContent},
-    push_tokens::PushTokenRepository,
+    push_tokens::{PushTokenRepository, RemovePushTokenError},
 };
 
 #[derive(Clone)]
@@ -67,6 +67,116 @@ macro_rules! authorized_job {
     };
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("could not create install job")]
+pub(crate) struct CreateInstallJobError(#[source] sqlx::Error);
+
+impl From<CreateInstallJobError> for OperationError {
+    fn from(error: CreateInstallJobError) -> Self {
+        Self::at("create_install_job")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not find install job")]
+pub(crate) struct FindInstallJobError(#[source] sqlx::Error);
+
+impl From<FindInstallJobError> for OperationError {
+    fn from(error: FindInstallJobError) -> Self {
+        Self::at("find_install_job")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not queue install job")]
+pub(crate) struct QueueInstallJobError(#[source] sqlx::Error);
+
+impl From<QueueInstallJobError> for OperationError {
+    fn from(error: QueueInstallJobError) -> Self {
+        Self::at("queue_install_job")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not list expired install jobs")]
+pub(crate) struct ListExpiredInstallJobsError(#[source] sqlx::Error);
+
+impl From<ListExpiredInstallJobsError> for OperationError {
+    fn from(error: ListExpiredInstallJobsError) -> Self {
+        Self::at("list_expired_install_jobs")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not remove install job")]
+pub(crate) struct RemoveInstallJobError(#[source] sqlx::Error);
+
+impl From<RemoveInstallJobError> for OperationError {
+    fn from(error: RemoveInstallJobError) -> Self {
+        Self::at("remove_install_job")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not load install job")]
+pub(crate) struct LoadInstallJobError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<LoadInstallJobError> for OperationError {
+    fn from(error: LoadInstallJobError) -> Self {
+        Self::at("load_install_job")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not record install outcome")]
+pub(crate) struct RecordInstallOutcomeError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<RecordInstallOutcomeError> for OperationError {
+    fn from(error: RecordInstallOutcomeError) -> Self {
+        Self::at("record_install_outcome")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not load install notification")]
+pub(crate) struct LoadInstallNotificationError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<LoadInstallNotificationError> for OperationError {
+    fn from(error: LoadInstallNotificationError) -> Self {
+        Self::at("load_install_notification")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not load pending install jobs")]
+pub(crate) struct LoadPendingInstallJobsError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<LoadPendingInstallJobsError> for OperationError {
+    fn from(error: LoadPendingInstallJobsError) -> Self {
+        Self::at("load_pending_install_jobs")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not mark install job dispatched")]
+pub(crate) struct MarkInstallJobDispatchedError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<MarkInstallJobDispatchedError> for OperationError {
+    fn from(error: MarkInstallJobDispatchedError) -> Self {
+        Self::at("mark_install_job_dispatched")(error)
+    }
+}
+
 impl InstallJobRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -78,7 +188,7 @@ impl InstallJobRepository {
         id: Uuid,
         size_bytes: i64,
         sha256: &str,
-    ) -> Result<Option<DateTime<Utc>>, OperationError> {
+    ) -> Result<Option<DateTime<Utc>>, CreateInstallJobError> {
         sqlx::query_scalar(concat!(
             "INSERT INTO install_jobs
                  (id, public_attempt_id, device_id, device_expires_at, pairing_started_at, size_bytes, sha256)
@@ -93,14 +203,14 @@ impl InstallJobRepository {
         .bind(sha256)
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("create_install_job"))
+        .map_err(CreateInstallJobError)
     }
 
     pub async fn find(
         &self,
         hash: &[u8; 32],
         id: Uuid,
-    ) -> Result<Option<InstallJob>, OperationError> {
+    ) -> Result<Option<InstallJob>, FindInstallJobError> {
         sqlx::query_as(concat!(
             "SELECT j.size_bytes, j.sha256, j.queued_at FROM install_jobs j WHERE ",
             authorized_job!()
@@ -109,10 +219,10 @@ impl InstallJobRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("find_install_job"))
+        .map_err(FindInstallJobError)
     }
 
-    pub async fn queue(&self, hash: &[u8; 32], id: Uuid) -> Result<bool, OperationError> {
+    pub async fn queue(&self, hash: &[u8; 32], id: Uuid) -> Result<bool, QueueInstallJobError> {
         // The row is the durable queue entry. Keep the original timestamp on
         // retries, and reauthorize after the R2 HEAD request.
         let result = sqlx::query(concat!(
@@ -123,26 +233,26 @@ impl InstallJobRepository {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("queue_install_job"))?;
+        .map_err(QueueInstallJobError)?;
         Ok(result.rows_affected() == 1)
     }
 
-    pub async fn expired(&self) -> Result<Vec<Uuid>, OperationError> {
+    pub async fn expired(&self) -> Result<Vec<Uuid>, ListExpiredInstallJobsError> {
         sqlx::query_scalar(
             "SELECT id FROM install_jobs WHERE expires_at <= clock_timestamp()
              ORDER BY expires_at LIMIT 100",
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(OperationError::at("list_expired_install_jobs"))
+        .map_err(ListExpiredInstallJobsError)
     }
 
-    pub async fn remove(&self, id: Uuid) -> Result<(), OperationError> {
+    pub async fn remove(&self, id: Uuid) -> Result<(), RemoveInstallJobError> {
         sqlx::query("DELETE FROM install_jobs WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(OperationError::at("remove_install_job"))?;
+            .map_err(RemoveInstallJobError)?;
         Ok(())
     }
 }
@@ -152,7 +262,7 @@ impl InstallJobRepository {
     pub(crate) async fn load_installable(
         &self,
         id: Uuid,
-    ) -> Result<Option<InstallArtifact>, OperationError> {
+    ) -> Result<Option<InstallArtifact>, LoadInstallJobError> {
         sqlx::query_as(
             "SELECT size_bytes, sha256 FROM install_jobs WHERE id = $1 AND queued_at IS NOT NULL
              AND finished_at IS NULL AND expires_at > clock_timestamp()",
@@ -160,14 +270,14 @@ impl InstallJobRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("load_install_job"))
+        .map_err(LoadInstallJobError)
     }
 
     pub(crate) async fn record_outcome(
         &self,
         id: Uuid,
         installed: bool,
-    ) -> Result<(), OperationError> {
+    ) -> Result<(), RecordInstallOutcomeError> {
         let outcome = if installed { "installed" } else { "failed" };
         sqlx::query(
             "UPDATE install_jobs SET outcome = COALESCE(outcome, $2),
@@ -178,7 +288,7 @@ impl InstallJobRepository {
         .bind(outcome)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("record_install_outcome"))?;
+        .map_err(RecordInstallOutcomeError)?;
         Ok(())
     }
 
@@ -186,7 +296,7 @@ impl InstallJobRepository {
         &self,
         id: Uuid,
         outcome: Option<bool>,
-    ) -> Result<Option<Notification>, OperationError> {
+    ) -> Result<Option<Notification>, LoadInstallNotificationError> {
         let state = match outcome {
             Some(true) => "installed",
             Some(false) => "failed",
@@ -207,7 +317,7 @@ impl InstallJobRepository {
         .bind(state)
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("load_install_notification"))?;
+        .map_err(LoadInstallNotificationError)?;
         Ok(target.map(|target| Notification {
             content: NotificationContent::Install {
                 job_id: id,
@@ -224,13 +334,11 @@ impl InstallJobRepository {
     pub(crate) async fn remove_invalid_token(
         &self,
         notification: &Notification,
-    ) -> Result<(), OperationError> {
-        PushTokenRepository::remove_if_current(&self.pool, notification)
-            .await
-            .map_err(Into::into)
+    ) -> Result<(), RemovePushTokenError> {
+        PushTokenRepository::remove_if_current(&self.pool, notification).await
     }
 
-    pub(crate) async fn pending_dispatch(&self) -> Result<Vec<Uuid>, OperationError> {
+    pub(crate) async fn pending_dispatch(&self) -> Result<Vec<Uuid>, LoadPendingInstallJobsError> {
         sqlx::query_scalar(
             "SELECT id FROM install_jobs WHERE queued_at IS NOT NULL AND dispatched_at IS NULL
              AND finished_at IS NULL AND expires_at > clock_timestamp()
@@ -238,15 +346,18 @@ impl InstallJobRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(OperationError::at("load_pending_install_jobs"))
+        .map_err(LoadPendingInstallJobsError)
     }
 
-    pub(crate) async fn mark_dispatched(&self, id: Uuid) -> Result<(), OperationError> {
+    pub(crate) async fn mark_dispatched(
+        &self,
+        id: Uuid,
+    ) -> Result<(), MarkInstallJobDispatchedError> {
         sqlx::query("UPDATE install_jobs SET dispatched_at = clock_timestamp() WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(OperationError::at("mark_install_job_dispatched"))?;
+            .map_err(MarkInstallJobDispatchedError)?;
         Ok(())
     }
 }

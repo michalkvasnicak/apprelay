@@ -168,7 +168,7 @@ impl InstallActivities {
         self.jobs
             .record_outcome(notice.id, installed)
             .await
-            .map_err(activity_failure)?;
+            .map_err(|error| activity_failure(error.into()))?;
         if installed {
             tracing::info!(job_id = %notice.id, outcome, "Install finished");
         } else {
@@ -195,7 +195,7 @@ impl InstallActivities {
             .jobs
             .notification(notice.id, notice.outcome)
             .await
-            .map_err(activity_failure)?
+            .map_err(|error| activity_failure(error.into()))?
         else {
             return Ok(());
         };
@@ -217,7 +217,7 @@ impl InstallActivities {
                     self.jobs
                         .remove_invalid_token(&notification)
                         .await
-                        .map_err(activity_failure)?;
+                        .map_err(|error| activity_failure(error.into()))?;
                 }
             }
         }

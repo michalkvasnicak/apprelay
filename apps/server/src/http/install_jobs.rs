@@ -12,7 +12,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::{ApiError, ArtifactApi, ErrorResponse, artifacts::validate_upload, auth::Credential};
-use crate::{db::install_jobs::object_key, r2::Verification};
+use crate::{db::install_jobs::object_key, error::OperationError, r2::Verification};
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -86,7 +86,7 @@ pub(super) async fn create(
         .install_jobs
         .create(&credential.hash, id, request.size_bytes, &request.sha256)
         .await
-        .map_err(ApiError::Internal)?
+        .map_err(|error| ApiError::Internal(error.into()))?
         .ok_or_else(missing)?;
     let now = Utc::now();
     let seconds = (deadline - now).num_seconds().min(900);
@@ -140,7 +140,7 @@ pub(super) async fn complete(
         .install_jobs
         .find(&credential.hash, id)
         .await
-        .map_err(ApiError::Internal)?
+        .map_err(|error| ApiError::Internal(error.into()))?
         .ok_or_else(missing)?;
     if job.queued_at.is_some() {
         return Ok(StatusCode::ACCEPTED);
@@ -167,7 +167,7 @@ pub(super) async fn complete(
         .install_jobs
         .queue(&credential.hash, id)
         .await
-        .map_err(ApiError::Internal)?
+        .map_err(|error| ApiError::Internal(error.into()))?
     {
         return Err(missing());
     }
@@ -184,6 +184,7 @@ impl ArtifactApi {
             let ids = match self.install_jobs.expired().await {
                 Ok(ids) => ids,
                 Err(error) => {
+                    let error = OperationError::from(error);
                     crate::telemetry::report_operation(
                         "Could not list expired install uploads",
                         error.operation,
@@ -198,6 +199,7 @@ impl ArtifactApi {
                     continue;
                 }
                 if let Err(error) = self.install_jobs.remove(id).await {
+                    let error = OperationError::from(error);
                     crate::telemetry::report_operation(
                         "Could not remove expired install job",
                         error.operation,
