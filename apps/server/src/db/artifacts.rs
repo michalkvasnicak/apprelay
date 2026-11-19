@@ -21,6 +21,46 @@ pub(crate) struct Artifact {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("could not create artifact")]
+pub(crate) struct CreateArtifactError(#[source] sqlx::Error);
+
+impl From<CreateArtifactError> for OperationError {
+    fn from(error: CreateArtifactError) -> Self {
+        Self::at("create_artifact")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not find artifact")]
+pub(crate) struct FindArtifactError(#[source] sqlx::Error);
+
+impl From<FindArtifactError> for OperationError {
+    fn from(error: FindArtifactError) -> Self {
+        Self::at("find_artifact")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not complete artifact")]
+pub(crate) struct CompleteArtifactError(#[source] sqlx::Error);
+
+impl From<CompleteArtifactError> for OperationError {
+    fn from(error: CompleteArtifactError) -> Self {
+        Self::at("complete_artifact")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not resolve artifact")]
+pub(crate) struct ResolveArtifactError(#[source] sqlx::Error);
+
+impl From<ResolveArtifactError> for OperationError {
+    fn from(error: ResolveArtifactError) -> Self {
+        Self::at("resolve_artifact")(error)
+    }
+}
+
 impl ArtifactRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -31,7 +71,7 @@ impl ArtifactRepository {
         artifact: &Artifact,
         token_hash: &[u8; 32],
         lifetime_days: Option<NonZeroU16>,
-    ) -> Result<Option<DateTime<Utc>>, OperationError> {
+    ) -> Result<Option<DateTime<Utc>>, CreateArtifactError> {
         sqlx::query_scalar(
             "INSERT INTO ipa_artifacts
              (id, token_hash, object_key, file_name, size_bytes, sha256, expires_at)
@@ -49,10 +89,10 @@ impl ArtifactRepository {
         .bind(lifetime_days.map(|days| i32::from(days.get())))
         .fetch_one(&self.pool)
         .await
-        .map_err(OperationError::at("create_artifact"))
+        .map_err(CreateArtifactError)
     }
 
-    pub async fn find(&self, id: Uuid) -> Result<Option<Artifact>, OperationError> {
+    pub async fn find(&self, id: Uuid) -> Result<Option<Artifact>, FindArtifactError> {
         sqlx::query_as(
             "SELECT id, object_key, file_name, size_bytes, sha256, expires_at
              FROM ipa_artifacts WHERE id = $1
@@ -61,10 +101,10 @@ impl ArtifactRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("find_artifact"))
+        .map_err(FindArtifactError)
     }
 
-    pub async fn complete(&self, id: Uuid) -> Result<bool, OperationError> {
+    pub async fn complete(&self, id: Uuid) -> Result<bool, CompleteArtifactError> {
         Ok(sqlx::query(
             "UPDATE ipa_artifacts SET completed_at = COALESCE(completed_at, clock_timestamp())
              WHERE id = $1 AND (expires_at IS NULL OR expires_at > clock_timestamp())",
@@ -72,12 +112,12 @@ impl ArtifactRepository {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("complete_artifact"))?
+        .map_err(CompleteArtifactError)?
         .rows_affected()
             == 1)
     }
 
-    pub async fn resolve(&self, hash: &[u8; 32]) -> Result<Option<Artifact>, OperationError> {
+    pub async fn resolve(&self, hash: &[u8; 32]) -> Result<Option<Artifact>, ResolveArtifactError> {
         sqlx::query_as(
             "SELECT id, object_key, file_name, size_bytes, sha256, expires_at
              FROM ipa_artifacts WHERE token_hash = $1
@@ -87,6 +127,6 @@ impl ArtifactRepository {
         .bind(hash.as_slice())
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("resolve_artifact"))
+        .map_err(ResolveArtifactError)
     }
 }
