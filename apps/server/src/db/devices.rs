@@ -341,22 +341,30 @@ impl DeviceRepository {
         credential_hash: &[u8; 32],
         port: u16,
     ) -> Result<bool, SetRemotePairingPortError> {
-        let updated = sqlx::query(
-            "UPDATE devices
-             SET remote_pairing_port = $3,
-                 remote_pairing_port_expires_at = LEAST(
-                     expires_at, clock_timestamp() + INTERVAL '5 minutes'
-                 )
-             WHERE id = $1 AND bearer_token_hash = $2
-               AND expires_at > clock_timestamp()",
+        // The extension also reports before there is a pairing. Acknowledge those
+        // reports without saving them so a new pairing always needs a fresh report.
+        sqlx::query_scalar(
+            "WITH authorized AS (
+                 SELECT id, expires_at FROM devices
+                 WHERE id = $1 AND bearer_token_hash = $2 AND expires_at > clock_timestamp()
+                 FOR UPDATE
+             ), updated AS (
+                 UPDATE device_pairings p
+                 SET remote_pairing_port = $3,
+                     remote_pairing_port_expires_at = LEAST(
+                         d.expires_at, clock_timestamp() + INTERVAL '5 minutes'
+                     )
+                 FROM authorized d WHERE p.device_id = d.id
+                   AND p.updated_at <= statement_timestamp()
+             )
+             SELECT EXISTS (SELECT 1 FROM authorized)",
         )
         .bind(device_id)
         .bind(credential_hash.as_slice())
         .bind(i32::from(port))
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
-        .map_err(SetRemotePairingPortError)?;
-        Ok(updated.rows_affected() != 0)
+        .map_err(SetRemotePairingPortError)
     }
 
     pub async fn lock_for_provisioning(

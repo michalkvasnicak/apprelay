@@ -6,7 +6,7 @@ use std::{io, net::Ipv4Addr};
 use chrono::{DateTime, Utc};
 use idevice::remote_pairing::RpPairingFile;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -127,12 +127,16 @@ impl From<PairingStoreConfigError> for OperationError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum SavePairingError {
+pub(crate) enum PairingWriteError {
+    #[error("could not prepare pairing attempt for verification")]
+    PrepareVerification(#[source] sqlx::Error),
+    #[error("could not verify pairing port")]
+    VerifyPort(#[source] sqlx::Error),
     #[error("could not serialize pairing credentials")]
     SerializeCredentials(#[source] serde_json::Error),
     #[error("could not encrypt pairing credentials")]
     EncryptCredentials(#[source] io::Error),
-    #[error("could not start pairing save transaction")]
+    #[error("could not start pairing transaction")]
     Begin(#[source] sqlx::Error),
     #[error("could not lock pairing device")]
     LockDevice(#[source] sqlx::Error),
@@ -150,25 +154,27 @@ pub(crate) enum SavePairingError {
     CompleteAttempt(#[source] sqlx::Error),
     #[error("pairing attempt is unavailable")]
     AttemptUnavailable,
-    #[error("could not commit pairing save transaction")]
+    #[error("could not commit pairing transaction")]
     Commit(#[source] sqlx::Error),
 }
 
-impl From<SavePairingError> for OperationError {
-    fn from(error: SavePairingError) -> Self {
+impl From<PairingWriteError> for OperationError {
+    fn from(error: PairingWriteError) -> Self {
         let operation = match &error {
-            SavePairingError::SerializeCredentials(_) => "serialize_pairing_credentials",
-            SavePairingError::EncryptCredentials(_) => "encrypt_pairing_credentials",
-            SavePairingError::Begin(_) => "begin_save_pairing",
-            SavePairingError::LockDevice(_) => "lock_pairing_device",
-            SavePairingError::DeviceUnavailable => "pairing_device_unavailable",
-            SavePairingError::CompletePublicAttempt(_) => "complete_public_pairing_attempt",
-            SavePairingError::PublicAttemptUnavailable => "public_pairing_attempt_unavailable",
-            SavePairingError::UpsertCredentials(_) => "upsert_pairing_credentials",
-            SavePairingError::Superseded => "pairing_superseded",
-            SavePairingError::CompleteAttempt(_) => "complete_pairing_attempt",
-            SavePairingError::AttemptUnavailable => "pairing_attempt_unavailable",
-            SavePairingError::Commit(_) => "commit_save_pairing",
+            PairingWriteError::PrepareVerification(_) => "prepare_pairing_verification",
+            PairingWriteError::VerifyPort(_) => "verify_pairing_port",
+            PairingWriteError::SerializeCredentials(_) => "serialize_pairing_credentials",
+            PairingWriteError::EncryptCredentials(_) => "encrypt_pairing_credentials",
+            PairingWriteError::Begin(_) => "begin_save_pairing",
+            PairingWriteError::LockDevice(_) => "lock_pairing_device",
+            PairingWriteError::DeviceUnavailable => "pairing_device_unavailable",
+            PairingWriteError::CompletePublicAttempt(_) => "complete_public_pairing_attempt",
+            PairingWriteError::PublicAttemptUnavailable => "public_pairing_attempt_unavailable",
+            PairingWriteError::UpsertCredentials(_) => "upsert_pairing_credentials",
+            PairingWriteError::Superseded => "pairing_superseded",
+            PairingWriteError::CompleteAttempt(_) => "complete_pairing_attempt",
+            PairingWriteError::AttemptUnavailable => "pairing_attempt_unavailable",
+            PairingWriteError::Commit(_) => "commit_save_pairing",
         };
         Self::at(operation)(error)
     }
@@ -180,13 +186,13 @@ impl PairingStore {
         job_id: Uuid,
     ) -> Result<InstallTarget, InstallTargetError> {
         let row = sqlx::query_as::<_, InstallTargetRow>(
-            "SELECT d.id AS device_id, host(d.address) AS address, d.remote_pairing_port,
+            "SELECT d.id AS device_id, host(d.address) AS address, p.remote_pairing_port,
                  p.nonce, p.ciphertext, LEAST(d.expires_at, j.expires_at) AS expires_at
              FROM install_jobs j JOIN devices d ON d.id = j.device_id AND d.expires_at = j.device_expires_at
              JOIN device_pairings p ON p.device_id = d.id AND p.attempt_started_at = j.pairing_started_at
              WHERE j.id = $1 AND j.queued_at IS NOT NULL AND j.finished_at IS NULL
                AND j.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
-               AND d.remote_pairing_port IS NOT NULL AND d.remote_pairing_port_expires_at > clock_timestamp()
+               AND p.remote_pairing_port IS NOT NULL AND p.remote_pairing_port_expires_at > clock_timestamp()
                AND p.format_version = $2",
         )
         .bind(job_id)
@@ -224,15 +230,15 @@ impl PairingStore {
         })
     }
 
-    pub(crate) async fn save(
+    pub(crate) async fn save_pending(
         &self,
         device_id: Uuid,
-        attempts: (Uuid, Option<Uuid>),
+        attempt_id: Uuid,
         expected_expiry: DateTime<Utc>,
         attempt_started_at: DateTime<Utc>,
+        verification_expires_at: DateTime<Utc>,
         record: &PairingRecord,
-    ) -> Result<(), SavePairingError> {
-        let (attempt_id, public_attempt_id) = attempts;
+    ) -> Result<(), PairingWriteError> {
         let pairing_file = Zeroizing::new(record.pairing_file.to_bytes());
         let host = &record.host_info;
         let peer = &record.peer;
@@ -258,30 +264,92 @@ impl PairingStore {
             },
         };
         let plaintext =
-            serde_json::to_vec(&stored).map_err(SavePairingError::SerializeCredentials)?;
+            serde_json::to_vec(&stored).map_err(PairingWriteError::SerializeCredentials)?;
         // Domain separation + format version + device ID prevents moving a
         // ciphertext to a different device or interpreting it as another format.
         let (nonce, ciphertext) = self
             .key
             .seal(&associated_data(device_id), plaintext)
-            .map_err(SavePairingError::EncryptCredentials)?;
+            .map_err(PairingWriteError::EncryptCredentials)?;
 
-        let mut transaction = self.pool.begin().await.map_err(SavePairingError::Begin)?;
-        // Coordinate with renewal/cleanup. A completed pairing must never be
-        // attached to an expired, deleted, or subsequently renewed registration.
-        let current = sqlx::query_scalar::<_, Uuid>(
-            "SELECT id FROM devices
-             WHERE id = $1 AND expires_at = $2 AND expires_at > clock_timestamp()
-             FOR UPDATE",
+        let mut transaction = self.lock_device(device_id, expected_expiry).await?;
+        // Keep the attempt active during verification, but never extend the PIN window.
+        let pending = sqlx::query(
+            "UPDATE pairing_attempts SET expires_at = LEAST(device_expires_at, $4),
+                 code_id = NULL, nonce = NULL, ciphertext = NULL
+             WHERE id = $1 AND device_id = $2 AND device_expires_at = $3
+               AND ended_at IS NULL AND expires_at > clock_timestamp()
+               AND $4 > clock_timestamp()",
         )
+        .bind(attempt_id)
         .bind(device_id)
         .bind(expected_expiry)
-        .fetch_optional(&mut *transaction)
+        .bind(verification_expires_at)
+        .execute(&mut *transaction)
         .await
-        .map_err(SavePairingError::LockDevice)?;
-        if current.is_none() {
-            return Err(SavePairingError::DeviceUnavailable);
+        .map_err(PairingWriteError::PrepareVerification)?;
+        if pending.rows_affected() != 1 {
+            return Err(PairingWriteError::AttemptUnavailable);
         }
+        let saved = sqlx::query(
+            "INSERT INTO device_pairings
+                 (device_id, format_version, nonce, ciphertext, attempt_started_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, clock_timestamp())
+             ON CONFLICT (device_id) DO UPDATE SET
+                 format_version = EXCLUDED.format_version,
+                 nonce = EXCLUDED.nonce,
+                 ciphertext = EXCLUDED.ciphertext,
+                 attempt_started_at = EXCLUDED.attempt_started_at,
+                 updated_at = clock_timestamp(),
+                 verified_at = NULL,
+                 remote_pairing_port = NULL,
+                 remote_pairing_port_expires_at = NULL
+             WHERE device_pairings.attempt_started_at < EXCLUDED.attempt_started_at",
+        )
+        .bind(device_id)
+        .bind(FORMAT_VERSION)
+        .bind(nonce.as_slice())
+        .bind(ciphertext.as_slice())
+        .bind(attempt_started_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(PairingWriteError::UpsertCredentials)?;
+        if saved.rows_affected() != 1 {
+            return Err(PairingWriteError::Superseded);
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(PairingWriteError::Commit)
+    }
+
+    pub(crate) async fn complete_if_reported(
+        &self,
+        device_id: Uuid,
+        attempts: (Uuid, Option<Uuid>),
+        expected_expiry: DateTime<Utc>,
+        attempt_started_at: DateTime<Utc>,
+        record: &PairingRecord,
+    ) -> Result<bool, PairingWriteError> {
+        let (attempt_id, public_attempt_id) = attempts;
+        let mut transaction = self.lock_device(device_id, expected_expiry).await?;
+        // The authenticated report confirms discovery, not a pair-verify handshake.
+        let verified = sqlx::query(
+            "UPDATE device_pairings SET verified_at = clock_timestamp()
+             WHERE device_id = $1 AND attempt_started_at = $2
+               AND remote_pairing_port IS NOT NULL
+               AND remote_pairing_port_expires_at > clock_timestamp()",
+        )
+        .bind(device_id)
+        .bind(attempt_started_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(PairingWriteError::VerifyPort)?;
+        if verified.rows_affected() != 1 {
+            return Ok(false);
+        }
+
+        let peer = &record.peer;
         if let Some(public_attempt_id) = public_attempt_id {
             let completed = sqlx::query(
                 "UPDATE public_pairing_attempts SET status = 'success',
@@ -300,36 +368,12 @@ impl PairingStore {
             .bind(attempt_started_at)
             .execute(&mut *transaction)
             .await
-            .map_err(SavePairingError::CompletePublicAttempt)?;
+            .map_err(PairingWriteError::CompletePublicAttempt)?;
             if completed.rows_affected() != 1 {
-                return Err(SavePairingError::PublicAttemptUnavailable);
+                return Err(PairingWriteError::PublicAttemptUnavailable);
             }
         }
-        let saved = sqlx::query(
-            "INSERT INTO device_pairings
-                 (device_id, format_version, nonce, ciphertext, attempt_started_at)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (device_id) DO UPDATE SET
-                 format_version = EXCLUDED.format_version,
-                 nonce = EXCLUDED.nonce,
-                 ciphertext = EXCLUDED.ciphertext,
-                 attempt_started_at = EXCLUDED.attempt_started_at,
-                 updated_at = clock_timestamp(),
-                 verified_at = NULL
-             WHERE device_pairings.attempt_started_at <= EXCLUDED.attempt_started_at",
-        )
-        .bind(device_id)
-        .bind(FORMAT_VERSION)
-        .bind(nonce.as_slice())
-        .bind(ciphertext.as_slice())
-        .bind(attempt_started_at)
-        .execute(&mut *transaction)
-        .await
-        .map_err(SavePairingError::UpsertCredentials)?;
-        if saved.rows_affected() != 1 {
-            return Err(SavePairingError::Superseded);
-        }
-        // Commit the success notification together with the saved credentials.
+        // Publish success atomically with verification.
         let completed = sqlx::query(
             "UPDATE pairing_attempts SET
                  ended_at = clock_timestamp(), code_id = NULL, nonce = NULL, ciphertext = NULL,
@@ -346,10 +390,38 @@ impl PairingStore {
         .bind(expected_expiry)
         .execute(&mut *transaction)
         .await
-        .map_err(SavePairingError::CompleteAttempt)?;
+        .map_err(PairingWriteError::CompleteAttempt)?;
         if completed.rows_affected() != 1 {
-            return Err(SavePairingError::AttemptUnavailable);
+            return Err(PairingWriteError::AttemptUnavailable);
         }
-        transaction.commit().await.map_err(SavePairingError::Commit)
+        transaction
+            .commit()
+            .await
+            .map_err(PairingWriteError::Commit)?;
+        Ok(true)
+    }
+
+    async fn lock_device(
+        &self,
+        device_id: Uuid,
+        expected_expiry: DateTime<Utc>,
+    ) -> Result<Transaction<'_, Postgres>, PairingWriteError> {
+        let mut transaction = self.pool.begin().await.map_err(PairingWriteError::Begin)?;
+        // Coordinate with renewal/cleanup. A completed pairing must never be
+        // attached to an expired, deleted, or subsequently renewed registration.
+        let current = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM devices
+             WHERE id = $1 AND expires_at = $2 AND expires_at > clock_timestamp()
+             FOR UPDATE",
+        )
+        .bind(device_id)
+        .bind(expected_expiry)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(PairingWriteError::LockDevice)?;
+        if current.is_none() {
+            return Err(PairingWriteError::DeviceUnavailable);
+        }
+        Ok(transaction)
     }
 }

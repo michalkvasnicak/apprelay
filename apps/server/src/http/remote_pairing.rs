@@ -28,12 +28,12 @@ pub(super) async fn put(
             error: "expected a port between 1 and 65535",
         },
     })?;
-    let updated = state
+    let authorized = state
         .devices
         .set_remote_pairing_port(device_id, &credential.hash, request.port.get())
         .await
         .map_err(|error| ApiError::Internal(error.into()))?;
-    if !updated {
+    if !authorized {
         return Err(ApiError::unauthorized());
     }
 

@@ -318,9 +318,10 @@ impl PairingAttemptRepository {
             return Ok(Claim::Conflict);
         }
         // This row is a durable enqueue outbox. Only IDs enter Temporal history.
+        // Leave time for the VPN report after the connection and PIN windows.
         sqlx::query(
             "UPDATE public_pairing_attempts SET device_id = $2, device_expires_at = $3,
-             status = 'pairing', expires_at = LEAST(expires_at, $3, clock_timestamp() + INTERVAL '3 minutes')
+             status = 'pairing', expires_at = LEAST(expires_at, $3, clock_timestamp() + INTERVAL '5 minutes')
              WHERE token_hash = $1",
         )
         .bind(hash.as_slice())

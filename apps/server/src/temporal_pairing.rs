@@ -35,6 +35,10 @@ use crate::{
 const TASK_QUEUE: &str = "apprelay-pairing";
 const CONNECTION_LIMIT: Duration = Duration::from_secs(120);
 const SESSION_LIMIT: Duration = Duration::from_secs(60);
+// The VPN extension discovers and reports the port once per minute.
+const VERIFICATION_LIMIT: Duration = Duration::from_secs(90);
+const PAIRING_ACTIVITY_LIMIT: Duration =
+    Duration::from_secs(SESSION_LIMIT.as_secs() + VERIFICATION_LIMIT.as_secs() + 5);
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -96,7 +100,7 @@ impl PairDeviceWorkflow {
         ctx.execute_activity(
             PairingActivities::pair_device,
             device_id,
-            ActivityOptions::with_start_to_close_timeout(SESSION_LIMIT)
+            ActivityOptions::with_start_to_close_timeout(PAIRING_ACTIVITY_LIMIT)
                 .heartbeat_timeout(Duration::from_secs(10))
                 // Interactive pairing must not restart with a new PIN/identity on retry.
                 .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
@@ -129,7 +133,7 @@ impl PairAttemptWorkflow {
             ctx.execute_activity(
                 PairingActivities::pair_device,
                 input.clone(),
-                ActivityOptions::with_start_to_close_timeout(SESSION_LIMIT)
+                ActivityOptions::with_start_to_close_timeout(PAIRING_ACTIVITY_LIMIT)
                     .heartbeat_timeout(Duration::from_secs(10))
                     .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
                     .build(),
@@ -330,14 +334,15 @@ impl PairingActivities {
             tracing::info!("Starting pairing activity");
             Ok((
                 session,
-                deadline.min(lease_deadline),
+                lease_deadline,
                 expires_at,
                 attempt_started_at,
                 attempt_id,
             ))
         };
-        let (mut session, deadline, expires_at, attempt_started_at, attempt_id) =
+        let (mut session, lease_deadline, expires_at, attempt_started_at, attempt_id) =
             wait(&ctx, prepare, deadline, "pairing session expired").await?;
+        let deadline = deadline.min(lease_deadline);
         let operation = async {
             let codes = &self.codes;
             let record = session
@@ -351,23 +356,67 @@ impl PairingActivities {
                     }
                 })
                 .await?;
+            let verification_deadline = (Instant::now() + VERIFICATION_LIMIT).min(lease_deadline);
+            let verification_expires_at = Utc::now()
+                + chrono::Duration::from_std(
+                    verification_deadline.saturating_duration_since(Instant::now()),
+                )
+                .map_err(OperationError::at("compute_pairing_verification_expiry"))?;
             // Persist inside the activity: credentials must not enter Temporal history.
             self.pairings
-                .save(
+                .save_pending(
                     device_id,
-                    (attempt_id, public_attempt_id),
+                    attempt_id,
                     expires_at,
                     attempt_started_at,
+                    verification_expires_at,
                     &record,
                 )
                 .await?;
-            tracing::info!("Encrypted pairing saved; iOS completion is unverified");
-            Ok(())
+            Ok((record, verification_deadline))
         };
-        let result = wait(&ctx, operation, deadline, "pairing session expired").await;
-        // Normal completion, cancellation, and timeout all withdraw the proxy service.
+        let saved = wait(&ctx, operation, deadline, "pairing session expired").await;
+        // Withdraw the proxy service before waiting for the extension's report.
         // A crash still expires its last announcement after the ten-second DNS TTL.
         session.stop().await;
+        drop(session);
+        let result = match saved {
+            Ok((record, verification_deadline)) => {
+                tracing::info!(
+                    "Encrypted pairing saved; waiting for the VPN extension's port report"
+                );
+                let verify = async {
+                    loop {
+                        if self
+                            .pairings
+                            .complete_if_reported(
+                                device_id,
+                                (attempt_id, public_attempt_id),
+                                expires_at,
+                                attempt_started_at,
+                                &record,
+                            )
+                            .await?
+                        {
+                            tracing::info!("Remote pairing port report confirmed");
+                            return Ok(());
+                        }
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                };
+                wait(
+                    &ctx,
+                    verify,
+                    verification_deadline,
+                    "VPN extension did not report a remote pairing port before the deadline",
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        if result.is_ok() {
+            return result;
+        }
         // Best effort on cancellation as well; expiry also handles process crashes.
         let ended =
             match tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id)).await {
