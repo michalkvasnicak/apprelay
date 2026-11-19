@@ -28,7 +28,7 @@ use crate::{
         pairings::PairingStore,
     },
     error::OperationError,
-    pairing::Session,
+    pairing::{Session, connect_verified_pairing},
     telemetry,
 };
 
@@ -334,13 +334,14 @@ impl PairingActivities {
             tracing::info!("Starting pairing activity");
             Ok((
                 session,
+                peer,
                 lease_deadline,
                 expires_at,
                 attempt_started_at,
                 attempt_id,
             ))
         };
-        let (mut session, lease_deadline, expires_at, attempt_started_at, attempt_id) =
+        let (mut session, peer, lease_deadline, expires_at, attempt_started_at, attempt_id) =
             wait(&ctx, prepare, deadline, "pairing session expired").await?;
         let deadline = deadline.min(lease_deadline);
         let operation = async {
@@ -381,25 +382,49 @@ impl PairingActivities {
         session.stop().await;
         drop(session);
         let result = match saved {
-            Ok((record, verification_deadline)) => {
+            Ok((mut record, verification_deadline)) => {
                 tracing::info!(
                     "Encrypted pairing saved; waiting for the VPN extension's port report"
                 );
                 let verify = async {
+                    let peer_key = record
+                        .peer_public_key
+                        .ok_or_else(|| OperationError::without_source("target_missing_peer_key"))?;
                     loop {
-                        if self
+                        if let Some(port) = self
                             .pairings
-                            .complete_if_reported(
-                                device_id,
-                                (attempt_id, public_attempt_id),
-                                expires_at,
-                                attempt_started_at,
-                                &record,
-                            )
+                            .reported_port(device_id, expires_at, attempt_started_at)
                             .await?
                         {
-                            tracing::info!("Remote pairing port report confirmed");
-                            return Ok(());
+                            let port = u16::try_from(port)
+                                .map_err(OperationError::at("target_invalid_port"))?;
+                            tracing::info!("Remote pairing port reported; verifying saved pairing");
+                            tokio::time::timeout(
+                                Duration::from_secs(20),
+                                connect_verified_pairing(
+                                    peer,
+                                    port,
+                                    &mut record.pairing_file,
+                                    &peer_key,
+                                ),
+                            )
+                            .await
+                            .map_err(OperationError::at("pairing-preflight-timeout"))??;
+                            if self
+                                .pairings
+                                .complete_verified_pairing(
+                                    device_id,
+                                    (attempt_id, public_attempt_id),
+                                    expires_at,
+                                    attempt_started_at,
+                                    port,
+                                    &record,
+                                )
+                                .await?
+                            {
+                                tracing::info!("Remote pairing verified");
+                                return Ok(());
+                            }
                         }
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
@@ -408,7 +433,7 @@ impl PairingActivities {
                     &ctx,
                     verify,
                     verification_deadline,
-                    "VPN extension did not report a remote pairing port before the deadline",
+                    "Remote pairing was not verified before the deadline",
                 )
                 .await
             }

@@ -17,12 +17,13 @@ use hickory_proto::{
     },
 };
 use idevice::remote_pairing::{
-    PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, PeerDevice, RpPairingFile,
+    PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, PeerDevice, RemotePairingClient,
+    RpPairingFile,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::{
-    net::{TcpListener, UdpSocket},
-    time::interval,
+    net::{TcpListener, TcpStream, UdpSocket},
+    time::{interval, timeout},
 };
 
 use crate::{
@@ -37,6 +38,42 @@ pub(crate) struct PairingRecord {
     pub host_info: PairableHostInfo,
     pub peer: PeerDevice,
     pub peer_public_key: Option<[u8; 32]>,
+}
+
+pub(crate) async fn dial_device(address: Ipv4Addr, port: u16) -> Result<TcpStream, OperationError> {
+    if port == 0 {
+        return Err(OperationError::without_source("invalid-tunnel-port"));
+    }
+    timeout(Duration::from_secs(10), TcpStream::connect((address, port)))
+        .await
+        .map_err(OperationError::at("device-connect-timeout"))?
+        .map_err(OperationError::at("device-connect"))
+}
+
+pub(crate) async fn connect_verified_pairing(
+    address: Ipv4Addr,
+    port: u16,
+    record: &mut RpPairingFile,
+    peer_key: &[u8; 32],
+) -> Result<RemotePairingClient<IdentitySocket>, OperationError> {
+    let transcript = Transcript::default();
+    let stream = dial_device(address, port).await?;
+    let mut control = RemotePairingClient::new(
+        IdentitySocket::new(stream, transcript.clone(), false),
+        "AppRelay",
+    );
+    control
+        .attempt_pair_verify()
+        .await
+        .map_err(OperationError::at("pairing-handshake"))?;
+    control
+        .validate_pairing(record)
+        .await
+        .map_err(OperationError::at("pairing-verification"))?;
+    transcript
+        .verify(control.encryption_key(), peer_key)
+        .map_err(OperationError::at("peer-identity-verification"))?;
+    Ok(control)
 }
 
 pub(crate) struct Session {

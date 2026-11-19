@@ -12,17 +12,17 @@ use idevice::{
     afc::{AfcClient, opcode::AfcFopenMode},
     installation_proxy::InstallationProxyClient,
     lockdown::LockdownClient,
-    remote_pairing::{RemotePairingClient, connect_tls_psk_tunnel_native},
+    remote_pairing::connect_tls_psk_tunnel_native,
     rsd::RsdHandshake,
     tcp::adapter::Adapter,
 };
-use tokio::{io::AsyncReadExt, net::TcpStream, time::timeout};
+use tokio::{io::AsyncReadExt, time::timeout};
 use uuid::Uuid;
 
 use crate::{
     db::pairings::InstallTarget,
     error::OperationError,
-    peer_identity::{IdentitySocket, Transcript},
+    pairing::{connect_verified_pairing, dial_device},
 };
 
 const MAX_UNPACKED: u64 = 256 * 1024 * 1024;
@@ -194,53 +194,23 @@ fn collect_files(
     Ok(())
 }
 
-async fn dial(target: &InstallTarget, port: u16) -> Result<TcpStream, OperationError> {
-    if port == 0 {
-        return Err(OperationError::without_source("invalid-tunnel-port"));
-    }
-    timeout(
-        Duration::from_secs(10),
-        TcpStream::connect((target.address, port)),
-    )
-    .await
-    .map_err(OperationError::at("device-connect-timeout"))?
-    .map_err(OperationError::at("device-connect"))
-}
-
-pub(crate) async fn connect_verified_pairing(
-    target: &mut InstallTarget,
-) -> Result<RemotePairingClient<IdentitySocket>, OperationError> {
-    let transcript = Transcript::default();
-    let stream = dial(target, target.port).await?;
-    let mut control = RemotePairingClient::new(
-        IdentitySocket::new(stream, transcript.clone(), false),
-        "AppRelay",
-    );
-    control
-        .attempt_pair_verify()
-        .await
-        .map_err(OperationError::at("pairing-handshake"))?;
-    control
-        .validate_pairing(&mut target.record)
-        .await
-        .map_err(OperationError::at("pairing-verification"))?;
-    transcript
-        .verify(control.encryption_key(), &target.peer_key)
-        .map_err(OperationError::at("peer-identity-verification"))?;
-    Ok(control)
-}
-
 pub(crate) async fn deliver(
     id: Uuid,
     mut target: InstallTarget,
     app: Application,
 ) -> Result<(), OperationError> {
-    let mut control = connect_verified_pairing(&mut target).await?;
+    let mut control = connect_verified_pairing(
+        target.address,
+        target.port,
+        &mut target.record,
+        &target.peer_key,
+    )
+    .await?;
     let port = control
         .create_tcp_listener()
         .await
         .map_err(OperationError::at("tunnel-listener"))?;
-    let stream = dial(&target, port).await?;
+    let stream = dial_device(target.address, port).await?;
     let tunnel = connect_tls_psk_tunnel_native(stream, control.encryption_key())
         .await
         .map_err(OperationError::at("tunnel-handshake"))?;

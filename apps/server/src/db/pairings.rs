@@ -130,7 +130,9 @@ impl From<PairingStoreConfigError> for OperationError {
 pub(crate) enum PairingWriteError {
     #[error("could not prepare pairing attempt for verification")]
     PrepareVerification(#[source] sqlx::Error),
-    #[error("could not verify pairing port")]
+    #[error("could not read reported pairing port")]
+    ReadReportedPort(#[source] sqlx::Error),
+    #[error("could not mark pairing verified")]
     VerifyPort(#[source] sqlx::Error),
     #[error("could not serialize pairing credentials")]
     SerializeCredentials(#[source] serde_json::Error),
@@ -162,6 +164,7 @@ impl From<PairingWriteError> for OperationError {
     fn from(error: PairingWriteError) -> Self {
         let operation = match &error {
             PairingWriteError::PrepareVerification(_) => "prepare_pairing_verification",
+            PairingWriteError::ReadReportedPort(_) => "read_reported_pairing_port",
             PairingWriteError::VerifyPort(_) => "verify_pairing_port",
             PairingWriteError::SerializeCredentials(_) => "serialize_pairing_credentials",
             PairingWriteError::EncryptCredentials(_) => "encrypt_pairing_credentials",
@@ -323,25 +326,49 @@ impl PairingStore {
             .map_err(PairingWriteError::Commit)
     }
 
-    pub(crate) async fn complete_if_reported(
+    pub(crate) async fn reported_port(
+        &self,
+        device_id: Uuid,
+        expected_expiry: DateTime<Utc>,
+        attempt_started_at: DateTime<Utc>,
+    ) -> Result<Option<i32>, PairingWriteError> {
+        sqlx::query_scalar(
+            "SELECT p.remote_pairing_port
+             FROM device_pairings p JOIN devices d ON d.id = p.device_id
+             WHERE p.device_id = $1 AND p.attempt_started_at = $2
+               AND d.expires_at = $3 AND d.expires_at > clock_timestamp()
+               AND p.remote_pairing_port IS NOT NULL
+               AND p.remote_pairing_port_expires_at > clock_timestamp()",
+        )
+        .bind(device_id)
+        .bind(attempt_started_at)
+        .bind(expected_expiry)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(PairingWriteError::ReadReportedPort)
+    }
+
+    pub(crate) async fn complete_verified_pairing(
         &self,
         device_id: Uuid,
         attempts: (Uuid, Option<Uuid>),
         expected_expiry: DateTime<Utc>,
         attempt_started_at: DateTime<Utc>,
+        verified_port: u16,
         record: &PairingRecord,
     ) -> Result<bool, PairingWriteError> {
         let (attempt_id, public_attempt_id) = attempts;
         let mut transaction = self.lock_device(device_id, expected_expiry).await?;
-        // The authenticated report confirms discovery, not a pair-verify handshake.
+        // Don't publish success if the endpoint changed during the handshake.
         let verified = sqlx::query(
             "UPDATE device_pairings SET verified_at = clock_timestamp()
              WHERE device_id = $1 AND attempt_started_at = $2
-               AND remote_pairing_port IS NOT NULL
+               AND remote_pairing_port = $3
                AND remote_pairing_port_expires_at > clock_timestamp()",
         )
         .bind(device_id)
         .bind(attempt_started_at)
+        .bind(i32::from(verified_port))
         .execute(&mut *transaction)
         .await
         .map_err(PairingWriteError::VerifyPort)?;

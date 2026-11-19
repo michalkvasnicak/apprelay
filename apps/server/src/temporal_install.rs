@@ -21,7 +21,8 @@ use crate::{
     },
     error::OperationError,
     http::ArtifactApi,
-    install::{Application, connect_verified_pairing, deliver},
+    install::{Application, deliver},
+    pairing::connect_verified_pairing,
     r2::R2Storage,
     telemetry,
     temporal_pairing::{activity_failure, client, report_failure},
@@ -119,7 +120,12 @@ impl InstallActivities {
             // Verify the saved credentials and peer identity without creating a tunnel.
             tokio::time::timeout(
                 remaining.min(Duration::from_secs(20)),
-                connect_verified_pairing(&mut target),
+                connect_verified_pairing(
+                    target.address,
+                    target.port,
+                    &mut target.record,
+                    &target.peer_key,
+                ),
             )
             .await
             .map_err(OperationError::at("pairing-preflight-timeout"))??;
