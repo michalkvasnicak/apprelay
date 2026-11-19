@@ -30,7 +30,7 @@ export function trackFlowEvent(event: FlowEvent) {
 }
 
 function analyticsPath(pathname: string) {
-  if (pathname === "/" || pathname === pairingHandoffPath) {
+  if (pathname === "/" || pathname === "/sign" || pathname === pairingHandoffPath) {
     return pathname;
   }
   if (pathname.startsWith("/s/")) {

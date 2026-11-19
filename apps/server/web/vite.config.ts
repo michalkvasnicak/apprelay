@@ -1,7 +1,19 @@
 import { sentryVitePlugin } from "@sentry/bundler-plugins/vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type ViteDevServer } from "vite";
+
+// Mirror the workspace routes served by Axum, without changing the browser URL.
+function workspaceRoutes({ middlewares }: Pick<ViteDevServer, "middlewares">) {
+  middlewares.use((req, res, next) => {
+    const path = req.url?.split("?", 1)[0];
+    if (path === "/sign" || path === "/pair" || (path && /^\/s\/[^/]+$/.test(path))) {
+      req.url = "/workspace.html";
+      res.setHeader("X-Robots-Tag", "noindex");
+    }
+    next();
+  });
+}
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
@@ -16,13 +28,20 @@ export default defineConfig(({ command, mode }) => {
   }
 
   return {
+    appType: "mpa",
     build: {
+      rolldownOptions: { input: ["index.html", "workspace.html"] },
       // Keep fingerprinted output separate from public files with stable URLs.
       assetsDir: "assets/build",
       // Uninstrumented builds don't generate maps that could be served publicly.
       sourcemap: uploadSourceMaps ? "hidden" : false,
     },
     plugins: [
+      {
+        name: "apprelay-workspace-routes",
+        configureServer: workspaceRoutes,
+        configurePreviewServer: workspaceRoutes,
+      },
       react(),
       tailwindcss(),
       ...(uploadSourceMaps

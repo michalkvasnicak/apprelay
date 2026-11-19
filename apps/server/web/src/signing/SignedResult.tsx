@@ -66,7 +66,7 @@ export function SignedResult({
             </button>
           )}
           {!busy && (
-            <a href="/" className={secondaryClass}>
+            <a href="/sign" className={secondaryClass}>
               Sign another app
             </a>
           )}

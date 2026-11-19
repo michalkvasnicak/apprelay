@@ -49,7 +49,8 @@ Vite proxies API requests to the Rust server at `127.0.0.1:8080`; start it separ
 Apple authentication, trusted-device 2FA, and basic certificate/profile preparation are experimental and not live-verified. IPA signing is not integrated yet.
 Optional sessions and signing assets use a passphrase-encrypted localStorage vault. Apple passwords and verification codes are never saved.
 
-`pnpm web:build` produces `apps/server/web/dist`, which Axum serves at `/`.
+`pnpm web:build` produces `apps/server/web/dist`. Axum serves the homepage at `/`
+and the signing workspace at `/sign`.
 Set `APPRELAY_WEB_DIR` to override the asset directory. The production Docker image builds and includes these assets; its build context is the repository root.
 API documentation is available at `/openapi.json`.
 

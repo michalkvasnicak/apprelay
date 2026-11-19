@@ -54,7 +54,7 @@ export function SharedArtifact({ token }: { token: string }) {
         >
           Try again
         </button>
-        <a href="/" className={secondaryClass}>
+        <a href="/sign" className={secondaryClass}>
           Choose a local IPA
         </a>
       </div>

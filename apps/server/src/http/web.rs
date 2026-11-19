@@ -3,11 +3,14 @@ use std::path::PathBuf;
 use axum::{
     Router,
     extract::Request,
-    http::{HeaderValue, StatusCode, header::CACHE_CONTROL},
+    http::{HeaderName, HeaderValue, StatusCode, header::CACHE_CONTROL},
     middleware::{self, Next},
     response::Response,
 };
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
+};
 
 pub(super) fn router<S>() -> Router<S>
 where
@@ -17,9 +20,15 @@ where
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist"));
 
+    let workspace = ServeFile::new(directory.join("workspace.html"));
     Router::new()
-        .route_service("/s/{token}", ServeFile::new(directory.join("index.html")))
-        .route_service("/pair", ServeFile::new(directory.join("index.html")))
+        .route_service("/sign", workspace.clone())
+        .route_service("/s/{token}", workspace.clone())
+        .route_service("/pair", workspace)
+        .route_layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex"),
+        ))
         .fallback_service(ServeDir::new(directory))
         .layer(middleware::from_fn(cache_assets))
 }

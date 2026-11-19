@@ -5,13 +5,58 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
     <meta name="theme-color" content="#041423" />
+    <title>AppRelay — Sign iOS IPA Files in Your Browser</title>
+    <meta
+      name="description"
+      content="Sign an iOS IPA in your browser with AppRelay, or upload it with the @brosoft/apprelay CLI to get a share link."
+    />
+    <link rel="canonical" href="https://apprelay.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="AppRelay" />
+    <meta property="og:url" content="https://apprelay.app/" />
+    <meta property="og:title" content="AppRelay — Sign iOS IPA Files in Your Browser" />
+    <meta
+      property="og:description"
+      content="Sign an iOS IPA in your browser with AppRelay, or upload it with the @brosoft/apprelay CLI to get a share link."
+    />
+    <meta property="og:image" content="https://apprelay.app/assets/share.png" />
+    <meta property="og:image:alt" content="AppRelay logo" />
     <link rel="icon" href="/assets/favicon.ico" sizes="16x16 32x32 48x48 64x64" />
     <link rel="icon" type="image/svg+xml" href="/assets/logo.svg" sizes="any" />
-    <meta name="description" content="AppRelay browser signing workspace." />
-    <title>AppRelay — Browser signing</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/home.ts"></script>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <main class="mx-auto max-w-2xl space-y-8 px-5 py-12 sm:py-20">
+      <header class="space-y-4">
+        <p class="flex items-center gap-2.5 font-semibold text-primary">
+          <img src="/assets/logo.svg" alt="" width="36" height="36" />
+          AppRelay
+        </p>
+        <h1 class="text-3xl font-bold tracking-tight sm:text-4xl">
+          Sign iOS IPA files in your browser
+        </h1>
+        <p class="text-muted">
+          Sign in with your Apple account, pair your iPhone with AppRelay VPN, and choose an
+          <code>.ipa</code> file to sign.
+        </p>
+        <a
+          href="/sign"
+          class="inline-flex rounded-xl bg-primary px-4 py-2.5 font-semibold text-background"
+        >
+          Open signing workspace
+        </a>
+      </header>
+      <section aria-labelledby="cli-title" class="space-y-3 rounded-2xl border border-text/10 p-5">
+        <h2 id="cli-title" class="text-xl font-semibold">Upload an IPA from the command line</h2>
+        <p class="text-muted">
+          The AppRelay CLI uploads your IPA and prints a share link you can open in the signing
+          workspace. Requires Node.js 24.12 or newer.
+        </p>
+        <pre
+          class="overflow-x-auto rounded-lg bg-background/70 p-3 text-sm"
+        ><code>npx @brosoft/apprelay ./MyApp.ipa</code></pre>
+      </section>
+    </main>
   </body>
 </html>
