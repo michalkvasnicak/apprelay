@@ -207,13 +207,11 @@ async fn dial(target: &InstallTarget, port: u16) -> Result<TcpStream, OperationE
     .map_err(OperationError::at("device-connect"))
 }
 
-pub(crate) async fn deliver(
-    id: Uuid,
-    mut target: InstallTarget,
-    app: Application,
-) -> Result<(), OperationError> {
+pub(crate) async fn connect_verified_pairing(
+    target: &mut InstallTarget,
+) -> Result<RemotePairingClient<IdentitySocket>, OperationError> {
     let transcript = Transcript::default();
-    let stream = dial(&target, target.port).await?;
+    let stream = dial(target, target.port).await?;
     let mut control = RemotePairingClient::new(
         IdentitySocket::new(stream, transcript.clone(), false),
         "AppRelay",
@@ -229,6 +227,15 @@ pub(crate) async fn deliver(
     transcript
         .verify(control.encryption_key(), &target.peer_key)
         .map_err(OperationError::at("peer-identity-verification"))?;
+    Ok(control)
+}
+
+pub(crate) async fn deliver(
+    id: Uuid,
+    mut target: InstallTarget,
+    app: Application,
+) -> Result<(), OperationError> {
+    let mut control = connect_verified_pairing(&mut target).await?;
     let port = control
         .create_tcp_listener()
         .await

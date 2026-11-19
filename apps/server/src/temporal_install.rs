@@ -21,7 +21,7 @@ use crate::{
     },
     error::OperationError,
     http::ArtifactApi,
-    install::{Application, deliver},
+    install::{Application, connect_verified_pairing, deliver},
     r2::R2Storage,
     telemetry,
     temporal_pairing::{activity_failure, client, report_failure},
@@ -43,15 +43,23 @@ pub struct InstallNotice {
 impl InstallWorkflow {
     #[run]
     pub async fn run(ctx: &mut WorkflowContext<Self>, id: Uuid) -> WorkflowResult<()> {
-        let _ = ctx
-            .execute_activity(
-                InstallActivities::notify,
-                InstallNotice { id, outcome: None },
-                notice_options(),
+        let installed: WorkflowResult<()> = async {
+            ctx.execute_activity(
+                InstallActivities::verify_pairing,
+                id,
+                ActivityOptions::with_schedule_to_close_timeout(Duration::from_secs(30))
+                    .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
+                    .build(),
             )
-            .await;
-        let installed = ctx
-            .execute_activity(
+            .await?;
+            let _ = ctx
+                .execute_activity(
+                    InstallActivities::notify,
+                    InstallNotice { id, outcome: None },
+                    notice_options(),
+                )
+                .await;
+            ctx.execute_activity(
                 InstallActivities::install,
                 id,
                 ActivityOptions::with_schedule_to_close_timeout(Duration::from_secs(660))
@@ -60,7 +68,10 @@ impl InstallWorkflow {
                     .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
                     .build(),
             )
-            .await;
+            .await?;
+            Ok(())
+        }
+        .await;
         let terminal = InstallNotice {
             id,
             outcome: Some(installed.is_ok()),
@@ -95,6 +106,29 @@ pub struct InstallActivities {
 #[activities]
 impl InstallActivities {
     #[activity]
+    pub async fn verify_pairing(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        id: Uuid,
+    ) -> Result<(), ActivityError> {
+        let operation = async {
+            let mut target = self.pairings.install_target(id).await?;
+            let remaining = (target.expires_at - Utc::now())
+                .to_std()
+                .map_err(OperationError::at("install_authorization_expired"))?;
+            // Verify the saved credentials and peer identity without creating a tunnel.
+            tokio::time::timeout(
+                remaining.min(Duration::from_secs(20)),
+                connect_verified_pairing(&mut target),
+            )
+            .await
+            .map_err(OperationError::at("pairing-preflight-timeout"))??;
+            Ok(())
+        };
+        operation.await.map_err(activity_failure)
+    }
+
+    #[activity]
     pub async fn install(
         self: Arc<Self>,
         ctx: ActivityContext,
@@ -119,7 +153,7 @@ impl InstallActivities {
             let app = tokio::task::spawn_blocking(move || Application::unpack(bytes))
                 .await
                 .map_err(OperationError::at("stage_ipa_task"))??;
-            // Refresh the leased endpoint and confirm no re-pairing during preparation.
+            // Refresh the leased endpoint and verify it again on the connection used for delivery.
             let target = self.pairings.install_target(id).await?;
             let remaining = (target.expires_at - Utc::now())
                 .to_std()
