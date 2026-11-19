@@ -12,7 +12,9 @@ pub mod http;
 mod r2;
 mod secrets;
 pub mod telemetry;
+// Reconciliation uses the agent client and does not require the local VPN backend.
 #[cfg(unix)]
+#[path = "vpn/reconciliation.rs"]
 pub mod vpn_reconciliation;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
