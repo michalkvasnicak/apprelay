@@ -20,7 +20,7 @@ final class RemotePairingReporter {
         DispatchQueue.main.async { [self] in
             stopRefresh()
             let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now(), repeating: .seconds(60), leeway: .seconds(5))
+            timer.schedule(deadline: .now(), repeating: .seconds(5), leeway: .seconds(1))
             timer.setEventHandler { [weak self] in
                 self?.refresh(url: url, appKey: appKey)
             }
@@ -44,6 +44,7 @@ final class RemotePairingReporter {
 
     private func refresh(url: URL, appKey: String) {
         guard discovery == nil else { return }
+        if let request, request.state != .completed { return }
         let probe = RemotePairingDiscovery { [weak self] port in
             guard let self else { return }
             discovery = nil

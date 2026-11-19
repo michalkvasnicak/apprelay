@@ -35,7 +35,7 @@ use crate::{
 const TASK_QUEUE: &str = "apprelay-pairing";
 const CONNECTION_LIMIT: Duration = Duration::from_secs(120);
 const SESSION_LIMIT: Duration = Duration::from_secs(60);
-// The VPN extension discovers and reports the port once per minute.
+// Allow for older VPN extensions that only report the port once per minute.
 const VERIFICATION_LIMIT: Duration = Duration::from_secs(90);
 const PAIRING_ACTIVITY_LIMIT: Duration =
     Duration::from_secs(SESSION_LIMIT.as_secs() + VERIFICATION_LIMIT.as_secs() + 5);
