@@ -12,7 +12,7 @@ use tokio::{net::TcpStream, time::timeout};
 
 use crate::{
     error::OperationError,
-    peer_identity::{IdentitySocket, Transcript},
+    remote_pairing_identity::{IdentitySocket, Transcript},
 };
 
 pub(crate) struct VerifiedPhoneSession {

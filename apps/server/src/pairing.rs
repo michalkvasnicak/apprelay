@@ -28,7 +28,7 @@ use tokio::{
 use crate::{
     agent::VpnStatus,
     error::OperationError,
-    peer_identity::{IdentitySocket, Transcript},
+    remote_pairing_identity::{IdentitySocket, Transcript},
 };
 
 /// Credentials stay inside the activity and are never a Temporal payload.
