@@ -5,7 +5,7 @@ use uuid::Uuid;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::{
     pairing_codes::{Notification, NotificationContent},
-    push_tokens::remove_if_current,
+    push_tokens::PushTokenRepository,
 };
 
 #[derive(Clone)]
@@ -211,7 +211,7 @@ impl InstallJobRepository {
         &self,
         notification: &Notification,
     ) -> Result<(), sqlx::Error> {
-        remove_if_current(&self.pool, notification).await
+        PushTokenRepository::remove_if_current(&self.pool, notification).await
     }
 
     pub(crate) async fn pending_dispatch(&self) -> Result<Vec<Uuid>, sqlx::Error> {

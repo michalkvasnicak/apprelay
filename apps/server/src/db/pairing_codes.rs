@@ -404,7 +404,7 @@ impl PairingCodeRepository {
     }
 
     pub(crate) async fn remove_invalid_token(&self, notification: &Notification) -> io::Result<()> {
-        super::push_tokens::remove_if_current(&self.pool, notification)
+        super::push_tokens::PushTokenRepository::remove_if_current(&self.pool, notification)
             .await
             .map_err(storage_error)
     }

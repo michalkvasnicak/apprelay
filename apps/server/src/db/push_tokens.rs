@@ -6,24 +6,6 @@ use uuid::Uuid;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::pairing_codes::Notification;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-pub(super) async fn remove_if_current(
-    pool: &PgPool,
-    notification: &Notification,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "DELETE FROM device_push_tokens WHERE device_id = $1 AND token = $2
-         AND environment = $3 AND updated_at = $4",
-    )
-    .bind(notification.device_id)
-    .bind(&notification.token)
-    .bind(&notification.environment)
-    .bind(notification.token_updated_at)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[derive(Clone, Copy)]
 enum ApnsEnvironment {
     Sandbox,
@@ -58,6 +40,24 @@ impl PushTokenRepository {
             }
         };
         Ok(Self { pool, environment })
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) async fn remove_if_current(
+        pool: &PgPool,
+        notification: &Notification,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "DELETE FROM device_push_tokens WHERE device_id = $1 AND token = $2
+             AND environment = $3 AND updated_at = $4",
+        )
+        .bind(notification.device_id)
+        .bind(&notification.token)
+        .bind(&notification.environment)
+        .bind(notification.token_updated_at)
+        .execute(pool)
+        .await?;
+        Ok(())
     }
 
     /// None removes the token. False means the caller does not own an active
