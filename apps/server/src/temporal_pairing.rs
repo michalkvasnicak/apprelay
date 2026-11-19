@@ -484,8 +484,7 @@ pub async fn run_worker() -> Result<(), OperationError> {
     let pool = db::connect(&database_url)
         .await
         .map_err(OperationError::at("connect_database"))?;
-    let pairings = PairingStore::from_env(pool.clone())
-        .map_err(OperationError::at("configure_pairing_store"))?;
+    let pairings = PairingStore::from_env(pool.clone())?;
     let codes = PairingCodeRepository::from_env(pool.clone())
         .map_err(OperationError::at("configure_pairing_code_repository"))?;
     db::migrate(&pool)

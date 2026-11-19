@@ -108,10 +108,7 @@ impl InstallActivities {
                 .await?
                 .ok_or_else(|| OperationError::without_source("install_job_expired"))?;
             // Check that the authorized pairing is still usable before downloading.
-            self.pairings
-                .install_target(id)
-                .await
-                .map_err(|error| OperationError::at(error.code())(error))?;
+            self.pairings.install_target(id).await?;
             let bytes = tokio::time::timeout(
                 Duration::from_secs(60),
                 self.storage
@@ -123,11 +120,7 @@ impl InstallActivities {
                 .await
                 .map_err(OperationError::at("stage_ipa_task"))??;
             // Refresh the leased endpoint and confirm no re-pairing during preparation.
-            let target = self
-                .pairings
-                .install_target(id)
-                .await
-                .map_err(|error| OperationError::at(error.code())(error))?;
+            let target = self.pairings.install_target(id).await?;
             let remaining = (target.expires_at - Utc::now())
                 .to_std()
                 .map_err(OperationError::at("install_authorization_expired"))?;
@@ -294,8 +287,7 @@ pub async fn run_worker() -> Result<(), OperationError> {
         .map_err(OperationError::at("configure_artifact_api"))?
         .ok_or_else(|| OperationError::without_source("missing_r2_configuration"))?
         .storage;
-    let pairings = PairingStore::from_env(pool.clone())
-        .map_err(OperationError::at("configure_pairing_store"))?;
+    let pairings = PairingStore::from_env(pool.clone())?;
     let jobs = InstallJobRepository::new(pool);
     let apns = std::env::var_os("APPRELAY_APNS_SIGNING_KEY_FILE")
         .map(|_| ApnsClient::from_env())

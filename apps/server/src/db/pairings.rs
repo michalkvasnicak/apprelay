@@ -100,18 +100,77 @@ pub(crate) enum InstallTargetError {
     Port(#[source] std::num::TryFromIntError),
 }
 
-impl InstallTargetError {
-    pub(crate) fn code(&self) -> &'static str {
-        match self {
-            Self::Lookup(_) => "target_lookup",
-            Self::Unavailable => "target_unavailable",
-            Self::Decrypt(_) => "target_decrypt",
-            Self::Decode(_) => "target_decode",
-            Self::MissingPeerKey => "target_missing_peer_key",
-            Self::InvalidRecord(_) => "target_invalid_record",
-            Self::Address(_) => "target_invalid_address",
-            Self::Port(_) => "target_invalid_port",
-        }
+impl From<InstallTargetError> for OperationError {
+    fn from(error: InstallTargetError) -> Self {
+        let operation = match &error {
+            InstallTargetError::Lookup(_) => "target_lookup",
+            InstallTargetError::Unavailable => "target_unavailable",
+            InstallTargetError::Decrypt(_) => "target_decrypt",
+            InstallTargetError::Decode(_) => "target_decode",
+            InstallTargetError::MissingPeerKey => "target_missing_peer_key",
+            InstallTargetError::InvalidRecord(_) => "target_invalid_record",
+            InstallTargetError::Address(_) => "target_invalid_address",
+            InstallTargetError::Port(_) => "target_invalid_port",
+        };
+        Self::at(operation)(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("could not configure pairing encryption key")]
+pub(crate) struct PairingStoreConfigError(#[source] io::Error);
+
+impl From<PairingStoreConfigError> for OperationError {
+    fn from(error: PairingStoreConfigError) -> Self {
+        Self::at("configure_pairing_store")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SavePairingError {
+    #[error("could not serialize pairing credentials")]
+    SerializeCredentials(#[source] serde_json::Error),
+    #[error("could not encrypt pairing credentials")]
+    EncryptCredentials(#[source] io::Error),
+    #[error("could not start pairing save transaction")]
+    Begin(#[source] sqlx::Error),
+    #[error("could not lock pairing device")]
+    LockDevice(#[source] sqlx::Error),
+    #[error("pairing device is unavailable")]
+    DeviceUnavailable,
+    #[error("could not complete public pairing attempt")]
+    CompletePublicAttempt(#[source] sqlx::Error),
+    #[error("public pairing attempt is unavailable")]
+    PublicAttemptUnavailable,
+    #[error("could not save pairing credentials")]
+    UpsertCredentials(#[source] sqlx::Error),
+    #[error("a newer pairing superseded this pairing")]
+    Superseded,
+    #[error("could not complete pairing attempt")]
+    CompleteAttempt(#[source] sqlx::Error),
+    #[error("pairing attempt is unavailable")]
+    AttemptUnavailable,
+    #[error("could not commit pairing save transaction")]
+    Commit(#[source] sqlx::Error),
+}
+
+impl From<SavePairingError> for OperationError {
+    fn from(error: SavePairingError) -> Self {
+        let operation = match &error {
+            SavePairingError::SerializeCredentials(_) => "serialize_pairing_credentials",
+            SavePairingError::EncryptCredentials(_) => "encrypt_pairing_credentials",
+            SavePairingError::Begin(_) => "begin_save_pairing",
+            SavePairingError::LockDevice(_) => "lock_pairing_device",
+            SavePairingError::DeviceUnavailable => "pairing_device_unavailable",
+            SavePairingError::CompletePublicAttempt(_) => "complete_public_pairing_attempt",
+            SavePairingError::PublicAttemptUnavailable => "public_pairing_attempt_unavailable",
+            SavePairingError::UpsertCredentials(_) => "upsert_pairing_credentials",
+            SavePairingError::Superseded => "pairing_superseded",
+            SavePairingError::CompleteAttempt(_) => "complete_pairing_attempt",
+            SavePairingError::AttemptUnavailable => "pairing_attempt_unavailable",
+            SavePairingError::Commit(_) => "commit_save_pairing",
+        };
+        Self::at(operation)(error)
     }
 }
 
@@ -158,10 +217,10 @@ impl PairingStore {
     }
 
     /// Fail startup on missing/malformed configuration; never print the value.
-    pub(crate) fn from_env(pool: PgPool) -> io::Result<Self> {
+    pub(crate) fn from_env(pool: PgPool) -> Result<Self, PairingStoreConfigError> {
         Ok(Self {
             pool,
-            key: SecretKey::from_env()?,
+            key: SecretKey::from_env().map_err(PairingStoreConfigError)?,
         })
     }
 
@@ -172,7 +231,7 @@ impl PairingStore {
         expected_expiry: DateTime<Utc>,
         attempt_started_at: DateTime<Utc>,
         record: &PairingRecord,
-    ) -> Result<(), OperationError> {
+    ) -> Result<(), SavePairingError> {
         let (attempt_id, public_attempt_id) = attempts;
         let pairing_file = Zeroizing::new(record.pairing_file.to_bytes());
         let host = &record.host_info;
@@ -198,20 +257,16 @@ impl PairingStore {
                 remotepairing_udid: &peer.remotepairing_udid,
             },
         };
-        let plaintext = serde_json::to_vec(&stored)
-            .map_err(OperationError::at("serialize_pairing_credentials"))?;
+        let plaintext =
+            serde_json::to_vec(&stored).map_err(SavePairingError::SerializeCredentials)?;
         // Domain separation + format version + device ID prevents moving a
         // ciphertext to a different device or interpreting it as another format.
         let (nonce, ciphertext) = self
             .key
             .seal(&associated_data(device_id), plaintext)
-            .map_err(OperationError::at("encrypt_pairing_credentials"))?;
+            .map_err(SavePairingError::EncryptCredentials)?;
 
-        let mut transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(OperationError::at("begin_save_pairing"))?;
+        let mut transaction = self.pool.begin().await.map_err(SavePairingError::Begin)?;
         // Coordinate with renewal/cleanup. A completed pairing must never be
         // attached to an expired, deleted, or subsequently renewed registration.
         let current = sqlx::query_scalar::<_, Uuid>(
@@ -223,9 +278,9 @@ impl PairingStore {
         .bind(expected_expiry)
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(OperationError::at("lock_pairing_device"))?;
+        .map_err(SavePairingError::LockDevice)?;
         if current.is_none() {
-            return Err(OperationError::without_source("pairing_device_unavailable"));
+            return Err(SavePairingError::DeviceUnavailable);
         }
         if let Some(public_attempt_id) = public_attempt_id {
             let completed = sqlx::query(
@@ -245,11 +300,9 @@ impl PairingStore {
             .bind(attempt_started_at)
             .execute(&mut *transaction)
             .await
-            .map_err(OperationError::at("complete_public_pairing_attempt"))?;
+            .map_err(SavePairingError::CompletePublicAttempt)?;
             if completed.rows_affected() != 1 {
-                return Err(OperationError::without_source(
-                    "public_pairing_attempt_unavailable",
-                ));
+                return Err(SavePairingError::PublicAttemptUnavailable);
             }
         }
         let saved = sqlx::query(
@@ -272,9 +325,9 @@ impl PairingStore {
         .bind(attempt_started_at)
         .execute(&mut *transaction)
         .await
-        .map_err(OperationError::at("upsert_pairing_credentials"))?;
+        .map_err(SavePairingError::UpsertCredentials)?;
         if saved.rows_affected() != 1 {
-            return Err(OperationError::without_source("pairing_superseded"));
+            return Err(SavePairingError::Superseded);
         }
         // Commit the success notification together with the saved credentials.
         let completed = sqlx::query(
@@ -293,15 +346,10 @@ impl PairingStore {
         .bind(expected_expiry)
         .execute(&mut *transaction)
         .await
-        .map_err(OperationError::at("complete_pairing_attempt"))?;
+        .map_err(SavePairingError::CompleteAttempt)?;
         if completed.rows_affected() != 1 {
-            return Err(OperationError::without_source(
-                "pairing_attempt_unavailable",
-            ));
+            return Err(SavePairingError::AttemptUnavailable);
         }
-        transaction
-            .commit()
-            .await
-            .map_err(OperationError::at("commit_save_pairing"))
+        transaction.commit().await.map_err(SavePairingError::Commit)
     }
 }
