@@ -82,6 +82,23 @@ export async function uploadSignedIpa(
   return data.job_id;
 }
 
+export async function getInstallStatus(jobId: string, headers: HeadersInit, signal: AbortSignal) {
+  const { data, response } = await api.GET("/v1/install-jobs/{job_id}", {
+    params: { path: { job_id: jobId } },
+    headers,
+    cache: "no-store",
+    redirect: "error",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+  });
+  if (response.status === 401 || response.status === 404) {
+    return null;
+  }
+  if (!response.ok || !data) {
+    throw new SigningError("Could not check the install status.");
+  }
+  return data;
+}
+
 export async function queueInstall(jobId: string, headers: HeadersInit) {
   const { response } = await api.POST("/v1/install-jobs/{job_id}/complete", {
     params: { path: { job_id: jobId } },

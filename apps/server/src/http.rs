@@ -142,6 +142,7 @@ pub fn router(
         .merge(
             Router::new()
                 .route("/v1/install-jobs", post(install_jobs::create))
+                .route("/v1/install-jobs/{job_id}", get(install_jobs::get))
                 .route(
                     "/v1/install-jobs/{job_id}/complete",
                     post(install_jobs::complete),

@@ -15,6 +15,7 @@ use utoipa::{
         super::artifacts::complete,
         super::artifacts::resolve,
         super::install_jobs::create,
+        super::install_jobs::get,
         super::install_jobs::complete,
         super::register_device,
         super::https_proxy::anisette_provider,

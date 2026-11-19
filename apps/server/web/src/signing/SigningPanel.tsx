@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
 import { AccountError, accountController } from "../account/controller";
@@ -10,8 +10,14 @@ import { PairingError, type PairingController } from "../pairing/controller";
 import { SignedResult, type InstallProgress } from "./SignedResult";
 import { signingController } from "./controller";
 import { useSigning } from "./hooks";
-import { queueInstall, uploadSignedIpa } from "./install";
+import { getInstallStatus, queueInstall, uploadSignedIpa } from "./install";
 import { SigningError } from "./types";
+
+type TrackedInstall = Awaited<ReturnType<typeof getInstallStatus>>;
+
+function trackingComplete(status: TrackedInstall | undefined) {
+  return status === null || status?.status === "installed" || status?.status === "failed";
+}
 
 export function SigningPanel({
   file: sharedFile,
@@ -29,7 +35,35 @@ export function SigningPanel({
   const state = useSigning();
   const [progress, setProgress] = useState("");
   const [installProgress, setInstallProgress] = useState<InstallProgress>({ stage: "preparing" });
+  const [queuedJob, setQueuedJob] = useState<string | null>(null);
   const uploadedJob = useRef<string | null>(null);
+  const installStatus = useQuery<TrackedInstall>({
+    queryKey: ["install-status", queuedJob],
+    enabled: (query) => queuedJob !== null && !trackingComplete(query.state.data),
+    queryFn: ({ signal }) => {
+      if (queuedJob === null) {
+        throw new SigningError("No install to track.");
+      }
+      let headers: HeadersInit;
+      try {
+        headers = pairing.installAuthorization();
+      } catch (error) {
+        if (error instanceof PairingError) {
+          return null;
+        }
+        throw error;
+      }
+      return getInstallStatus(queuedJob, headers, signal);
+    },
+    retry: false,
+    gcTime: 0,
+    refetchInterval: (query) => {
+      if (trackingComplete(query.state.data)) {
+        return false;
+      }
+      return query.state.status === "error" ? 10_000 : 2500;
+    },
+  });
   const submitInstall = async () => {
     try {
       if (!uploadedJob.current) {
@@ -43,6 +77,7 @@ export function SigningPanel({
       // Completion is idempotent: retry the same job if the response is lost.
       setInstallProgress({ stage: "queueing" });
       await queueInstall(uploadedJob.current, pairing.installAuthorization());
+      setQueuedJob(uploadedJob.current);
       setInstallProgress({ stage: "queued" });
       trackFlowEvent("install_queued");
     } catch (error) {
@@ -100,6 +135,8 @@ export function SigningPanel({
     return (
       <SignedResult
         progress={installProgress}
+        installStatus={installStatus.data}
+        reconnecting={installStatus.isError || installStatus.isPaused}
         busy={busy}
         retrying={retryInstall.isPending}
         error={retryInstall.error}

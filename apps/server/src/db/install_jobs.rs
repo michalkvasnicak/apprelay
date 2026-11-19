@@ -20,6 +20,9 @@ pub(crate) struct InstallJob {
     pub size_bytes: i64,
     pub sha256: String,
     pub queued_at: Option<DateTime<Utc>>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub outcome: Option<String>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -119,13 +122,13 @@ impl From<RemoveInstallJobError> for OperationError {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Debug, thiserror::Error)]
-#[error("could not load install job")]
-pub(crate) struct LoadInstallJobError(#[source] sqlx::Error);
+#[error("could not start install job")]
+pub(crate) struct StartInstallJobError(#[source] sqlx::Error);
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-impl From<LoadInstallJobError> for OperationError {
-    fn from(error: LoadInstallJobError) -> Self {
-        Self::at("load_install_job")(error)
+impl From<StartInstallJobError> for OperationError {
+    fn from(error: StartInstallJobError) -> Self {
+        Self::at("start_install_job")(error)
     }
 }
 
@@ -212,7 +215,8 @@ impl InstallJobRepository {
         id: Uuid,
     ) -> Result<Option<InstallJob>, FindInstallJobError> {
         sqlx::query_as(concat!(
-            "SELECT j.size_bytes, j.sha256, j.queued_at FROM install_jobs j WHERE ",
+            "SELECT j.size_bytes, j.sha256, j.queued_at, j.started_at, j.finished_at, j.outcome
+             FROM install_jobs j WHERE ",
             authorized_job!()
         ))
         .bind(hash.as_slice())
@@ -259,18 +263,20 @@ impl InstallJobRepository {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl InstallJobRepository {
-    pub(crate) async fn load_installable(
+    pub(crate) async fn start(
         &self,
         id: Uuid,
-    ) -> Result<Option<InstallArtifact>, LoadInstallJobError> {
+    ) -> Result<Option<InstallArtifact>, StartInstallJobError> {
         sqlx::query_as(
-            "SELECT size_bytes, sha256 FROM install_jobs WHERE id = $1 AND queued_at IS NOT NULL
-             AND finished_at IS NULL AND expires_at > clock_timestamp()",
+            "UPDATE install_jobs SET started_at = COALESCE(started_at, clock_timestamp())
+             WHERE id = $1 AND queued_at IS NOT NULL
+               AND finished_at IS NULL AND expires_at > clock_timestamp()
+             RETURNING size_bytes, sha256",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(LoadInstallJobError)
+        .map_err(StartInstallJobError)
     }
 
     pub(crate) async fn record_outcome(

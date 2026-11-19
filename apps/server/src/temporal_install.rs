@@ -151,7 +151,7 @@ impl InstallActivities {
         let operation = async {
             let artifact = self
                 .jobs
-                .load_installable(id)
+                .start(id)
                 .await?
                 .ok_or_else(|| OperationError::without_source("install_job_expired"))?;
             // Check that the authorized pairing is still usable before downloading.

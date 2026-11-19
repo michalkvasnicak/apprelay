@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, time::Duration};
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header::CACHE_CONTROL},
     response::IntoResponse,
 };
 use chrono::{DateTime, Utc};
@@ -29,6 +29,23 @@ struct InstallUpload {
     upload_expires_at: DateTime<Utc>,
     /// Send these headers with the PUT. Browsers set Content-Length automatically.
     upload_headers: BTreeMap<String, String>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum InstallJobStage {
+    AwaitingUpload,
+    Queued,
+    Installing,
+    Installed,
+    Failed,
+}
+
+#[derive(Serialize, ToSchema)]
+struct InstallJobStatus {
+    status: InstallJobStage,
+    /// Time of the latest milestone, if the upload has been queued.
+    updated_at: Option<DateTime<Utc>>,
 }
 
 fn pairing_credential(headers: &HeaderMap) -> Result<Credential, ApiError> {
@@ -113,6 +130,46 @@ pub(super) async fn create(
             upload_headers: upload.headers,
         }),
     ))
+}
+
+#[utoipa::path(
+    get, path = "/v1/install-jobs/{job_id}", operation_id = "get_install_job",
+    params(("job_id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "Current install status", body = InstallJobStatus),
+        (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 429, body = ErrorResponse),
+        (status = 500, body = ErrorResponse)
+    ),
+    security(("pairing_token" = []))
+)]
+pub(super) async fn get(
+    State(api): State<Option<ArtifactApi>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let result: Result<_, ApiError> = async {
+        let credential = pairing_credential(&headers)?;
+        let api =
+            api.ok_or_else(|| ApiError::internal_without_source("install_storage_not_configured"))?;
+        let job = api
+            .install_jobs
+            .find(&credential.hash, id)
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?
+            .ok_or_else(missing)?;
+        let (status, updated_at) = match job.outcome.as_deref() {
+            Some("installed") => (InstallJobStage::Installed, job.finished_at),
+            Some("failed") => (InstallJobStage::Failed, job.finished_at),
+            _ if job.started_at.is_some() => (InstallJobStage::Installing, job.started_at),
+            _ if job.queued_at.is_some() => (InstallJobStage::Queued, job.queued_at),
+            _ => (InstallJobStage::AwaitingUpload, None),
+        };
+        Ok(Json(InstallJobStatus { status, updated_at }))
+    }
+    .await;
+    ([(CACHE_CONTROL, "no-store")], result)
 }
 
 #[utoipa::path(

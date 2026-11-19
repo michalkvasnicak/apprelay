@@ -176,6 +176,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/install-jobs/{job_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["get_install_job"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/install-jobs/{job_id}/complete": {
     parameters: {
       query?: never;
@@ -353,6 +369,16 @@ export interface components {
     FailureReason: "pairing_failed" | "timeout";
     Health: {
       status: string;
+    };
+    /** @enum {string} */
+    InstallJobStage: "awaiting_upload" | "queued" | "installing" | "installed" | "failed";
+    InstallJobStatus: {
+      status: components["schemas"]["InstallJobStage"];
+      /**
+       * Format: date-time
+       * @description Time of the latest milestone, if the upload has been queued.
+       */
+      updated_at?: string | null;
     };
     InstallUpload: {
       /** Format: uuid */
@@ -1147,6 +1173,60 @@ export interface operations {
         };
       };
       422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  get_install_job: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        job_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Current install status */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InstallJobStatus"];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      404: {
         headers: {
           [name: string]: unknown;
         };

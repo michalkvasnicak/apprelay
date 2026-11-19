@@ -167,15 +167,13 @@ pub(super) async fn limit_install_jobs(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    limit(
-        limiter,
-        request,
-        next,
-        "install-write",
-        CAPACITY,
-        EMISSION_INTERVAL,
-    )
-    .await
+    let (scope, capacity, emission) = match *request.method() {
+        axum::http::Method::GET | axum::http::Method::HEAD => {
+            ("install-poll", 60, Duration::from_secs(1))
+        }
+        _ => ("install-write", CAPACITY, EMISSION_INTERVAL),
+    };
+    limit(limiter, request, next, scope, capacity, emission).await
 }
 
 async fn limit(
