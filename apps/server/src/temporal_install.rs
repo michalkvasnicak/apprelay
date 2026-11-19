@@ -1,8 +1,7 @@
 use std::{io, sync::Arc, time::Duration};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use temporalio_client::{WorkflowIdConflictPolicy, WorkflowIdReusePolicy, WorkflowStartOptions};
 use temporalio_common::RetryPolicy;
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -17,8 +16,7 @@ use crate::{
     apns::{ApnsClient, SendOutcome},
     db::{
         self,
-        install_jobs::object_key,
-        pairing_codes::{Notification, NotificationContent},
+        install_jobs::{InstallJobRepository, object_key},
         pairings::PairingStore,
     },
     http::ArtifactApi,
@@ -87,23 +85,14 @@ fn notice_options() -> ActivityOptions {
 }
 
 pub struct InstallActivities {
-    pool: PgPool,
+    jobs: InstallJobRepository,
     storage: R2Storage,
     pairings: PairingStore,
     apns: Option<ApnsClient>,
 }
 
-fn database(_: sqlx::Error) -> io::Error {
+fn database_unavailable() -> io::Error {
     io::Error::other("install job storage unavailable")
-}
-
-#[derive(sqlx::FromRow)]
-struct PushTarget {
-    device_id: Uuid,
-    token: Vec<u8>,
-    environment: String,
-    token_updated_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
 }
 
 #[activities]
@@ -116,20 +105,18 @@ impl InstallActivities {
     ) -> Result<(), ActivityError> {
         tracing::info!(job_id = %id, "Install activity started");
         let operation = async {
-            let (size, checksum) = sqlx::query_as::<_, (i64, String)>(
-                "SELECT size_bytes, sha256 FROM install_jobs WHERE id = $1 AND queued_at IS NOT NULL
-                 AND finished_at IS NULL AND expires_at > clock_timestamp()",
-            )
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|_| "install job storage unavailable")?
-            .ok_or("install job expired")?;
+            let artifact = self
+                .jobs
+                .load_installable(id)
+                .await
+                .map_err(|_| "install job storage unavailable")?
+                .ok_or("install job expired")?;
             // Check that the authorized pairing is still usable before downloading.
             self.pairings.install_target(id).await?;
             let bytes = tokio::time::timeout(
                 Duration::from_secs(60),
-                self.storage.read_signed(&object_key(id), size, &checksum),
+                self.storage
+                    .read_signed(&object_key(id), artifact.size_bytes, &artifact.sha256),
             )
             .await
             .map_err(|_| "signed IPA download timed out")?
@@ -180,20 +167,14 @@ impl InstallActivities {
             return Err(io::Error::other("missing install outcome").into());
         };
         let outcome = if installed { "installed" } else { "failed" };
-        sqlx::query(
-            "UPDATE install_jobs SET outcome = COALESCE(outcome, $2),
-                 finished_at = COALESCE(finished_at, clock_timestamp())
-             WHERE id = $1 AND queued_at IS NOT NULL",
-        )
-        .bind(notice.id)
-        .bind(outcome)
-        .execute(&self.pool)
-        .await
-        .map_err(database)
-        .inspect_err(|_| {
-            tracing::error!(job_id = %notice.id, outcome, "Could not record install outcome");
-            telemetry::report("Could not record install outcome");
-        })?;
+        self.jobs
+            .record_outcome(notice.id, installed)
+            .await
+            .map_err(|_| database_unavailable())
+            .inspect_err(|_| {
+                tracing::error!(job_id = %notice.id, outcome, "Could not record install outcome");
+                telemetry::report("Could not record install outcome");
+            })?;
         if installed {
             tracing::info!(job_id = %notice.id, outcome, "Install finished");
         } else {
@@ -216,28 +197,13 @@ impl InstallActivities {
         let Some(apns) = &self.apns else {
             return Ok(());
         };
-        let Some(target) = sqlx::query_as::<_, PushTarget>(
-            "SELECT d.id AS device_id, t.token, t.environment, t.updated_at AS token_updated_at,
-                 LEAST(j.expires_at, d.expires_at, clock_timestamp() + INTERVAL '5 minutes') AS expires_at
-             FROM install_jobs j
-             JOIN devices d ON d.id = j.device_id AND d.expires_at = j.device_expires_at
-             JOIN device_pairings p ON p.device_id = d.id AND p.attempt_started_at = j.pairing_started_at
-             JOIN device_push_tokens t ON t.device_id = d.id
-             WHERE j.id = $1 AND j.queued_at IS NOT NULL
-               AND j.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
-               AND (($2 = 'starting' AND j.finished_at IS NULL) OR j.outcome = $2)",
-        ).bind(notice.id).bind(state).fetch_optional(&self.pool).await.map_err(database)?
-        else { return Ok(()); };
-        let notification = Notification {
-            content: NotificationContent::Install {
-                job_id: notice.id,
-                outcome: notice.outcome,
-            },
-            expires_at: target.expires_at,
-            device_id: target.device_id,
-            token: target.token,
-            environment: target.environment,
-            token_updated_at: target.token_updated_at,
+        let Some(notification) = self
+            .jobs
+            .notification(notice.id, notice.outcome)
+            .await
+            .map_err(|_| database_unavailable())?
+        else {
+            return Ok(());
         };
         // Deterministic for APNs retries, distinct for start and terminal events.
         let push_id =
@@ -254,11 +220,10 @@ impl InstallActivities {
                 if invalidated_at
                     .is_none_or(|time| notification.token_updated_at.timestamp_millis() <= time)
                 {
-                    sqlx::query("DELETE FROM device_push_tokens
-                        WHERE device_id = $1 AND updated_at = $2 AND token = $3 AND environment = $4")
-                        .bind(notification.device_id).bind(notification.token_updated_at)
-                        .bind(&notification.token).bind(&notification.environment)
-                        .execute(&self.pool).await.map_err(database)?;
+                    self.jobs
+                        .remove_invalid_token(&notification)
+                        .await
+                        .map_err(|_| database_unavailable())?;
                 }
             }
         }
@@ -266,17 +231,17 @@ impl InstallActivities {
     }
 }
 
-async fn dispatch(pool: PgPool, temporal: temporalio_client::Client) {
+async fn dispatch(jobs: InstallJobRepository, temporal: temporalio_client::Client) {
     let mut ticks = tokio::time::interval(Duration::from_secs(1));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut unavailable = false;
     loop {
         ticks.tick().await;
         let result = async {
-            let pending = sqlx::query_scalar::<_, Uuid>(
-                "SELECT id FROM install_jobs WHERE queued_at IS NOT NULL AND dispatched_at IS NULL
-                   AND finished_at IS NULL AND expires_at > clock_timestamp() ORDER BY queued_at LIMIT 20",
-            ).fetch_all(&pool).await.map_err(database)?;
+            let pending = jobs
+                .pending_dispatch()
+                .await
+                .map_err(|_| database_unavailable())?;
             let mut failed = false;
             for id in pending {
                 let start = temporal.start_workflow(
@@ -287,15 +252,20 @@ async fn dispatch(pool: PgPool, temporal: temporalio_client::Client) {
                         .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
                         .build(),
                 );
-                if !matches!(tokio::time::timeout(Duration::from_secs(2), start).await, Ok(Ok(_))) {
+                if !matches!(
+                    tokio::time::timeout(Duration::from_secs(2), start).await,
+                    Ok(Ok(_))
+                ) {
                     failed = true;
                     continue;
                 }
-                sqlx::query("UPDATE install_jobs SET dispatched_at = clock_timestamp() WHERE id = $1")
-                    .bind(id).execute(&pool).await.map_err(database)?;
+                jobs.mark_dispatched(id)
+                    .await
+                    .map_err(|_| database_unavailable())?;
             }
             Ok::<_, io::Error>(failed)
-        }.await;
+        }
+        .await;
         let failed = !matches!(result, Ok(false));
         if failed && !unavailable {
             crate::telemetry::report("Install workflow dispatch unavailable");
@@ -311,11 +281,12 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     let pool = db::connect(&std::env::var("DATABASE_URL")?).await?;
-    db::MIGRATOR.run(&pool).await?;
+    db::migrate(&pool).await?;
     let storage = ArtifactApi::from_env(pool.clone())?
         .ok_or_else(|| io::Error::other("install worker requires R2 storage configuration"))?
         .storage;
     let pairings = PairingStore::from_env(pool.clone())?;
+    let jobs = InstallJobRepository::new(pool);
     let apns = std::env::var_os("APPRELAY_APNS_SIGNING_KEY_FILE")
         .map(|_| ApnsClient::from_env())
         .transpose()?;
@@ -330,7 +301,7 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let options = WorkerOptions::new(TASK_QUEUE)
         .register_workflow::<InstallWorkflow>()?
         .register_activities(InstallActivities {
-            pool: pool.clone(),
+            jobs: jobs.clone(),
             storage,
             pairings,
             apns,
@@ -339,7 +310,7 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .graceful_shutdown_period(Duration::from_secs(10))
         .build();
     let worker = Worker::new(&runtime, temporal.clone(), options)?;
-    let dispatch = tokio::spawn(dispatch(pool, temporal));
+    let dispatch = tokio::spawn(dispatch(jobs, temporal));
     tracing::info!(task_queue = TASK_QUEUE, "Install worker listening");
     let result = worker
         .run_until(async {

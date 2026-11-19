@@ -2,6 +2,12 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use super::{
+    pairing_codes::{Notification, NotificationContent},
+    push_tokens::remove_if_current,
+};
+
 #[derive(Clone)]
 pub(crate) struct InstallJobRepository {
     pool: PgPool,
@@ -12,6 +18,23 @@ pub(crate) struct InstallJob {
     pub size_bytes: i64,
     pub sha256: String,
     pub queued_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(sqlx::FromRow)]
+pub(crate) struct InstallArtifact {
+    pub size_bytes: i64,
+    pub sha256: String,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(sqlx::FromRow)]
+struct PushTarget {
+    device_id: Uuid,
+    token: Vec<u8>,
+    environment: String,
+    token_updated_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
 }
 
 pub(crate) fn object_key(id: Uuid) -> String {
@@ -106,6 +129,103 @@ impl InstallJobRepository {
 
     pub async fn remove(&self, id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM install_jobs WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl InstallJobRepository {
+    pub(crate) async fn load_installable(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<InstallArtifact>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT size_bytes, sha256 FROM install_jobs WHERE id = $1 AND queued_at IS NOT NULL
+             AND finished_at IS NULL AND expires_at > clock_timestamp()",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub(crate) async fn record_outcome(
+        &self,
+        id: Uuid,
+        installed: bool,
+    ) -> Result<(), sqlx::Error> {
+        let outcome = if installed { "installed" } else { "failed" };
+        sqlx::query(
+            "UPDATE install_jobs SET outcome = COALESCE(outcome, $2),
+                 finished_at = COALESCE(finished_at, clock_timestamp())
+             WHERE id = $1 AND queued_at IS NOT NULL",
+        )
+        .bind(id)
+        .bind(outcome)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn notification(
+        &self,
+        id: Uuid,
+        outcome: Option<bool>,
+    ) -> Result<Option<Notification>, sqlx::Error> {
+        let state = match outcome {
+            Some(true) => "installed",
+            Some(false) => "failed",
+            None => "starting",
+        };
+        let target = sqlx::query_as::<_, PushTarget>(
+            "SELECT d.id AS device_id, t.token, t.environment, t.updated_at AS token_updated_at,
+                 LEAST(j.expires_at, d.expires_at, clock_timestamp() + INTERVAL '5 minutes') AS expires_at
+             FROM install_jobs j
+             JOIN devices d ON d.id = j.device_id AND d.expires_at = j.device_expires_at
+             JOIN device_pairings p ON p.device_id = d.id AND p.attempt_started_at = j.pairing_started_at
+             JOIN device_push_tokens t ON t.device_id = d.id
+             WHERE j.id = $1 AND j.queued_at IS NOT NULL
+               AND j.expires_at > clock_timestamp() AND d.expires_at > clock_timestamp()
+               AND (($2 = 'starting' AND j.finished_at IS NULL) OR j.outcome = $2)",
+        )
+        .bind(id)
+        .bind(state)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(target.map(|target| Notification {
+            content: NotificationContent::Install {
+                job_id: id,
+                outcome,
+            },
+            expires_at: target.expires_at,
+            device_id: target.device_id,
+            token: target.token,
+            environment: target.environment,
+            token_updated_at: target.token_updated_at,
+        }))
+    }
+
+    pub(crate) async fn remove_invalid_token(
+        &self,
+        notification: &Notification,
+    ) -> Result<(), sqlx::Error> {
+        remove_if_current(&self.pool, notification).await
+    }
+
+    pub(crate) async fn pending_dispatch(&self) -> Result<Vec<Uuid>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT id FROM install_jobs WHERE queued_at IS NOT NULL AND dispatched_at IS NULL
+             AND finished_at IS NULL AND expires_at > clock_timestamp()
+             ORDER BY queued_at LIMIT 20",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub(crate) async fn mark_dispatched(&self, id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE install_jobs SET dispatched_at = clock_timestamp() WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;

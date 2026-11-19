@@ -181,7 +181,7 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let pool = db::connect(&std::env::var("DATABASE_URL")?).await?;
     let codes = PairingCodeRepository::from_env(pool.clone())?;
     let apns = ApnsClient::from_env()?;
-    db::MIGRATOR.run(&pool).await?;
+    db::migrate(&pool).await?;
     let temporal = client().await?;
     let runtime = Runtime::from_current_tokio(Default::default())?;
     let tuner = TunerHolder::builder()

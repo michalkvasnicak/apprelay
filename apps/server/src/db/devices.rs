@@ -25,6 +25,61 @@ pub struct DeviceRepository {
     lifetime_seconds: NonZeroU32,
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) struct PairingDeviceRepository {
+    pool: PgPool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(sqlx::FromRow)]
+pub(crate) struct DevicePeer {
+    pub wireguard_public_key: Vec<u8>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(sqlx::FromRow)]
+pub(crate) struct PairingTarget {
+    pub address: String,
+    pub expires_at: DateTime<Utc>,
+    pub attempt_started_at: DateTime<Utc>,
+    pub wireguard_public_key: Vec<u8>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl PairingDeviceRepository {
+    pub(crate) fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub(crate) async fn active_peer(
+        &self,
+        device: Uuid,
+    ) -> Result<Option<DevicePeer>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT wireguard_public_key, expires_at FROM devices
+             WHERE id = $1 AND expires_at > statement_timestamp()",
+        )
+        .bind(device)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub(crate) async fn pairing_target(
+        &self,
+        device: Uuid,
+    ) -> Result<Option<PairingTarget>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT host(address) AS address, expires_at,
+                    statement_timestamp() AS attempt_started_at, wireguard_public_key
+             FROM devices WHERE id = $1 AND expires_at > statement_timestamp()",
+        )
+        .bind(device)
+        .fetch_optional(&self.pool)
+        .await
+    }
+}
+
 /// Keeps cleanup and other registration requests out during peer provisioning.
 pub struct LockedDevice {
     pub device: Device,

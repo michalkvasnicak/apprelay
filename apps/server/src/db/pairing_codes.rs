@@ -404,17 +404,8 @@ impl PairingCodeRepository {
     }
 
     pub(crate) async fn remove_invalid_token(&self, notification: &Notification) -> io::Result<()> {
-        sqlx::query(
-            "DELETE FROM device_push_tokens WHERE device_id = $1 AND token = $2
-             AND environment = $3 AND updated_at = $4",
-        )
-        .bind(notification.device_id)
-        .bind(&notification.token)
-        .bind(&notification.environment)
-        .bind(notification.token_updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(storage_error)?;
-        Ok(())
+        super::push_tokens::remove_if_current(&self.pool, notification)
+            .await
+            .map_err(storage_error)
     }
 }

@@ -258,3 +258,98 @@ impl PairingAttemptRepository {
         Ok(Claim::Accepted)
     }
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(sqlx::FromRow)]
+pub(crate) struct PendingPairingAttempt {
+    pub id: Uuid,
+    pub device_id: Uuid,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl PairingAttemptRepository {
+    pub(crate) async fn mark_failed(&self, attempt: Option<Uuid>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE public_pairing_attempts SET status = 'failed',
+             reason = CASE WHEN expires_at <= clock_timestamp() THEN 'timeout' ELSE 'pairing_failed' END
+             WHERE id = $1 AND status = 'pairing'",
+        )
+        .bind(attempt)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn mark_worker_started(
+        &self,
+        attempt_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE public_pairing_attempts
+             SET worker_started_at = COALESCE(worker_started_at, clock_timestamp())
+             WHERE id = $1 AND device_id = $2 AND status = 'pairing'
+               AND expires_at > clock_timestamp()",
+        )
+        .bind(attempt_id)
+        .bind(device_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn require_attempt(
+        &self,
+        device: Uuid,
+        attempt: Option<Uuid>,
+    ) -> io::Result<Option<DateTime<Utc>>> {
+        let valid = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT a.expires_at FROM public_pairing_attempts a JOIN devices d ON d.id = a.device_id
+                WHERE a.device_id = $1 AND ($2::uuid IS NULL OR a.id = $2)
+                  AND a.status = 'pairing' AND a.expires_at > clock_timestamp()
+                  AND d.expires_at = a.device_expires_at AND d.expires_at > clock_timestamp()",
+        )
+        .bind(device)
+        .bind(attempt)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| io::Error::other("could not validate pairing attempt"))?;
+        // CLI sessions cannot race a web-owned session.
+        if valid.is_some() != attempt.is_some() {
+            return Err(io::Error::other(
+                "pairing attempt expired, changed, or device is busy",
+            ));
+        }
+        Ok(valid)
+    }
+
+    pub(crate) async fn expire_overdue(&self) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE public_pairing_attempts SET status = 'expired'
+             WHERE status IN ('pending', 'pairing') AND expires_at <= clock_timestamp()",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn pending_dispatch(&self) -> Result<Vec<PendingPairingAttempt>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT id, device_id FROM public_pairing_attempts
+             WHERE status = 'pairing' AND queued_at IS NULL AND expires_at > clock_timestamp()
+             ORDER BY expires_at LIMIT 100",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub(crate) async fn mark_queued(&self, attempt: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE public_pairing_attempts SET queued_at = clock_timestamp() WHERE id = $1",
+        )
+        .bind(attempt)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+}
