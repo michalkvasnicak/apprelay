@@ -85,7 +85,6 @@ impl NotificationActivities {
                     .codes
                     .mark_sent(notification_id)
                     .await
-                    .map_err(OperationError::at("mark_pairing_notification_sent"))
                     .map_err(activity_failure)?,
                 SendOutcome::Expired => {}
                 SendOutcome::InvalidToken(invalidated_at) => {
@@ -134,7 +133,6 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
             Ok(pending) => pending,
             Err(error) => {
                 if !was_unavailable {
-                    let error = OperationError::at("load_pending_pairing_notifications")(error);
                     report_failure(
                         "Pairing notification dispatch unavailable; will retry",
                         &error,
@@ -157,10 +155,7 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
                 .build(),
             );
             let result = match tokio::time::timeout(Duration::from_secs(2), start).await {
-                Ok(Ok(_)) => codes
-                    .mark_queued(notification_id)
-                    .await
-                    .map_err(OperationError::at("mark_pairing_notification_queued")),
+                Ok(Ok(_)) => codes.mark_queued(notification_id).await,
                 Ok(Err(error)) => Err(OperationError::at("enqueue_pairing_notification")(error)),
                 Err(error) => Err(OperationError::at("enqueue_pairing_notification_timeout")(
                     error,

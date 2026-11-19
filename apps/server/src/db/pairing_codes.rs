@@ -253,29 +253,31 @@ impl PairingCodeRepository {
         Ok(())
     }
 
-    pub(crate) async fn clear(&self, attempt_id: Uuid) -> Result<(), sqlx::Error> {
+    pub(crate) async fn clear(&self, attempt_id: Uuid) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE pairing_attempts SET code_id = NULL, nonce = NULL, ciphertext = NULL,
              notification_queued_at = NULL, notification_sent_at = NULL WHERE id = $1",
         )
         .bind(attempt_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("clear_pairing_code"))?;
         Ok(())
     }
 
-    pub(crate) async fn end(&self, attempt_id: Uuid) -> Result<(), sqlx::Error> {
+    pub(crate) async fn end(&self, attempt_id: Uuid) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE pairing_attempts SET ended_at = clock_timestamp(),
              code_id = NULL, nonce = NULL, ciphertext = NULL WHERE id = $1",
         )
         .bind(attempt_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("end_pairing_attempt"))?;
         Ok(())
     }
 
-    pub(crate) async fn pending_notifications(&self) -> Result<Vec<Uuid>, sqlx::Error> {
+    pub(crate) async fn pending_notifications(&self) -> Result<Vec<Uuid>, OperationError> {
         sqlx::query_scalar(
             "SELECT notification.id FROM pairing_attempts a
              JOIN devices d ON d.id = a.device_id
@@ -300,9 +302,10 @@ impl PairingCodeRepository {
         )
         .fetch_all(&self.pool)
         .await
+        .map_err(OperationError::at("load_pending_pairing_notifications"))
     }
 
-    pub(crate) async fn mark_queued(&self, notification_id: Uuid) -> Result<(), sqlx::Error> {
+    pub(crate) async fn mark_queued(&self, notification_id: Uuid) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE pairing_attempts SET
                  started_notification_queued_at = CASE WHEN id = $1
@@ -318,7 +321,8 @@ impl PairingCodeRepository {
         )
         .bind(notification_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("mark_pairing_notification_queued"))?;
         Ok(())
     }
 
@@ -402,7 +406,7 @@ impl PairingCodeRepository {
         Ok(Some(notification))
     }
 
-    pub(crate) async fn mark_sent(&self, notification_id: Uuid) -> Result<(), sqlx::Error> {
+    pub(crate) async fn mark_sent(&self, notification_id: Uuid) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE pairing_attempts SET
                  started_notification_sent_at = CASE WHEN id = $1
@@ -418,7 +422,8 @@ impl PairingCodeRepository {
         )
         .bind(notification_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("mark_pairing_notification_sent"))?;
         Ok(())
     }
 

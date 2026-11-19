@@ -447,10 +447,6 @@ impl ApiError {
     fn internal_without_source(operation: &'static str) -> Self {
         Self::Internal(OperationError::without_source(operation))
     }
-
-    fn database(operation: &'static str) -> impl FnOnce(sqlx::Error) -> Self {
-        Self::internal(operation)
-    }
 }
 
 fn internal_error_response() -> Response {

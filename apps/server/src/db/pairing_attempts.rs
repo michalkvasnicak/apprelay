@@ -77,7 +77,7 @@ impl PairingAttemptRepository {
         Self { pool }
     }
 
-    pub(crate) async fn create(&self, hash: &[u8; 32]) -> Result<DateTime<Utc>, sqlx::Error> {
+    pub(crate) async fn create(&self, hash: &[u8; 32]) -> Result<DateTime<Utc>, OperationError> {
         sqlx::query_scalar(
             "INSERT INTO public_pairing_attempts (id, token_hash) VALUES ($1, $2) RETURNING expires_at",
         )
@@ -85,6 +85,7 @@ impl PairingAttemptRepository {
         .bind(hash.as_slice())
         .fetch_one(&self.pool)
         .await
+        .map_err(OperationError::at("create_pairing_attempt"))
     }
 
     pub(crate) async fn status(
@@ -187,8 +188,12 @@ impl PairingAttemptRepository {
         hash: &[u8; 32],
         device_id: Uuid,
         credential_hash: &[u8; 32],
-    ) -> Result<Claim, sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
+    ) -> Result<Claim, OperationError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_pairing_attempt_claim"))?;
         // Device lock serializes claims for different tokens targeting one device.
         let device_expiry = sqlx::query_scalar::<_, DateTime<Utc>>(
             "SELECT expires_at FROM devices WHERE id = $1 AND bearer_token_hash = $2
@@ -197,7 +202,8 @@ impl PairingAttemptRepository {
         .bind(device_id)
         .bind(credential_hash.as_slice())
         .fetch_optional(&mut *tx)
-        .await?;
+        .await
+        .map_err(OperationError::at("authorize_pairing_attempt_claim"))?;
         let Some(device_expiry) = device_expiry else {
             return Ok(Claim::Unauthorized);
         };
@@ -207,14 +213,16 @@ impl PairingAttemptRepository {
         )
         .bind(device_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(OperationError::at("expire_overdue_device_pairing_attempts"))?;
         let row = sqlx::query_as::<_, (Option<Uuid>, String, bool, Option<DateTime<Utc>>)>(
             "SELECT device_id, status, expires_at <= clock_timestamp(), device_expires_at
              FROM public_pairing_attempts WHERE token_hash = $1 FOR UPDATE",
         )
         .bind(hash.as_slice())
         .fetch_optional(&mut *tx)
-        .await?;
+        .await
+        .map_err(OperationError::at("lock_pairing_attempt_claim"))?;
         let Some((owner, status, expired, claimed_expiry)) = row else {
             return Ok(Claim::Missing);
         };
@@ -240,7 +248,8 @@ impl PairingAttemptRepository {
         )
         .bind(device_id)
         .fetch_one(&mut *tx)
-        .await?;
+        .await
+        .map_err(OperationError::at("check_device_pairing_conflict"))?;
         if busy {
             return Ok(Claim::Conflict);
         }
@@ -254,8 +263,11 @@ impl PairingAttemptRepository {
         .bind(device_id)
         .bind(device_expiry)
         .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
+        .await
+        .map_err(OperationError::at("claim_pairing_attempt"))?;
+        tx.commit()
+            .await
+            .map_err(OperationError::at("commit_pairing_attempt_claim"))?;
         Ok(Claim::Accepted)
     }
 }
@@ -269,7 +281,7 @@ pub(crate) struct PendingPairingAttempt {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl PairingAttemptRepository {
-    pub(crate) async fn mark_failed(&self, attempt: Option<Uuid>) -> Result<(), sqlx::Error> {
+    pub(crate) async fn mark_failed(&self, attempt: Option<Uuid>) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE public_pairing_attempts SET status = 'failed',
              reason = CASE WHEN expires_at <= clock_timestamp() THEN 'timeout' ELSE 'pairing_failed' END
@@ -277,7 +289,8 @@ impl PairingAttemptRepository {
         )
         .bind(attempt)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("mark_pairing_attempt_failed"))?;
         Ok(())
     }
 
@@ -285,7 +298,7 @@ impl PairingAttemptRepository {
         &self,
         attempt_id: Uuid,
         device_id: Uuid,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE public_pairing_attempts
              SET worker_started_at = COALESCE(worker_started_at, clock_timestamp())
@@ -295,7 +308,8 @@ impl PairingAttemptRepository {
         .bind(attempt_id)
         .bind(device_id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("mark_pairing_attempt_started"))?;
         Ok(())
     }
 
@@ -324,17 +338,20 @@ impl PairingAttemptRepository {
         Ok(valid)
     }
 
-    pub(crate) async fn expire_overdue(&self) -> Result<(), sqlx::Error> {
+    pub(crate) async fn expire_overdue(&self) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE public_pairing_attempts SET status = 'expired'
              WHERE status IN ('pending', 'pairing') AND expires_at <= clock_timestamp()",
         )
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("expire_pairing_attempts"))?;
         Ok(())
     }
 
-    pub(crate) async fn pending_dispatch(&self) -> Result<Vec<PendingPairingAttempt>, sqlx::Error> {
+    pub(crate) async fn pending_dispatch(
+        &self,
+    ) -> Result<Vec<PendingPairingAttempt>, OperationError> {
         sqlx::query_as(
             "SELECT id, device_id FROM public_pairing_attempts
              WHERE status = 'pairing' AND queued_at IS NULL AND expires_at > clock_timestamp()
@@ -342,15 +359,17 @@ impl PairingAttemptRepository {
         )
         .fetch_all(&self.pool)
         .await
+        .map_err(OperationError::at("load_pending_pairing_attempts"))
     }
 
-    pub(crate) async fn mark_queued(&self, attempt: Uuid) -> Result<(), sqlx::Error> {
+    pub(crate) async fn mark_queued(&self, attempt: Uuid) -> Result<(), OperationError> {
         sqlx::query(
             "UPDATE public_pairing_attempts SET queued_at = clock_timestamp() WHERE id = $1",
         )
         .bind(attempt)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("mark_pairing_attempt_queued"))?;
         Ok(())
     }
 }

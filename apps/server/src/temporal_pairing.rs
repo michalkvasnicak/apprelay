@@ -189,7 +189,6 @@ impl PairingActivities {
         self.attempts
             .mark_failed(attempt)
             .await
-            .map_err(OperationError::at("mark_pairing_attempt_failed"))
             .map_err(activity_failure)?;
         Ok(())
     }
@@ -205,8 +204,7 @@ impl PairingActivities {
             if let Some(attempt_id) = public_attempt_id {
                 self.attempts
                     .mark_worker_started(attempt_id, device_id)
-                    .await
-                    .map_err(OperationError::at("mark_pairing_attempt_started"))?;
+                    .await?;
             }
             let attempt_expiry = self
                 .attempts
@@ -346,10 +344,7 @@ impl PairingActivities {
                 .run(move |pin| async move {
                     match pin {
                         Some(pin) => codes.publish(attempt_id, device_id, pin).await,
-                        None => codes
-                            .clear(attempt_id)
-                            .await
-                            .map_err(OperationError::at("clear_pairing_code")),
+                        None => codes.clear(attempt_id).await,
                     }
                 })
                 .await?;
@@ -371,10 +366,11 @@ impl PairingActivities {
         // A crash still expires its last announcement after the ten-second DNS TTL.
         session.stop().await;
         // Best effort on cancellation as well; expiry also handles process crashes.
-        let ended = tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id))
-            .await
-            .map_err(OperationError::at("end_pairing_attempt_timeout"))
-            .and_then(|result| result.map_err(OperationError::at("end_pairing_attempt")));
+        let ended =
+            match tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id)).await {
+                Ok(result) => result,
+                Err(error) => Err(OperationError::at("end_pairing_attempt_timeout")(error)),
+            };
         if let Err(error) = ended {
             report_failure(
                 "Could not invalidate pairing code; it will expire at the session deadline",
@@ -391,14 +387,8 @@ async fn dispatch_attempts(attempts: PairingAttemptRepository) {
     let mut was_unavailable = false;
     loop {
         let result = async {
-            attempts
-                .expire_overdue()
-                .await
-                .map_err(OperationError::at("expire_pairing_attempts"))?;
-            let pending = attempts
-                .pending_dispatch()
-                .await
-                .map_err(OperationError::at("load_pending_pairing_attempts"))?;
+            attempts.expire_overdue().await?;
+            let pending = attempts.pending_dispatch().await?;
             if pending.is_empty() {
                 return Ok(());
             }
@@ -427,10 +417,7 @@ async fn dispatch_attempts(attempts: PairingAttemptRepository) {
                     });
                     continue;
                 }
-                attempts
-                    .mark_queued(attempt)
-                    .await
-                    .map_err(OperationError::at("mark_pairing_attempt_queued"))?;
+                attempts.mark_queued(attempt).await?;
             }
             enqueue_error.map_or(Ok(()), Err)
         }
