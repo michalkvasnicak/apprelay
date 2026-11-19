@@ -53,6 +53,8 @@ services:
       dockerfile: apps/server/Dockerfile
       args:
         VITE_APPRELAY_APP_SCHEME: ${VITE_APPRELAY_APP_SCHEME}
+        VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}
+        VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
     user: "0:0"
     entrypoint: ["/usr/local/bin/vpn-agent-entrypoint"]
     cap_add:
