@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 
 import { AccountError, accountController } from "../account/controller";
 import { useAccountAction, useAccountBusy } from "../account/hooks";
+import { trackFlowEvent } from "../analytics";
 import { Pending, Steps, buttonClass, inputClass } from "../components/forms";
 import { selectTargetDevice, type PairedDevice } from "../device";
 import { PairingError, type PairingController } from "../pairing/controller";
@@ -43,6 +44,7 @@ export function SigningPanel({
       setInstallProgress({ stage: "queueing" });
       await queueInstall(uploadedJob.current, pairing.installAuthorization());
       setInstallProgress({ stage: "queued" });
+      trackFlowEvent("install_queued");
     } catch (error) {
       setInstallProgress({ stage: "failed" });
       throw new AccountError(
@@ -67,6 +69,7 @@ export function SigningPanel({
       } catch {
         throw new AccountError("Pair your iPhone again before signing");
       }
+      trackFlowEvent("signing_started");
       setProgress("Inspecting IPA…");
       await signingController.inspect(file, changed);
       const bundleId = signingController.snapshot().bundleId;

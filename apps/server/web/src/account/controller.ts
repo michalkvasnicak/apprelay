@@ -1,3 +1,4 @@
+import { trackFlowEvent } from "../analytics";
 import { Anisette } from "../apple/anisette";
 import { signIn, trustedDevice, type SignInResult } from "../apple/authentication";
 import { DeveloperPortal } from "../apple/developer";
@@ -91,12 +92,14 @@ class AccountController {
     if (result.type === "two-factor") {
       this.challenge = { ...result, deadline: Date.now() + 600_000, resendAt: Date.now() + 60_000 };
       this.anisette = anisette;
+      trackFlowEvent("apple_sign_in_two_factor_required");
       await this.sendCode(result.challenge);
       return;
     }
     this.account = { session: result.session, anisette: anisette.snapshot() };
     this.anisette = anisette;
     this.challenge = undefined;
+    trackFlowEvent("apple_sign_in_completed");
     await this.fetchTeams();
   }
 
@@ -145,6 +148,7 @@ class AccountController {
         if (this.vault.exists() || this.account || this.challenge) {
           throw new AccountError("Unlock the saved account or reset the current sign-in first");
         }
+        trackFlowEvent("apple_sign_in_started");
         const anisette = await Anisette.create().catch((error: unknown) => {
           reportAppleIntegrationFailure("anisette-setup");
           throw error;

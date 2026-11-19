@@ -1,4 +1,5 @@
 import { accountController } from "../account/controller";
+import { trackFlowEvent } from "../analytics";
 import { validateInspectedEntitlements } from "./entitlements";
 import { SigningError, signingLimits, type Inspection } from "./types";
 import { SigningWorker } from "./worker-client";
@@ -99,6 +100,7 @@ class SigningController {
         }
         this.result = response.bytes;
         this.status = "signed";
+        trackFlowEvent("signing_completed");
         this.message = "Your app is signed and ready to install.";
       });
     } catch (error) {

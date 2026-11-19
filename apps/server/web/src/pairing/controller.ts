@@ -1,3 +1,4 @@
+import { trackFlowEvent } from "../analytics";
 import { api } from "../api/client";
 import type { components } from "../api/schema";
 
@@ -26,6 +27,7 @@ export class PairingController {
   private nextRequestAt = 0;
   private nextCreateAt = 0;
   private terminal: TerminalStatus | null = null;
+  private reportedCode = false;
 
   private activeToken() {
     return !this.terminal && Date.now() < this.expiresAt ? this.token : null;
@@ -55,6 +57,7 @@ export class PairingController {
     if (Date.now() < this.nextCreateAt) {
       throw new PairingError("Please wait before creating another attempt.");
     }
+    trackFlowEvent("pairing_started");
     try {
       const { data, response } = await api.POST("/v1/pairing-attempts", {
         cache: "no-store",
@@ -75,6 +78,8 @@ export class PairingController {
       this.expiresAt = Date.parse(data.expires_at);
       this.nextRequestAt = 0;
       this.terminal = null;
+      this.reportedCode = false;
+      trackFlowEvent("pairing_attempt_created");
     } catch (error) {
       if (error instanceof PairingError) {
         throw error;
@@ -128,7 +133,12 @@ export class PairingController {
       switch (data.status) {
         case "waiting":
         case "connecting":
+          return data;
         case "pairing":
+          if (!this.reportedCode) {
+            this.reportedCode = true;
+            trackFlowEvent("pairing_code_ready");
+          }
           return data;
         case "failed":
           return this.finish(data);
@@ -154,6 +164,9 @@ export class PairingController {
   }
 
   private finish(status: TerminalStatus) {
+    if (!this.terminal) {
+      trackFlowEvent(status.status === "done" ? "pairing_completed" : "pairing_failed");
+    }
     this.terminal = status;
     // After success the token can authorize installs, but no longer produces pairing links.
     if (status.status === "failed") {
