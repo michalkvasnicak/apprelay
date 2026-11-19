@@ -40,15 +40,12 @@ if (dsn) {
     tracePropagationTargets: [],
     beforeBreadcrumb: () => null,
     beforeSend(event) {
-      // Only keep error types and stack locations, never arbitrary error payloads.
+      // Preserve error messages, but omit user and request data, including IP fields.
       delete event.request;
       delete event.user;
       delete event.breadcrumbs;
       delete event.extra;
-      delete event.message;
-      delete event.logentry;
       for (const exception of event.exception?.values ?? []) {
-        exception.value = "Application error";
         delete exception.mechanism?.data;
         for (const frame of exception.stacktrace?.frames ?? []) {
           delete frame.vars;
