@@ -29,6 +29,40 @@ See the [CLI documentation](packages/cli/README.md) for installation and custom 
 
 **Supported builds:** IPAs up to **100 MiB compressed** and **256 MiB unpacked**. Apps with extensions, embedded frameworks, custom capabilities, or encrypted binaries aren’t supported.
 
+## How AppRelay works
+
+```mermaid
+sequenceDiagram
+    participant CLI as Developer CLI
+    participant Web as Tester's browser
+    participant Server as AppRelay server and workers
+    participant Phone as iPhone with AppRelay VPN
+
+    opt Sharing a build
+        CLI->>Server: Request an upload URL and share link
+        Note over CLI,Server: The CLI uploads the IPA to object storage
+        CLI->>Server: Confirm the upload
+        Note over CLI,Web: The developer sends the share link to the tester
+    end
+
+    Web->>Server: Start a pairing session
+    Web-->>Phone: Open the pairing link in AppRelay VPN
+    Phone->>Server: Register if needed and claim the pairing session
+    Server->>Phone: Connect to iOS over WireGuard for pairing
+    Server-->>Web: Return the pairing code
+    Note over Web,Phone: Tester enters the code in iOS Developer Mode settings
+    Server-->>Web: Confirm pairing
+
+    Note over Web: Sign the shared or local IPA in the browser
+    Web->>Server: Create an install job for the paired iPhone
+    Note over Web,Server: The browser uploads the signed IPA to object storage
+    Web->>Server: Confirm the upload and queue the install
+    Server->>Phone: Install the build through iOS over WireGuard
+    Server-->>Web: Report the install result
+```
+
+The **browser** signs the IPA. The **server** coordinates pairing and installation, and uses private Cloudflare R2 storage for shared IPAs and signed install uploads. The **iPhone companion** establishes the WireGuard tunnel and links the phone to the browser’s pairing session. A server worker then delivers the build to iOS over that tunnel; the companion app doesn’t sign or install it itself.
+
 ## Repository layout
 
 | Component                                        | What it does                                                                                                                     |
