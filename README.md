@@ -1,108 +1,66 @@
-# apprelay
+<p align="center">
+  <img src="apps/server/web/public/assets/logo.svg" alt="AppRelay logo" width="96" height="96" />
+</p>
 
-pnpm monorepo with a minimal Expo React Native app and a Rust server process.
+# AppRelay
 
-## Layout
+AppRelay lets you share iOS development builds with testers and install them on a paired iPhone without Xcode. Upload an `.ipa` with the CLI to get a share link, or open an IPA directly in the browser to sign and install it on your own iPhone.
 
-- `apps/mobile` — Expo app (`@apprelay/mobile`) with a blank white screen.
-- `apps/server` — Rust HTTP server (`@apprelay/server`) and privileged host VPN agent.
-- `apps/server/web` — React + TypeScript + Vite signing frontend (`@apprelay/web`), styled with Tailwind CSS.
-- `packages/cli` — TypeScript IPA upload CLI (`@brosoft/apprelay`), requiring Node.js 24.12+.
-- Repository root — shared tooling, Git hooks, and Pi hooks.
+[Website](https://apprelay.app/) · [Sign an IPA](https://apprelay.app/sign) · [Get AppRelay VPN on TestFlight](https://testflight.apple.com/join/yW4QnZEg)
 
-## CLI
+## Share a build
+
+With Node.js 24.12 or newer, run:
 
 ```sh
 npx @brosoft/apprelay ./MyApp.ipa
-# From the repository, before npm publication:
-pnpm cli ./MyApp.ipa
 ```
 
-CLI configuration and usage: [packages/cli/README.md](packages/cli/README.md).
+Send the returned link to your testers. Share links expire after **7 days**. Each tester signs the build for their own iPhone before installing it.
 
-## Development
+See the [CLI documentation](packages/cli/README.md) for installation and custom server options.
 
-Use Node.js 24 and pnpm 10 (`packageManager` pins the pnpm version).
+## Sign and install on your iPhone
 
-Native iOS builds require iOS 27.0 or newer, configured through `expo.ios.deploymentTarget` in `apps/mobile/app.json`. This minimum applies to native builds, not the Expo Go host app.
+1. On an iPhone running **iOS 27 or later**, enable **Developer Mode** under **Settings → Privacy & Security**, then restart and confirm the setting.
+2. Install [AppRelay VPN from TestFlight](https://testflight.apple.com/join/yW4QnZEg). Connect the VPN and keep the iPhone on Wi-Fi during pairing and installation. The TestFlight invite is for the VPN companion, not the build you’re installing.
+3. Open the build’s share link, or open [the signing page](https://apprelay.app/sign) and choose a local IPA. Follow the browser prompts to pair your iPhone.
+4. Sign in with your Apple Account to sign the IPA in the browser, then install it on the paired iPhone over the VPN. Free and paid accounts both work, but Apple applies stricter provisioning limits to free accounts.
+
+**Supported builds:** IPAs up to **100 MiB compressed** and **256 MiB unpacked**. Apps with extensions, embedded frameworks, custom capabilities, or encrypted binaries aren’t supported.
+
+## Repository layout
+
+| Component                                        | What it does                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| [iOS companion](apps/mobile/README.md)           | Expo and React Native app in TypeScript, with a native Swift WireGuard tunnel. Connects the iPhone for pairing and installation. |
+| [Backend](apps/server/README.md)                 | Rust and Axum API, background workers, and a host VPN agent for sharing, pairing, and installation.                              |
+| [Web frontend](apps/server/web/)                 | React, TypeScript, Vite, and Tailwind CSS for the homepage and browser-based signing workspace.                                  |
+| [Upload CLI](packages/cli/README.md)             | TypeScript CLI published as `@brosoft/apprelay`. Uploads an IPA and prints its share URL.                                        |
+| [Sample iOS app](apps/hello-world-ios/README.md) | Standalone SwiftUI app you can build into a sample IPA with Xcode.                                                               |
+| [Local infrastructure](infra/README.md)          | Docker Compose setup for PostgreSQL, Redis, Temporal, and Caddy.                                                                 |
+
+## Local development
+
+Use **Node.js 24.12+**, the **pnpm 10** version pinned in `package.json`, and **Rust 1.92+** with Clippy and rustfmt.
 
 ```sh
 pnpm install
-cp apps/mobile/.env.local.example apps/mobile/.env.local
-# Fill in apps/mobile/.env.local before starting.
-pnpm start
 ```
 
-Root development commands forward to `apps/mobile`. Open the app in Expo Go, or use `pnpm ios` / `pnpm android` to launch a simulator or emulator. `pnpm web` starts the Expo web app.
+- **Backend:** Follow the [local infrastructure guide](infra/README.md) and [server setup](apps/server/README.md) for configuration and VPN prerequisites. Run `pnpm server` to start the API. The native listener defaults to `http://127.0.0.1:8080`, with `/health` for health checks and `/openapi.json` for the API contract.
+- **Browser:** Copy `apps/server/web/.env.example` to `apps/server/web/.env.local`. Set `VITE_APPRELAY_APP_SCHEME` to match the mobile app’s `EXPO_PUBLIC_APP_SCHEME` (`apprelay-dev` in the local examples). Run `pnpm web:dev` for Vite at `http://localhost:5173`; it proxies API requests to the local Rust server. `pnpm web:build` outputs to `apps/server/web/dist`, which Axum can serve. Use `APPRELAY_WEB_DIR` to override that path.
+- **iPhone:** Follow the [mobile setup guide](apps/mobile/README.md) for environment files, native build prerequisites, and TestFlight publishing. Use `pnpm ios` to build for a physical iPhone. The VPN and pairing workflow requires a signed native build; Expo Go and the simulator are not supported. Xcode is needed to build the companion app locally, not to use the hosted service.
+- **CLI:** Run `pnpm cli ./MyApp.ipa` from the checkout. To target a different backend, see the [CLI server configuration](packages/cli/README.md#server-configuration).
 
-For separate local/TestFlight configuration and local iOS publishing with `pnpm publish:ios:testflight`, see [the mobile README](apps/mobile/README.md).
+### API contracts and checks
 
-Use `pnpm --filter @apprelay/mobile <command>` to target the app directly. Add Expo dependencies with `pnpm --filter @apprelay/mobile exec expo install <package>`.
+Rust request and response types and `#[utoipa::path]` annotations define the OpenAPI contract. After changing it, run `pnpm api:generate` and commit the generated TypeScript schemas for the mobile app, web frontend, and CLI with the Rust changes. No running backend is needed for generation.
 
-### Browser signing frontend
+- `pnpm api:check` checks for stale API types and is included in `pnpm typecheck`.
+- `pnpm lint` runs workspace linters, including Clippy for Rust.
+- `pnpm format` and `pnpm format:check` write or verify formatting.
 
-Copy `apps/server/web/.env.example` to `apps/server/web/.env.local` and set
-`VITE_APPRELAY_APP_SCHEME` to the same value as `EXPO_PUBLIC_APP_SCHEME` in your
-mobile env file (`apprelay-dev` in the local mobile example). Then run
-`pnpm web:dev` to open the signing preview at `http://localhost:5173`.
-Vite proxies API requests to the Rust server at `127.0.0.1:8080`; start it separately with `pnpm server`.
-Apple authentication, trusted-device 2FA, and basic certificate/profile preparation are experimental and not live-verified. IPA signing is not integrated yet.
-Optional sessions and signing assets use a passphrase-encrypted localStorage vault. Apple passwords and verification codes are never saved.
+## License
 
-`pnpm web:build` produces `apps/server/web/dist`. Axum serves the homepage at `/`
-and the signing workspace at `/sign`.
-Set `APPRELAY_WEB_DIR` to override the asset directory. The production Docker image builds and includes these assets; its build context is the repository root.
-API documentation is available at `/openapi.json`.
-
-### Local infrastructure
-
-[Local infrastructure setup](infra/README.md) runs PostgreSQL and Caddy HTTPS in Docker Compose, including Colima networking and iPhone certificate trust. The application server and VPN agent remain native on the host. Start with `cp .env.example .env`, edit the local settings, then run `docker compose up -d`.
-
-### Rust server
-
-Install Rust 1.85 or newer with the Clippy and rustfmt components, then run:
-
-```sh
-pnpm run server
-```
-
-The server listens on `127.0.0.1:8080` by default and serves `GET /health` with `{"status":"ok"}`. Set `APPRELAY_HTTP_ADDRESS` to override the listener. With Caddy running and its CA trusted, use `https://<configured-host>:8443/health` to verify HTTPS. Health does not require the VPN agent or PostgreSQL. `pnpm --filter @apprelay/server start:release` runs an optimized build.
-
-## Synchronized API types
-
-Rust request/response structs and `#[utoipa::path]` annotations are the source of truth.
-The server serves the OpenAPI contract at `GET /openapi.json` (no authentication required).
-
-After changing an API request, response, or endpoint:
-
-```sh
-pnpm api:generate
-```
-
-This exports the specification from Rust and regenerates
-`apps/mobile/src/api/schema.d.ts`. It requires the Rust toolchain, but no running
-server, database, Redis, or VPN agent. Commit the regenerated file with the Rust changes.
-
-The mobile app uses `openapi-fetch` through `apps/mobile/src/api/client.ts` for
-typed paths, parameters, request bodies, and responses. Types provide compile-time
-checks, not runtime response validation.
-
-Place new handlers in `apps/server/src/http/routes/` and middleware in
-`apps/server/src/http/middleware/`. For new API endpoints, derive `utoipa::ToSchema`
-on their payload types, add `#[utoipa::path]` to the handler, register it in
-`apps/server/src/http/routes/openapi.rs`, and wire it into the Axum router.
-Document authentication and status codes alongside the endpoint.
-
-`pnpm api:check` fails if generated types are stale without modifying files.
-It also runs as part of `pnpm typecheck` and the automatic Pi checks.
-
-## Code quality
-
-- `pnpm lint` — run each workspace's lint script (the mobile app uses oxlint with React rules, autofixes, and warnings treated as errors).
-- `pnpm typecheck` — TypeScript checking for mobile and `cargo check` for the server.
-- The server's lint script runs Clippy with warnings treated as errors.
-- `pnpm format` / `pnpm format:check` — oxfmt across the repository plus rustfmt for the server.
-- Husky runs lint-staged before commits, formatting and re-staging supported staged files with oxfmt or rustfmt.
-- Pi runs lint and typecheck automatically before settling. See [`.pi/README.md`](.pi/README.md).
-
-The signing frontend is experimental. IPA signing, capability/extension handling, and installation are not yet implemented.
+[MIT](LICENSE)
