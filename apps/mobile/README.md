@@ -1,61 +1,88 @@
-# AppRelay mobile
+# AppRelay VPN for iPhone
 
-An iOS app for connecting to the AppRelay VPN and accessing private services.
+AppRelay VPN connects an iPhone to [apprelay.app](https://apprelay.app) so the server can pair with the device and deliver development builds. The companion app does not sign or install IPAs itself: signing happens in the browser, and the server delivers the signed build to iOS over WireGuard.
 
-Requires a signed native build on a physical iPhone. Expo Go, the iOS simulator, Android and web are not supported.
+[Get AppRelay VPN on TestFlight](https://testflight.apple.com/join/yW4QnZEg) · [Pair and install a build](../../README.md#sign-and-install-on-your-iphone)
 
-## Prerequisites
-
-- Node.js 22 or newer and pnpm (Node.js 24 is recommended).
-- Xcode and an iPhone supported by the deployment target in `app.json`.
-- An Apple Developer team with Network Extension provisioning enabled for the app and its extension (`<app bundle identifier>.PacketTunnel`).
-- A reachable AppRelay server.
-- Git and internet access for the first build.
-- Go **1.19.13**. With Go already installed, install the required version:
-
-  ```sh
-  go install golang.org/dl/go1.19.13@latest
-  "$HOME/go/bin/go1.19.13" download
-  ```
-
-  Keep the executable in `$HOME/go/bin` or set `APPRELAY_GO_BINARY` to its absolute path in the Xcode build environment. Newer Go versions are not supported for this build.
+The app requires a physical iPhone running **iOS 27 or later**. Expo Go, the iOS simulator, Android, and web are not supported.
 
 ## Configuration
 
-From the repository root, create independent configuration files:
+For local builds, copy [`.env.local.example`](.env.local.example) to `.env.local`. For TestFlight, copy [`.env.testflight.example`](.env.testflight.example) to `.env.testflight`. Keep any existing files. The build commands load only the file for the selected environment, so fill in the required settings separately.
 
-```sh
-cp apps/mobile/.env.local.example apps/mobile/.env.local
-cp apps/mobile/.env.testflight.example apps/mobile/.env.testflight
+### App and server
+
+| Variable                  | Default or requirement  | Purpose                                                                                                                                                                 |
+| ------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EXPO_PUBLIC_APP_SCHEME`  | Required                | Lowercase pairing link scheme without `://`. Match the web build's `VITE_APPRELAY_APP_SCHEME`. Examples: `apprelay-dev` for local builds and `apprelay` for TestFlight. |
+| `EXPO_PUBLIC_VPN_API_URL` | Required                | HTTPS API base URL, e.g. `https://apprelay.app` for the hosted API. No credentials, query, or fragment.                                                                 |
+| `EXPO_PUBLIC_VPN_HOST`    | Required                | WireGuard server hostname or IP, without a scheme or port. It must be reachable directly over UDP.                                                                      |
+| `EXPO_PUBLIC_VPN_PORT`    | `51820`                 | WireGuard UDP port. Match the server's listen port.                                                                                                                     |
+| `EXPO_PUBLIC_API_KEY`     | Required                | 64-character hex app key matching the server's `APPRELAY_API_KEY`.                                                                                                      |
+| `APPLE_BUNDLE_IDENTIFIER` | Required                | Explicit bundle ID registered to your Apple Developer team. Use a separate ID if you want local and TestFlight builds installed side by side.                           |
+| `APPLE_TEAM_ID`           | Required for TestFlight | Apple Developer Team ID for signing.                                                                                                                                    |
+| `APPRELAY_GO_BINARY`      | `go1.19.13`             | Absolute path to the required Go executable if Xcode cannot find it.                                                                                                    |
+
+### TestFlight and telemetry
+
+| Variable                         | Default or requirement                | Purpose                                                                                                                                   |
+| -------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `APPLE_BUILD_NUMBER`             | Required for TestFlight               | Last used integer build number; use `0` before the first upload. The publish command increments it.                                       |
+| `APPLE_API_KEY_ID`               | Optional                              | App Store Connect API key ID. Set all three `APPLE_API_*` variables together to use API-key authentication instead of your Xcode account. |
+| `APPLE_API_ISSUER_ID`            | Required with API key                 | App Store Connect key issuer ID.                                                                                                          |
+| `APPLE_API_KEY_PATH`             | Required with API key                 | Absolute path to the App Store Connect `.p8` private key.                                                                                 |
+| `EXPO_PUBLIC_SENTRY_DSN`         | Unset (disabled)                      | Public DSN for mobile error reporting.                                                                                                    |
+| `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | Unset                                 | Optional environment label for mobile error reports.                                                                                      |
+| `SENTRY_ORG`                     | Required for TestFlight if DSN is set | Sentry organization slug.                                                                                                                 |
+| `SENTRY_PROJECT`                 | Required for TestFlight if DSN is set | Sentry project slug.                                                                                                                      |
+| `SENTRY_URL`                     | Required for TestFlight if DSN is set | HTTPS Sentry upload API base URL for your region.                                                                                         |
+| `SENTRY_AUTH_TOKEN`              | Required for TestFlight if DSN is set | Build-only token for uploading source maps and debug symbols.                                                                             |
+
+## How the app communicates
+
+```mermaid
+sequenceDiagram
+    participant Web as Browser
+    participant App as AppRelay VPN
+    participant iOS as iOS and VPN extension
+    participant Server as AppRelay backend
+    participant APNs as Apple Push Notifications
+
+    App->>Server: Register the iPhone over HTTPS when needed
+    App->>iOS: Start the VPN when the user connects
+    iOS->>Server: Establish the WireGuard tunnel
+    opt Notifications allowed
+        App->>Server: Register the push token over HTTPS
+    end
+
+    Web->>Server: Start pairing
+    Web-->>App: Open the pairing link
+    App->>Server: Claim the pairing session over HTTPS
+    Server->>iOS: Pair with the device over WireGuard
+    opt Notifications allowed
+        Server->>APNs: Send pairing updates
+        APNs-->>App: Deliver pairing notifications
+    end
+    Note over iOS: Tester enters the pairing code in Developer Mode settings
+
+    Note over Web: The browser signs the IPA
+    Web->>Server: Request the install
+    Server->>iOS: Deliver the signed build over WireGuard
+    Server-->>Web: Report the install result
 ```
 
-If you already have `.env.local`, keep it; do not overwrite it. Fill in the following values in each file:
-
-| Variable                         | Value                                                                                                                                                                               |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EXPO_PUBLIC_APP_SCHEME`         | Required pairing URL scheme (without `://`). Must match `VITE_APPRELAY_APP_SCHEME` in the corresponding web environment.                                                            |
-| `APPLE_TEAM_ID`                  | Your Apple Developer Team ID.                                                                                                                                                       |
-| `APPLE_BUNDLE_IDENTIFIER`        | The app's bundle identifier. Required for every build.                                                                                                                              |
-| `EXPO_PUBLIC_VPN_API_URL`        | The server's HTTPS base URL, for example `https://vpn.example.com`. Do not include credentials, a query string or a fragment.                                                       |
-| `EXPO_PUBLIC_VPN_HOST`           | Direct WireGuard hostname or IP, for example `vpn.example.com`. No scheme or port. Must resolve to the VPN server, not an HTTP proxy.                                               |
-| `EXPO_PUBLIC_VPN_PORT`           | Public WireGuard UDP port, matching the server and firewall configuration. Defaults to `51820`.                                                                                     |
-| `EXPO_PUBLIC_API_KEY`            | Required 64-character hexadecimal app key matching the server's `APPRELAY_API_KEY`. Sent as `X-App-Key` on API requests; embedded in the app and extractable, not a private secret. |
-| `EXPO_PUBLIC_SENTRY_DSN`         | Optional public DSN. Empty or omitted disables reporting.                                                                                                                           |
-| `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | Optional environment label. No configured default.                                                                                                                                  |
-| `SENTRY_ORG`                     | Upload organization slug. Required for TestFlight when a DSN is configured. No configured default.                                                                                  |
-| `SENTRY_PROJECT`                 | Upload project slug. Required for TestFlight when a DSN is configured. No configured default.                                                                                       |
-| `SENTRY_URL`                     | HTTPS upload API base URL for your Sentry region. Required for TestFlight when a DSN is configured. No configured default.                                                          |
-| `SENTRY_AUTH_TOKEN`              | Build-only token with permission to upload source maps and debug symbols. Required for TestFlight when a DSN is configured. Never use an `EXPO_PUBLIC_` variable for this token.    |
-
-The example env files use `apprelay-dev` for local development and `apprelay` for TestFlight. Each mobile build accepts pairing links only for its configured scheme. If you change it, regenerate and rebuild the native app, and restart Vite or rebuild the deployed web app with the matching value.
-
-Choose your own reverse-DNS bundle identifiers registered with your Apple Developer team. For example, replace `com.example.apprelay.dev` for local development and `com.example.apprelay` for distribution with identifiers you own. A separate local identifier lets both apps coexist; TestFlight and any future App Store release can share the same distribution identifier.
-
-Do not put private secrets in `EXPO_PUBLIC_` variables. Both env files are ignored by Git; only the examples are committed. The API URL and app key are validated when Expo evaluates the configuration, before building.
-
-The package scripts explicitly load just the selected file and disable Expo's automatic dotenv loading. They replace inherited app configuration rather than falling back to shell values or `.env.local`. Restart Expo after configuration changes and rebuild distributed apps to apply them.
+Keep the VPN connected and the iPhone on Wi-Fi during pairing and installation. See the [server diagram](../server/README.md#how-the-services-communicate) for the backend side of the workflow.
 
 ## Build and run
+
+Use a Mac with Xcode and its command-line tools, CocoaPods, the [workspace Node.js and pnpm versions](../../README.md#local-development), and Go **1.19.13**. With Go already installed, install the required version:
+
+```sh
+go install golang.org/dl/go1.19.13@latest
+"$HOME/go/bin/go1.19.13" download
+```
+
+Provision the app and its `<bundle identifier>.PacketTunnel` extension with your Apple Developer team and enable the Network Extension capability. Point your build at a reachable [AppRelay server](../server/README.md).
 
 From the repository root:
 
@@ -64,48 +91,22 @@ pnpm install
 pnpm ios
 ```
 
-Select your connected iPhone and approve any signing or device-trust prompts.
+Select your connected iPhone and approve the device trust, signing, and VPN setup prompts as they appear. After changing native settings or dependencies, regenerate the iOS project with `pnpm --filter @apprelay/mobile prebuild:ios` and rebuild with `pnpm ios`. If the bundle ID changes, add `--clean` to prebuild to recreate the generated project.
 
-After native dependencies, native configuration or native source files change, regenerate the iOS project before rebuilding:
+## Publish to TestFlight
 
-```sh
-pnpm --filter @apprelay/mobile prebuild:ios
-pnpm ios
-```
-
-Configure native projects through Expo configuration and plugins; do not edit generated iOS files directly. If you change the local bundle identifier, regenerate with `pnpm --filter @apprelay/mobile prebuild:ios --clean`; this deletes and recreates the generated iOS project.
-
-## Publish to TestFlight from your Mac
-
-### One-time setup
-
-1. Enroll in the Apple Developer Program and create an App Store Connect app with the bundle identifier from `.env.testflight`. Enable Network Extension provisioning for both the app and `<bundle identifier>.PacketTunnel`.
-2. Fill in `.env.testflight` with your Apple team ID, distribution bundle identifier, deployed server URL and app key. Set `APPLE_BUILD_NUMBER` to the last used integer build number (or `0` before the first upload). Publishing increments it automatically.
-3. Sign in to your Apple Developer account in **Xcode → Settings → Accounts**, with permission to sign and upload the app. Alternatively, supply all three optional `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` and `APPLE_API_KEY_PATH` settings for App Store Connect API-key authentication. The key must have permission to manage signing and upload builds; keep its private `.p8` file outside the repository.
-4. Install Xcode command-line tools, CocoaPods and the Go version described above. If needed, set `APPRELAY_GO_BINARY` in `.env.testflight` to the Go executable's absolute path.
-
-No Expo account, hosted build service or Fastlane is required.
-
-### Build and upload
-
-From the repository root:
+Create an App Store Connect record for the distribution bundle ID and complete `.env.testflight`. Sign in to Xcode with an account that can sign and upload the app, or configure the App Store Connect API key above. From the repository root, run:
 
 ```sh
 pnpm publish:ios:testflight
 ```
 
-This command:
+The command builds and uploads a signed archive from your Mac. If upload fails after archiving, the script prints the saved archive location so you can retry in Xcode Organizer. Do not edit `.env.testflight` or start another publish while a release is running.
 
-1. Increments `APPLE_BUILD_NUMBER` in `apps/mobile/.env.testflight`, loads only that file and validates the Expo configuration.
-2. Copies the app into a temporary build directory, without env files or existing native projects, and reuses the installed dependencies.
-3. Runs Expo prebuild and CocoaPods to generate a fresh native iOS project.
-4. Creates a signed Release archive using local `xcodebuild`. The explicit build number applies to both the app and its VPN extension.
-5. Uses `xcodebuild -exportArchive` with an App Store Connect upload destination to send the archive directly to Apple. Upload does not run if archiving fails.
+After Apple processes the build, add it to a TestFlight group in App Store Connect. External testing may require beta review before you can share the public invite link.
 
-The incremented build number is kept only when publishing succeeds. On failure or interruption (SIGINT/SIGTERM), the original `.env.testflight` contents are restored. Do not run simultaneous publishes or edit that file while publishing.
+## Security
 
-The local `.env.local` file and generated development iOS project are untouched. The temporary release project is removed afterward. Archives and export settings are saved under a unique `apps/mobile/dist/testflight-*` directory, printed by the script.
-
-If uploading fails after archiving, you can open the saved `apprelay.xcarchive` in Xcode Organizer and choose **Distribute App → App Store Connect**, or retry `xcodebuild -exportArchive` with that archive and its saved `ExportOptions.plist`, without rebuilding.
-
-Uploading does not release the app on the App Store or automatically invite testers. After Apple processes the build, add it to an external TestFlight group in App Store Connect, submit it for beta review as required, and enable the group's public invite link. Each build expires after 90 days.
+- Treat `EXPO_PUBLIC_*` values as public: they are embedded in the app. The app key is extractable and does not replace device authentication.
+- Keep App Store Connect private keys and Sentry upload tokens out of version control and out of `EXPO_PUBLIC_*` variables.
+- Use a trusted HTTPS certificate on the API. For a local server, follow the [development certificate setup](../../infra/README.md#trust-the-development-https-certificate) rather than disabling TLS verification.
