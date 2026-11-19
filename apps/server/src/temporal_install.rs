@@ -19,6 +19,7 @@ use crate::{
         install_jobs::{InstallJobRepository, object_key},
         pairings::PairingStore,
     },
+    error::OperationError,
     http::ArtifactApi,
     install::{Application, deliver},
     r2::R2Storage,
@@ -109,32 +110,38 @@ impl InstallActivities {
                 .jobs
                 .load_installable(id)
                 .await
-                .map_err(|_| "install job storage unavailable")?
-                .ok_or("install job expired")?;
+                .map_err(OperationError::at("load_install_job"))?
+                .ok_or_else(|| OperationError::without_source("install_job_expired"))?;
             // Check that the authorized pairing is still usable before downloading.
-            self.pairings.install_target(id).await?;
+            self.pairings
+                .install_target(id)
+                .await
+                .map_err(|error| OperationError::at(error.code())(error))?;
             let bytes = tokio::time::timeout(
                 Duration::from_secs(60),
                 self.storage
                     .read_signed(&object_key(id), artifact.size_bytes, &artifact.sha256),
             )
             .await
-            .map_err(|_| "signed IPA download timed out")?
-            .map_err(|_| "signed IPA missing or failed integrity check")?;
+            .map_err(OperationError::at("download_signed_ipa_timeout"))??;
             let app = tokio::task::spawn_blocking(move || Application::unpack(bytes))
                 .await
-                .map_err(|_| "IPA staging interrupted")??;
+                .map_err(OperationError::at("stage_ipa_task"))??;
             // Refresh the leased endpoint and confirm no re-pairing during preparation.
-            let target = self.pairings.install_target(id).await?;
+            let target = self
+                .pairings
+                .install_target(id)
+                .await
+                .map_err(|error| OperationError::at(error.code())(error))?;
             let remaining = (target.expires_at - Utc::now())
                 .to_std()
-                .map_err(|_| "install authorization expired")?;
+                .map_err(OperationError::at("install_authorization_expired"))?;
             tokio::time::timeout(
                 remaining.min(Duration::from_secs(540)),
                 deliver(id, target, app),
             )
             .await
-            .map_err(|_| "phone installation timed out")?
+            .map_err(OperationError::at("phone_install_timeout"))?
         };
         tokio::pin!(operation);
         let mut ticks = tokio::time::interval(Duration::from_secs(2));
@@ -148,10 +155,13 @@ impl InstallActivities {
                     tracing::error!(job_id = %id, "Install activity heartbeat failed");
                     telemetry::report("Install activity heartbeat failed");
                 })?,
-                result = &mut operation => return result.map_err(|reason| {
-                    tracing::error!(job_id = %id, reason, "Phone installation failed");
-                    telemetry::report_with_reason("Phone installation failed", reason);
-                    io::Error::other(reason).into()
+                result = &mut operation => return result.map_err(|error| {
+                    let operation = error.operation;
+                    let cause = error.cause_code();
+                    tracing::error!(job_id = %id, operation, cause, "Phone installation failed");
+                    telemetry::report_operation("Phone installation failed", operation, cause);
+                    // Temporal persists failure details; don't serialize the source chain.
+                    io::Error::other(operation).into()
                 }),
             }
         }
@@ -275,23 +285,37 @@ async fn dispatch(jobs: InstallJobRepository, temporal: temporalio_client::Clien
     }
 }
 
-pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_worker() -> Result<(), OperationError> {
     use tokio::signal::unix::{SignalKind, signal};
 
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    let pool = db::connect(&std::env::var("DATABASE_URL")?).await?;
-    db::migrate(&pool).await?;
-    let storage = ArtifactApi::from_env(pool.clone())?
-        .ok_or_else(|| io::Error::other("install worker requires R2 storage configuration"))?
+    let mut interrupt =
+        signal(SignalKind::interrupt()).map_err(OperationError::at("register_sigint"))?;
+    let mut terminate =
+        signal(SignalKind::terminate()).map_err(OperationError::at("register_sigterm"))?;
+    let database_url =
+        std::env::var("DATABASE_URL").map_err(OperationError::at("read_database_url"))?;
+    let pool = db::connect(&database_url)
+        .await
+        .map_err(OperationError::at("connect_database"))?;
+    db::migrate(&pool)
+        .await
+        .map_err(OperationError::at("migrate_database"))?;
+    let storage = ArtifactApi::from_env(pool.clone())
+        .map_err(OperationError::at("configure_artifact_api"))?
+        .ok_or_else(|| OperationError::without_source("missing_r2_configuration"))?
         .storage;
-    let pairings = PairingStore::from_env(pool.clone())?;
+    let pairings = PairingStore::from_env(pool.clone())
+        .map_err(OperationError::at("configure_pairing_store"))?;
     let jobs = InstallJobRepository::new(pool);
     let apns = std::env::var_os("APPRELAY_APNS_SIGNING_KEY_FILE")
         .map(|_| ApnsClient::from_env())
-        .transpose()?;
-    let temporal = client().await?;
-    let runtime = Runtime::from_current_tokio(Default::default())?;
+        .transpose()
+        .map_err(OperationError::at("configure_apns"))?;
+    let temporal = client()
+        .await
+        .map_err(OperationError::at("connect_temporal"))?;
+    let runtime = Runtime::from_current_tokio(Default::default())
+        .map_err(OperationError::at("build_temporal_runtime"))?;
     let tuner = TunerHolder::builder()
         .workflow_task_slot_supplier(FixedSizeSlotSupplier::new(4))
         .activity_task_slot_supplier(FixedSizeSlotSupplier::new(5))
@@ -299,7 +323,8 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .nexus_task_slot_supplier(FixedSizeSlotSupplier::new(1))
         .build();
     let options = WorkerOptions::new(TASK_QUEUE)
-        .register_workflow::<InstallWorkflow>()?
+        .register_workflow::<InstallWorkflow>()
+        .map_err(OperationError::at("register_install_workflow"))?
         .register_activities(InstallActivities {
             jobs: jobs.clone(),
             storage,
@@ -309,7 +334,8 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .tuner(tuner)
         .graceful_shutdown_period(Duration::from_secs(10))
         .build();
-    let worker = Worker::new(&runtime, temporal.clone(), options)?;
+    let worker = Worker::new(&runtime, temporal.clone(), options)
+        .map_err(OperationError::at("build_install_worker"))?;
     let dispatch = tokio::spawn(dispatch(jobs, temporal));
     tracing::info!(task_queue = TASK_QUEUE, "Install worker listening");
     let result = worker
@@ -322,6 +348,5 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .await;
     dispatch.abort();
     let _ = dispatch.await;
-    result?;
-    Ok(())
+    result.map_err(OperationError::at("run_install_worker"))
 }

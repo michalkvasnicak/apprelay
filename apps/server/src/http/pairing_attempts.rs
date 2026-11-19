@@ -58,7 +58,7 @@ pub(super) async fn create(State(state): State<AppState>) -> Result<impl IntoRes
         .attempts
         .create(&credential.hash)
         .await
-        .map_err(ApiError::database)?;
+        .map_err(|error| ApiError::database("create_pairing_attempt", error))?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedAttempt {
@@ -125,7 +125,7 @@ pub(super) async fn start(
         .attempts
         .claim(&token_hash(&request.token)?, device_id, &credential.hash)
         .await
-        .map_err(ApiError::database)?
+        .map_err(|error| ApiError::database("claim_pairing_attempt", error))?
     {
         Claim::Accepted => Ok(StatusCode::CREATED),
         Claim::Unauthorized => Err(ApiError::unauthorized()),

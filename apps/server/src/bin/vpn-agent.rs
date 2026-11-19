@@ -1,11 +1,15 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn main() -> std::io::Result<()> {
-    let _sentry = apprelay_server::telemetry::init("vpn-agent")?;
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(apprelay_server::agent::run())
-        .inspect_err(|_| apprelay_server::telemetry::report("VPN agent terminated with an error"))
+fn main() -> std::process::ExitCode {
+    apprelay_server::telemetry::run_service(
+        "vpn-agent",
+        "VPN agent terminated with an error",
+        tokio::runtime::Builder::new_current_thread(),
+        async {
+            apprelay_server::agent::run()
+                .await
+                .map_err(apprelay_server::error::OperationError::at("run_service"))
+        },
+    )
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

@@ -5,6 +5,7 @@ pub mod agent;
 pub mod cleanup;
 
 pub mod db;
+pub mod error;
 #[cfg(unix)]
 pub mod http;
 #[cfg(unix)]

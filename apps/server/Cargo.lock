@@ -125,6 +125,7 @@ dependencies = [
  "temporalio-macros",
  "temporalio-sdk",
  "temporalio-workflow",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
  "tower-http",

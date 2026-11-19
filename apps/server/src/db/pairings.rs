@@ -80,8 +80,46 @@ pub(crate) struct InstallTarget {
     pub expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum InstallTargetError {
+    #[error("install target lookup failed")]
+    Lookup(#[source] sqlx::Error),
+    #[error("paired phone unavailable; connect its VPN")]
+    Unavailable,
+    #[error("could not decrypt stored pairing")]
+    Decrypt(#[source] io::Error),
+    #[error("invalid stored pairing")]
+    Decode(#[source] serde_json::Error),
+    #[error("pair the phone again before installing")]
+    MissingPeerKey,
+    #[error("invalid stored pairing")]
+    InvalidRecord(#[source] idevice::IdeviceError),
+    #[error("invalid device address")]
+    Address(#[source] std::net::AddrParseError),
+    #[error("invalid device port")]
+    Port(#[source] std::num::TryFromIntError),
+}
+
+impl InstallTargetError {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::Lookup(_) => "target_lookup",
+            Self::Unavailable => "target_unavailable",
+            Self::Decrypt(_) => "target_decrypt",
+            Self::Decode(_) => "target_decode",
+            Self::MissingPeerKey => "target_missing_peer_key",
+            Self::InvalidRecord(_) => "target_invalid_record",
+            Self::Address(_) => "target_invalid_address",
+            Self::Port(_) => "target_invalid_port",
+        }
+    }
+}
+
 impl PairingStore {
-    pub(crate) async fn install_target(&self, job_id: Uuid) -> Result<InstallTarget, &'static str> {
+    pub(crate) async fn install_target(
+        &self,
+        job_id: Uuid,
+    ) -> Result<InstallTarget, InstallTargetError> {
         let row = sqlx::query_as::<_, InstallTargetRow>(
             "SELECT d.id AS device_id, host(d.address) AS address, d.remote_pairing_port,
                  p.nonce, p.ciphertext, LEAST(d.expires_at, j.expires_at) AS expires_at
@@ -96,23 +134,23 @@ impl PairingStore {
         .bind(FORMAT_VERSION)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|_| "install target lookup failed")?
-        .ok_or("paired phone unavailable; connect its VPN")?;
+        .map_err(InstallTargetError::Lookup)?
+        .ok_or(InstallTargetError::Unavailable)?;
         let plaintext = self
             .key
             .open(&associated_data(row.device_id), &row.nonce, row.ciphertext)
-            .map_err(|_| "could not decrypt stored pairing")?;
+            .map_err(InstallTargetError::Decrypt)?;
         let stored: InstallCredentials =
-            serde_json::from_slice(&plaintext).map_err(|_| "invalid stored pairing")?;
+            serde_json::from_slice(&plaintext).map_err(InstallTargetError::Decode)?;
         let pairing_file = Zeroizing::new(stored.pairing_file);
         let peer_key = stored
             .peer_public_key
-            .ok_or("pair the phone again before installing")?;
+            .ok_or(InstallTargetError::MissingPeerKey)?;
         let record =
-            RpPairingFile::from_bytes(&pairing_file).map_err(|_| "invalid stored pairing")?;
+            RpPairingFile::from_bytes(&pairing_file).map_err(InstallTargetError::InvalidRecord)?;
         Ok(InstallTarget {
-            address: row.address.parse().map_err(|_| "invalid device address")?,
-            port: u16::try_from(row.remote_pairing_port).map_err(|_| "invalid device port")?,
+            address: row.address.parse().map_err(InstallTargetError::Address)?,
+            port: u16::try_from(row.remote_pairing_port).map_err(InstallTargetError::Port)?,
             record,
             peer_key,
             expires_at: row.expires_at,

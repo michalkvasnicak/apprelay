@@ -307,7 +307,7 @@ async fn register_device(
             &new_credential.hash,
         )
         .await
-        .map_err(ApiError::database)?
+        .map_err(|error| ApiError::database("register_device", error))?
     {
         Registration::Registered { device, created } => {
             let token = if created {
@@ -328,7 +328,7 @@ async fn register_device(
         .devices
         .lock_for_provisioning(device.id)
         .await
-        .map_err(ApiError::database)?
+        .map_err(|error| ApiError::database("lock_device_for_provisioning", error))?
         .ok_or_else(|| ApiError::unavailable("registration expired; retry registration"))?;
     let address = locked
         .device
@@ -358,7 +358,10 @@ async fn register_device(
             "VPN configuration changed; retry registration",
         ));
     }
-    let device = locked.commit().await.map_err(ApiError::database)?;
+    let device = locked
+        .commit()
+        .await
+        .map_err(|error| ApiError::database("commit_device_provisioning", error))?;
     let lifetime_seconds = device.expires_at.timestamp() - Utc::now().timestamp();
     if lifetime_seconds <= 0 {
         return Err(ApiError::unavailable(
@@ -421,13 +424,17 @@ impl ApiError {
         }
     }
 
-    fn database(_: sqlx::Error) -> Self {
-        tracing::error!("Device registration database operation failed");
+    fn database(operation: &'static str, error: sqlx::Error) -> Self {
+        let cause = crate::error::database_cause(&error);
+        const MESSAGE: &str = "Device database operation failed";
+        tracing::error!(operation, cause, "{MESSAGE}");
+        crate::telemetry::report_operation(MESSAGE, operation, cause);
         Self::unavailable("device database is unavailable")
     }
 
     fn agent(error: std::io::Error) -> Self {
-        tracing::warn!(error_kind = ?error.kind(), "Device registration VPN agent error");
+        let cause = crate::error::io_cause(&error);
+        tracing::warn!(cause, "Device registration VPN agent error");
         Self::unavailable("VPN provisioning is unavailable; retry registration")
     }
 }

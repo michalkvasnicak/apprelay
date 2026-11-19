@@ -1,15 +1,18 @@
 #[cfg(unix)]
-fn main() -> std::io::Result<()> {
-    let _sentry = apprelay_server::telemetry::init("server")?;
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(run())
-        .inspect_err(|_| apprelay_server::telemetry::report("HTTP server terminated with an error"))
+use apprelay_server::error::OperationError;
+
+#[cfg(unix)]
+fn main() -> std::process::ExitCode {
+    apprelay_server::telemetry::run_service(
+        "server",
+        "HTTP server terminated with an error",
+        tokio::runtime::Builder::new_current_thread(),
+        run(),
+    )
 }
 
 #[cfg(unix)]
-async fn run() -> std::io::Result<()> {
+async fn run() -> Result<(), OperationError> {
     use apprelay_server::{
         agent::Client,
         cleanup, db,
@@ -24,41 +27,42 @@ async fn run() -> std::io::Result<()> {
         signal::unix::{SignalKind, signal},
     };
 
-    let app_key = http::AppKey::from_env()?;
-    let https_proxy = http::HttpsProxy::from_env()?;
-    let registration_limiter = http::RegistrationRateLimiter::from_env().await?;
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
+    let app_key = http::AppKey::from_env().map_err(OperationError::at("configure_app_key"))?;
+    let https_proxy =
+        http::HttpsProxy::from_env().map_err(OperationError::at("configure_https_proxy"))?;
+    let registration_limiter = http::RegistrationRateLimiter::from_env()
+        .await
+        .map_err(OperationError::at("configure_registration_rate_limit"))?;
+    let mut interrupt =
+        signal(SignalKind::interrupt()).map_err(OperationError::at("register_sigint"))?;
+    let mut terminate =
+        signal(SignalKind::terminate()).map_err(OperationError::at("register_sigterm"))?;
     let lifetime_seconds = std::env::var("APPRELAY_DEVICE_LIFETIME_SECONDS")
         .or_else(|error| match error {
             std::env::VarError::NotPresent => Ok("604800".to_owned()),
             error => Err(error),
         })
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?
+        .map_err(OperationError::at("read_device_lifetime"))?
         .parse::<std::num::NonZeroU32>()
-        .map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "APPRELAY_DEVICE_LIFETIME_SECONDS must be a positive 32-bit integer: {error}"
-                ),
-            )
-        })?;
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+        .map_err(OperationError::at("parse_device_lifetime"))?;
+    let database_url =
+        std::env::var("DATABASE_URL").map_err(OperationError::at("read_database_url"))?;
     let pool = db::connect(&database_url)
         .await
-        .map_err(std::io::Error::other)?;
-    let push_tokens = PushTokenRepository::from_env(pool.clone())?;
-    let codes = PairingCodeRepository::from_env(pool.clone())?;
+        .map_err(OperationError::at("connect_database"))?;
+    let push_tokens = PushTokenRepository::from_env(pool.clone())
+        .map_err(OperationError::at("configure_push_token_repository"))?;
+    let codes = PairingCodeRepository::from_env(pool.clone())
+        .map_err(OperationError::at("configure_pairing_code_repository"))?;
     db::MIGRATOR
         .run(&pool)
         .await
-        .map_err(std::io::Error::other)?;
+        .map_err(OperationError::at("migrate_database"))?;
     let devices = DeviceRepository::new(pool.clone(), lifetime_seconds);
-    let artifacts = http::ArtifactApi::from_env(pool.clone())?;
+    let artifacts = http::ArtifactApi::from_env(pool.clone())
+        .map_err(OperationError::at("configure_artifact_api"))?;
 
-    let agent = Client::from_env()?;
+    let agent = Client::from_env().map_err(OperationError::at("configure_vpn_agent"))?;
     match agent.status().await {
         Ok(_) => tracing::info!("Connected to VPN agent"),
         Err(error) => tracing::warn!(
@@ -72,9 +76,13 @@ async fn run() -> std::io::Result<()> {
             std::env::VarError::NotPresent => Ok("127.0.0.1:8080".to_owned()),
             error => Err(error),
         })
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-    let listener = TcpListener::bind(&address).await?;
-    let listen_address = listener.local_addr()?;
+        .map_err(OperationError::at("read_http_address"))?;
+    let listener = TcpListener::bind(&address)
+        .await
+        .map_err(OperationError::at("bind_http_listener"))?;
+    let listen_address = listener
+        .local_addr()
+        .map_err(OperationError::at("read_bound_http_address"))?;
     tracing::info!(%listen_address, "HTTP server listening");
 
     let cleanup = tokio::spawn(cleanup::run(pool.clone(), agent.clone()));
@@ -115,7 +123,7 @@ async fn run() -> std::io::Result<()> {
     reconciliation.abort();
     let _ = cleanup.await;
     let _ = reconciliation.await;
-    result
+    result.map_err(OperationError::at("serve_http"))
 }
 
 #[cfg(not(unix))]

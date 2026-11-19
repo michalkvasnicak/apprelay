@@ -149,13 +149,14 @@ impl R2Storage {
         key: &str,
         size: i64,
         sha256: &str,
-    ) -> Result<Vec<u8>, StorageError> {
+    ) -> Result<Vec<u8>, crate::error::OperationError> {
+        use crate::error::OperationError;
         use base64::{Engine as _, engine::general_purpose::STANDARD};
         use ring::digest::{Context, SHA256};
 
-        let size = usize::try_from(size).map_err(|_| StorageError)?;
+        let size = usize::try_from(size).map_err(OperationError::at("signed_ipa_size"))?;
         if !(1..=100 * 1024 * 1024).contains(&size) {
-            return Err(StorageError);
+            return Err(OperationError::without_source("signed_ipa_size"));
         }
         let response = self
             .client
@@ -164,22 +165,26 @@ impl R2Storage {
             .key(key)
             .send()
             .await
-            .map_err(|_| StorageError)?;
+            .map_err(OperationError::at("signed_ipa_get_object"))?;
         if response.content_length() != Some(size as i64) {
-            return Err(StorageError);
+            return Err(OperationError::without_source("signed_ipa_content_length"));
         }
         let mut stream = response.body;
         let mut bytes = Vec::with_capacity(size);
         let mut digest = Context::new(&SHA256);
-        while let Some(chunk) = stream.try_next().await.map_err(|_| StorageError)? {
+        while let Some(chunk) = stream
+            .try_next()
+            .await
+            .map_err(OperationError::at("signed_ipa_read_body"))?
+        {
             if chunk.len() > size - bytes.len() {
-                return Err(StorageError);
+                return Err(OperationError::without_source("signed_ipa_content_length"));
             }
             digest.update(&chunk);
             bytes.extend_from_slice(&chunk);
         }
         if bytes.len() != size || STANDARD.encode(digest.finish().as_ref()) != sha256 {
-            return Err(StorageError);
+            return Err(OperationError::without_source("signed_ipa_integrity"));
         }
         Ok(bytes)
     }

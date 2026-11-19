@@ -1,4 +1,6 @@
-use std::{env, io, time::Duration};
+use std::{env, future::Future, io, process::ExitCode, time::Duration};
+
+use crate::error::OperationError;
 
 /// Emit newline-delimited application events. Dependency logs are excluded
 /// because their fields may contain SQL, payloads, or credentials.
@@ -79,9 +81,51 @@ pub fn report(message: &'static str) {
     sentry::capture_message(message, sentry::Level::Error);
 }
 
-/// Attach a code-defined failure reason without forwarding the underlying error.
-pub fn report_with_reason(message: &'static str, reason: &'static str) {
-    sentry::with_scope(|scope| scope.set_tag("reason", reason), || report(message));
+/// Report only application-defined codes, never formatted dependency errors.
+pub(crate) fn report_operation(
+    message: &'static str,
+    operation: &'static str,
+    cause: &'static str,
+) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("operation", operation);
+            scope.set_tag("cause", cause);
+        },
+        || report(message),
+    );
+}
+
+/// Run an entry point while telemetry is active, including Tokio runtime creation.
+pub fn run_service(
+    service: &'static str,
+    message: &'static str,
+    mut runtime: tokio::runtime::Builder,
+    run: impl Future<Output = Result<(), OperationError>>,
+) -> ExitCode {
+    let _sentry = match init(service) {
+        Ok(guard) => guard,
+        Err(_) => {
+            // Telemetry may not have initialized; don't print its raw error.
+            eprintln!("{service}: telemetry initialization failed");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = runtime
+        .enable_all()
+        .build()
+        .map_err(OperationError::at("build_tokio_runtime"))
+        .and_then(|runtime| runtime.block_on(run));
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let operation = error.operation;
+            let cause = error.cause_code();
+            report_operation(message, operation, cause);
+            eprintln!("{service}: {message} (operation={operation}, cause={cause})");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn setting(name: &str) -> io::Result<Option<String>> {
