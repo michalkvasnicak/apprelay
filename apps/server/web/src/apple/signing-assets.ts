@@ -34,8 +34,22 @@ export async function generateIdentity(teamId: string): Promise<SigningIdentity>
   };
 }
 
+function parseCertificate(content: string) {
+  return forge.pki.certificateFromAsn1(forge.asn1.fromDer(binary(unbase64(content))));
+}
+
+export function certificateDetails(content: string) {
+  const cert = parseCertificate(content);
+  const name = cert.subject.getField("CN")?.value;
+  return {
+    name: typeof name === "string" ? name : "Apple Development",
+    serialNumber: cert.serialNumber.toUpperCase(),
+    expiresAt: cert.validity.notAfter.getTime(),
+  };
+}
+
 export function matchingCertificate(content: string, identity: SigningIdentity): boolean {
-  const cert = forge.pki.certificateFromAsn1(forge.asn1.fromDer(binary(unbase64(content))));
+  const cert = parseCertificate(content);
   const key = forge.pki.privateKeyFromPem(identity.privateKeyPem);
   const publicKey = cert.publicKey;
   return (
@@ -50,9 +64,7 @@ export function matchingCertificate(content: string, identity: SigningIdentity):
 }
 
 export function certificateExpiry(content: string): number {
-  return forge.pki
-    .certificateFromAsn1(forge.asn1.fromDer(binary(unbase64(content))))
-    .validity.notAfter.getTime();
+  return parseCertificate(content).validity.notAfter.getTime();
 }
 
 function children(node: forge.asn1.Asn1): forge.asn1.Asn1[] {

@@ -84,27 +84,59 @@ export class DeveloperPortal {
     throw new Error("Apple collection exceeds the supported limit");
   }
 
-  async certificates(teamId: string) {
-    const query = new URLSearchParams({ teamId, "filter[certificateType]": "IOS_DEVELOPMENT" });
+  private async certificateRequest(path: string, method: "GET" | "DELETE", query: URLSearchParams) {
+    if (this.session.expiresAt !== undefined && this.session.expiresAt <= Date.now()) {
+      throw new Error("Apple session expired; sign in again");
+    }
     const response = await relay(
-      "https://developerservices2.apple.com/services/v1/certificates",
+      `https://developerservices2.apple.com/services/v1/certificates${path}`,
       "POST",
       {
         ...developerHeaders(await this.anisette.fresh(), this.session, true),
-        "X-HTTP-Method-Override": "GET",
+        "X-HTTP-Method-Override": method,
       },
       utf8(JSON.stringify({ urlEncodedQueryParams: query.toString() })),
     );
     requireSuccess(response.status);
-    const payload = this.check(record(JSON.parse(text(response.body))));
+    return response.body;
+  }
+
+  async revokeDevelopmentCertificate(teamId: string, certificateId: string) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(certificateId)) {
+      throw new Error("Invalid Apple certificate ID");
+    }
+    const body = await this.certificateRequest(
+      `/${certificateId}`,
+      "DELETE",
+      new URLSearchParams({ teamId }),
+    );
+    if (body.length) {
+      this.check(record(JSON.parse(text(body))));
+    }
+  }
+
+  async certificates(teamId: string) {
+    const query = new URLSearchParams({ teamId, "filter[certificateType]": "IOS_DEVELOPMENT" });
+    const body = await this.certificateRequest("", "GET", query);
+    const payload = this.check(record(JSON.parse(text(body))));
     if (payload.links !== undefined && record(payload.links).next) {
       throw new Error("Paginated certificate collections are not supported yet");
     }
     return array(payload.data).map((value) => {
       const cert = record(value);
-      const attributes = cert.attributes === undefined ? {} : record(cert.attributes);
-      const content = cert.certContent ?? cert.certificate ?? attributes.certificateContent;
-      return content instanceof Uint8Array ? base64(content) : base64(unbase64(string(content)));
+      const attributes = cert.attributes === undefined ? cert : record(cert.attributes);
+      const content =
+        cert.certContent ??
+        cert.certificate ??
+        attributes.certContent ??
+        attributes.certificateContent;
+      return {
+        id: string(cert.id),
+        content:
+          content instanceof Uint8Array ? base64(content) : base64(unbase64(string(content))),
+        machineName:
+          typeof attributes.machineName === "string" ? attributes.machineName : undefined,
+      };
     });
   }
 }

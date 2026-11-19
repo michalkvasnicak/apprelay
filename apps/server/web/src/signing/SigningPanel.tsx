@@ -7,6 +7,7 @@ import { trackFlowEvent } from "../analytics";
 import { Pending, Steps, buttonClass, inputClass } from "../components/forms";
 import { selectTargetDevice, type PairedDevice } from "../device";
 import { PairingError, type PairingController } from "../pairing/controller";
+import { CertificateRecovery } from "./CertificateRecovery";
 import { SignedResult, type InstallProgress } from "./SignedResult";
 import { signingController } from "./controller";
 import { useSigning } from "./hooks";
@@ -196,6 +197,7 @@ export function SigningPanel({
           Keep this page open.
         </p>
       )}
+      <CertificateRecovery />
       <details className="text-xs leading-5 text-muted">
         <summary className="cursor-pointer">Limits</summary>
         <p className="mt-2">

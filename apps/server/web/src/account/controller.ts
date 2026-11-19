@@ -3,7 +3,11 @@ import { Anisette } from "../apple/anisette";
 import { signIn, trustedDevice, type SignInResult } from "../apple/authentication";
 import { DeveloperPortal } from "../apple/developer";
 import { ensureCertificate, provisionApp } from "../apple/provisioning";
-import { certificateExpiry, matchingCertificate } from "../apple/signing-assets";
+import {
+  certificateDetails,
+  certificateExpiry,
+  matchingCertificate,
+} from "../apple/signing-assets";
 import type { Session, StoredAccount, Team } from "../apple/types";
 import { reportAppleIntegrationFailure } from "../sentry";
 import { LocalVault } from "../storage/vault";
@@ -64,13 +68,13 @@ class AccountController {
 
   // Serialize commands. Errors exposed to React/Query never contain foreign
   // causes, protocol payloads, credentials, mutation variables, or private keys.
-  private async run(message: string, operation: () => Promise<void>) {
+  private async run<T>(message: string, operation: () => Promise<T>): Promise<T> {
     if (this.busy) {
       throw new AccountError("Wait for the current operation to finish");
     }
     this.busy = true;
     try {
-      await operation();
+      return await operation();
     } catch (error) {
       if (error instanceof AccountError) {
         throw error;
@@ -274,7 +278,7 @@ class AccountController {
 
   certificate() {
     return this.run(
-      "Certificate preparation failed or is pending. The key was kept; recheck reconciles existing certificates without replaying an uncertain request. Apple quotas may require manual action",
+      "Couldn’t prepare a development certificate. If you’ve reached your certificate limit, use “Replace development certificate” below to revoke an unused one.",
       async () => {
         const portal = this.portal();
         if (!this.account || !this.vault.unlocked) {
@@ -287,6 +291,79 @@ class AccountController {
         }
         const account = this.account;
         await ensureCertificate(account, portal, () => this.vault.save(account));
+      },
+    );
+  }
+
+  private certificateAccount(teamId: string) {
+    if (!this.vault.unlocked || this.account?.teamId !== teamId) {
+      throw new AccountError("Unlock the vault and check the selected development team");
+    }
+    return this.account;
+  }
+
+  developmentCertificates(teamId: string) {
+    return this.run("Could not list development certificates for the selected team", async () => {
+      const account = this.certificateAccount(teamId);
+      const certificates = await this.portal().certificates(teamId);
+      const identity = account.identity;
+      return certificates.map(({ id, content, machineName }) => ({
+        id,
+        machineName,
+        ...certificateDetails(content),
+        matchesThisBrowser: !!identity && matchingCertificate(content, identity),
+      }));
+    });
+  }
+
+  replaceCertificate(teamId: string, certificateId: string) {
+    return this.run(
+      "Could not check the selected certificate. No revocation was attempted",
+      async () => {
+        const account = this.certificateAccount(teamId);
+        if (account.identity && account.identity.teamId !== teamId) {
+          throw new AccountError("The saved signing key belongs to a different team");
+        }
+        const portal = this.portal();
+        const selected = (await portal.certificates(teamId)).find(
+          (cert) => cert.id === certificateId,
+        );
+        if (!selected) {
+          throw new AccountError(
+            "The selected certificate is no longer listed. Reload before trying again",
+          );
+        }
+
+        let remaining: Awaited<ReturnType<DeveloperPortal["certificates"]>>;
+        try {
+          try {
+            await portal.revokeDevelopmentCertificate(teamId, selected.id);
+          } catch {
+            // A lost response does not tell us whether Apple revoked it. Only read back.
+          }
+          remaining = await portal.certificates(teamId);
+          if (remaining.some((cert) => cert.id === selected.id)) {
+            throw new Error("The revoked certificate is still listed");
+          }
+        } catch {
+          throw new AccountError(
+            "Could not confirm revocation. No replacement was requested. Reload certificates to check what Apple shows",
+          );
+        }
+
+        try {
+          const identity = account.identity;
+          if (identity && identity.certificate === selected.content) {
+            identity.certificate = undefined;
+            account.profile = undefined;
+            await this.vault.save(account);
+          }
+          await ensureCertificate(account, portal, () => this.vault.save(account), { remaining });
+        } catch {
+          throw new AccountError(
+            "The old certificate was revoked, but a replacement could not be confirmed. Recheck by trying to sign again; no request was retried automatically",
+          );
+        }
       },
     );
   }

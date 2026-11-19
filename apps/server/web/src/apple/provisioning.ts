@@ -9,6 +9,7 @@ export async function ensureCertificate(
   account: StoredAccount,
   portal: DeveloperPortal,
   save: () => Promise<void>,
+  afterRevocation?: { remaining: Awaited<ReturnType<DeveloperPortal["certificates"]>> },
 ) {
   if (!account.teamId) {
     throw new Error("Choose a development team first");
@@ -21,13 +22,15 @@ export async function ensureCertificate(
     await save(); // Persist the private key BEFORE any certificate mutation.
   }
   const identity = account.identity;
-  const find = async () =>
-    (await portal.certificates(identity.teamId)).find((cert) =>
-      matchingCertificate(cert, identity),
-    );
-  let certificate = await find();
+  const find = (certificates: Awaited<ReturnType<DeveloperPortal["certificates"]>>) =>
+    certificates.find((cert) => matchingCertificate(cert.content, identity))?.content;
+  let certificate = find(
+    afterRevocation?.remaining ?? (await portal.certificates(identity.teamId)),
+  );
   if (!certificate) {
-    if (identity.submitted) {
+    // Only the explicit replacement action can authorize another request
+    // after revocation has been verified and the saved key reconciled.
+    if (identity.submitted && !afterRevocation) {
       throw new Error(
         "The certificate request is pending or its outcome is unknown; recheck later. No new request was sent",
       );
@@ -43,12 +46,15 @@ export async function ensureCertificate(
       },
       identity.teamId,
     );
-    certificate = await find();
+    certificate = find(await portal.certificates(identity.teamId));
   }
   if (!certificate) {
     throw new Error(
       "Certificate is not visible yet; recheck later. The signing key has been preserved",
     );
+  }
+  if (identity.certificate !== certificate) {
+    account.profile = undefined;
   }
   identity.certificate = certificate;
   await save();
