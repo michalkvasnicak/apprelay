@@ -62,7 +62,7 @@ impl From<PushTokenUpdateError> for OperationError {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Debug, thiserror::Error)]
 #[error("could not remove invalid push token")]
-pub(super) struct RemovePushTokenError(#[source] sqlx::Error);
+pub(crate) struct RemovePushTokenError(#[source] sqlx::Error);
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl From<RemovePushTokenError> for OperationError {

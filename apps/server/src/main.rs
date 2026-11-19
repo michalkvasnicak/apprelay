@@ -52,8 +52,7 @@ async fn run() -> Result<(), OperationError> {
         .map_err(OperationError::at("connect_database"))?;
     let push_tokens = PushTokenRepository::from_env(pool.clone())
         .map_err(OperationError::at("configure_push_token_repository"))?;
-    let codes = PairingCodeRepository::from_env(pool.clone())
-        .map_err(OperationError::at("configure_pairing_code_repository"))?;
+    let codes = PairingCodeRepository::from_env(pool.clone())?;
     db::MIGRATOR
         .run(&pool)
         .await

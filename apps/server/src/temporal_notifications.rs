@@ -70,7 +70,7 @@ impl NotificationActivities {
                 .codes
                 .notification(notification_id)
                 .await
-                .map_err(activity_failure)?
+                .map_err(|error| activity_failure(error.into()))?
             else {
                 return Ok(());
             };
@@ -85,7 +85,7 @@ impl NotificationActivities {
                     .codes
                     .mark_sent(notification_id)
                     .await
-                    .map_err(activity_failure)?,
+                    .map_err(|error| activity_failure(error.into()))?,
                 SendOutcome::Expired => {}
                 SendOutcome::InvalidToken(invalidated_at) => {
                     if invalidated_at
@@ -94,7 +94,7 @@ impl NotificationActivities {
                         self.codes
                             .remove_invalid_token(&notification)
                             .await
-                            .map_err(activity_failure)?;
+                            .map_err(|error| activity_failure(error.into()))?;
                     }
                     return Err(ActivityError::application(
                         ApplicationFailure::non_retryable(io::Error::other(
@@ -135,7 +135,7 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
                 if !was_unavailable {
                     report_failure(
                         "Pairing notification dispatch unavailable; will retry",
-                        &error,
+                        &error.into(),
                     );
                 }
                 was_unavailable = true;
@@ -155,7 +155,7 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
                 .build(),
             );
             let result = match tokio::time::timeout(Duration::from_secs(2), start).await {
-                Ok(Ok(_)) => codes.mark_queued(notification_id).await,
+                Ok(Ok(_)) => codes.mark_queued(notification_id).await.map_err(Into::into),
                 Ok(Err(error)) => Err(OperationError::at("enqueue_pairing_notification")(error)),
                 Err(error) => Err(OperationError::at("enqueue_pairing_notification_timeout")(
                     error,
@@ -189,8 +189,7 @@ pub async fn run_worker() -> Result<(), OperationError> {
     let pool = db::connect(&database_url)
         .await
         .map_err(OperationError::at("connect_database"))?;
-    let codes = PairingCodeRepository::from_env(pool.clone())
-        .map_err(OperationError::at("configure_pairing_code_repository"))?;
+    let codes = PairingCodeRepository::from_env(pool.clone())?;
     let apns = ApnsClient::from_env().map_err(OperationError::at("configure_apns"))?;
     db::migrate(&pool)
         .await

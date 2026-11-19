@@ -343,8 +343,11 @@ impl PairingActivities {
             let record = session
                 .run(move |pin| async move {
                     match pin {
-                        Some(pin) => codes.publish(attempt_id, device_id, pin).await,
-                        None => codes.clear(attempt_id).await,
+                        Some(pin) => codes
+                            .publish(attempt_id, device_id, pin)
+                            .await
+                            .map_err(Into::into),
+                        None => codes.clear(attempt_id).await.map_err(Into::into),
                     }
                 })
                 .await?;
@@ -368,7 +371,7 @@ impl PairingActivities {
         // Best effort on cancellation as well; expiry also handles process crashes.
         let ended =
             match tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id)).await {
-                Ok(result) => result,
+                Ok(result) => result.map_err(Into::into),
                 Err(error) => Err(OperationError::at("end_pairing_attempt_timeout")(error)),
             };
         if let Err(error) = ended {
@@ -485,8 +488,7 @@ pub async fn run_worker() -> Result<(), OperationError> {
         .await
         .map_err(OperationError::at("connect_database"))?;
     let pairings = PairingStore::from_env(pool.clone())?;
-    let codes = PairingCodeRepository::from_env(pool.clone())
-        .map_err(OperationError::at("configure_pairing_code_repository"))?;
+    let codes = PairingCodeRepository::from_env(pool.clone())?;
     db::migrate(&pool)
         .await
         .map_err(OperationError::at("migrate_database"))?;

@@ -6,6 +6,9 @@ use uuid::Uuid;
 
 use crate::{error::OperationError, secrets::SecretKey};
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use super::push_tokens::{PushTokenRepository, RemovePushTokenError};
+
 #[derive(Clone)]
 pub struct PairingCodeRepository {
     pool: PgPool,
@@ -60,26 +63,230 @@ fn associated_data(attempt: Uuid, code: Uuid, device: Uuid) -> Vec<u8> {
     data
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("could not configure pairing code encryption key")]
+pub struct PairingCodeConfigError(#[source] io::Error);
+
+impl From<PairingCodeConfigError> for OperationError {
+    fn from(error: PairingCodeConfigError) -> Self {
+        Self::at("configure_pairing_code_repository")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DecryptPairingCodeError {
+    #[error("could not decrypt stored pairing code")]
+    Decrypt(#[source] io::Error),
+    #[error("invalid stored pairing code")]
+    InvalidFormat,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PairingCodeLookupError {
+    #[error("could not start pairing code lookup")]
+    Begin(#[source] sqlx::Error),
+    #[error("could not authorize pairing code lookup")]
+    Authorize(#[source] sqlx::Error),
+    #[error("could not fetch pairing code")]
+    Fetch(#[source] sqlx::Error),
+    #[error("could not read stored device pairing code")]
+    Decrypt(#[source] DecryptPairingCodeError),
+    #[error("could not commit pairing code lookup")]
+    Commit(#[source] sqlx::Error),
+}
+
+impl From<PairingCodeLookupError> for OperationError {
+    fn from(error: PairingCodeLookupError) -> Self {
+        let operation = match &error {
+            PairingCodeLookupError::Begin(_) => "begin_pairing_code_lookup",
+            PairingCodeLookupError::Authorize(_) => "authorize_pairing_code_lookup",
+            PairingCodeLookupError::Fetch(_) => "get_pairing_code",
+            PairingCodeLookupError::Decrypt(_) => "decrypt_device_pairing_code",
+            PairingCodeLookupError::Commit(_) => "commit_pairing_code_lookup",
+        };
+        Self::at(operation)(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum BeginPairingCodeError {
+    #[error("could not start pairing attempt transaction")]
+    Begin(#[source] sqlx::Error),
+    #[error("could not lock pairing device")]
+    LockDevice(#[source] sqlx::Error),
+    #[error("pairing device is unavailable")]
+    DeviceUnavailable,
+    #[error("could not check pairing attempt owner")]
+    CheckOwner(#[source] sqlx::Error),
+    #[error("pairing ownership changed")]
+    OwnershipChanged,
+    #[error("could not insert pairing attempt")]
+    Insert(#[source] sqlx::Error),
+    #[error("pairing attempt is already active")]
+    AlreadyActive,
+    #[error("could not commit pairing attempt")]
+    Commit(#[source] sqlx::Error),
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<BeginPairingCodeError> for OperationError {
+    fn from(error: BeginPairingCodeError) -> Self {
+        let operation = match &error {
+            BeginPairingCodeError::Begin(_) => "begin_pairing_attempt_transaction",
+            BeginPairingCodeError::LockDevice(_) => "lock_pairing_code_device",
+            BeginPairingCodeError::DeviceUnavailable => "pairing_device_unavailable",
+            BeginPairingCodeError::CheckOwner(_) => "check_pairing_attempt_owner",
+            BeginPairingCodeError::OwnershipChanged => "pairing_ownership_changed",
+            BeginPairingCodeError::Insert(_) => "insert_pairing_attempt",
+            BeginPairingCodeError::AlreadyActive => "pairing_attempt_already_active",
+            BeginPairingCodeError::Commit(_) => "commit_pairing_attempt",
+        };
+        Self::at(operation)(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PublishPairingCodeError {
+    #[error("invalid pairing code")]
+    InvalidCode,
+    #[error("could not encrypt pairing code")]
+    Encrypt(#[source] io::Error),
+    #[error("could not publish pairing code")]
+    Update(#[source] sqlx::Error),
+    #[error("pairing attempt is unavailable")]
+    AttemptUnavailable,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<PublishPairingCodeError> for OperationError {
+    fn from(error: PublishPairingCodeError) -> Self {
+        let operation = match &error {
+            PublishPairingCodeError::InvalidCode => "invalid_pairing_code",
+            PublishPairingCodeError::Encrypt(_) => "encrypt_pairing_code",
+            PublishPairingCodeError::Update(_) => "publish_pairing_code",
+            PublishPairingCodeError::AttemptUnavailable => "pairing_attempt_unavailable",
+        };
+        Self::at(operation)(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PairingNotificationLookupError {
+    #[error("could not start pairing notification lookup")]
+    Begin(#[source] sqlx::Error),
+    #[error("could not load pairing notification")]
+    Fetch(#[source] sqlx::Error),
+    #[error("could not load notification pairing code")]
+    FetchCode(#[source] sqlx::Error),
+    #[error("could not read stored notification pairing code")]
+    Decrypt(#[source] DecryptPairingCodeError),
+    #[error("could not load pairing push token")]
+    FetchToken(#[source] sqlx::Error),
+    #[error("could not commit pairing notification lookup")]
+    Commit(#[source] sqlx::Error),
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<PairingNotificationLookupError> for OperationError {
+    fn from(error: PairingNotificationLookupError) -> Self {
+        let operation = match &error {
+            PairingNotificationLookupError::Begin(_) => "begin_pairing_notification_lookup",
+            PairingNotificationLookupError::Fetch(_) => "load_pairing_notification",
+            PairingNotificationLookupError::FetchCode(_) => "load_notification_pairing_code",
+            PairingNotificationLookupError::Decrypt(_) => "decrypt_notification_pairing_code",
+            PairingNotificationLookupError::FetchToken(_) => "load_pairing_push_token",
+            PairingNotificationLookupError::Commit(_) => "commit_pairing_notification_lookup",
+        };
+        Self::at(operation)(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not clear pairing code")]
+pub(crate) struct ClearPairingCodeError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<ClearPairingCodeError> for OperationError {
+    fn from(error: ClearPairingCodeError) -> Self {
+        Self::at("clear_pairing_code")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not end pairing attempt")]
+pub(crate) struct EndPairingAttemptError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<EndPairingAttemptError> for OperationError {
+    fn from(error: EndPairingAttemptError) -> Self {
+        Self::at("end_pairing_attempt")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not load pending pairing notifications")]
+pub(crate) struct PendingPairingNotificationsError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<PendingPairingNotificationsError> for OperationError {
+    fn from(error: PendingPairingNotificationsError) -> Self {
+        Self::at("load_pending_pairing_notifications")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not mark pairing notification queued")]
+pub(crate) struct MarkPairingNotificationQueuedError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<MarkPairingNotificationQueuedError> for OperationError {
+    fn from(error: MarkPairingNotificationQueuedError) -> Self {
+        Self::at("mark_pairing_notification_queued")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not mark pairing notification sent")]
+pub(crate) struct MarkPairingNotificationSentError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<MarkPairingNotificationSentError> for OperationError {
+    fn from(error: MarkPairingNotificationSentError) -> Self {
+        Self::at("mark_pairing_notification_sent")(error)
+    }
+}
+
 impl PairingCodeRepository {
-    pub fn from_env(pool: PgPool) -> io::Result<Self> {
+    pub fn from_env(pool: PgPool) -> Result<Self, PairingCodeConfigError> {
         Ok(Self {
             pool,
-            key: SecretKey::from_env()?,
+            key: SecretKey::from_env().map_err(PairingCodeConfigError)?,
         })
     }
 
-    pub(crate) fn decrypt(&self, row: CodeRow) -> io::Result<ActiveCode> {
-        let plaintext = self.key.open(
-            &associated_data(row.id, row.code_id, row.device_id),
-            &row.nonce,
-            row.ciphertext,
-        )?;
+    pub(crate) fn decrypt(&self, row: CodeRow) -> Result<ActiveCode, DecryptPairingCodeError> {
+        let plaintext = self
+            .key
+            .open(
+                &associated_data(row.id, row.code_id, row.device_id),
+                &row.nonce,
+                row.ciphertext,
+            )
+            .map_err(DecryptPairingCodeError::Decrypt)?;
         if plaintext.len() != 6 || !plaintext.iter().all(u8::is_ascii_digit) {
-            return Err(io::Error::other("invalid stored pairing code"));
+            return Err(DecryptPairingCodeError::InvalidFormat);
         }
         Ok(ActiveCode {
             code: String::from_utf8(plaintext.to_vec())
-                .map_err(|_| io::Error::other("invalid stored pairing code"))?,
+                .map_err(|_| DecryptPairingCodeError::InvalidFormat)?,
             expires_at: row.expires_at,
         })
     }
@@ -88,12 +295,12 @@ impl PairingCodeRepository {
         &self,
         device_id: Uuid,
         credential_hash: &[u8; 32],
-    ) -> Result<CodeLookup, OperationError> {
+    ) -> Result<CodeLookup, PairingCodeLookupError> {
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(OperationError::at("begin_pairing_code_lookup"))?;
+            .map_err(PairingCodeLookupError::Begin)?;
         let authorized = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM devices WHERE id = $1 AND bearer_token_hash = $2
              AND expires_at > clock_timestamp() FOR SHARE",
@@ -102,7 +309,7 @@ impl PairingCodeRepository {
         .bind(credential_hash.as_slice())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(OperationError::at("authorize_pairing_code_lookup"))?;
+        .map_err(PairingCodeLookupError::Authorize)?;
         if authorized.is_none() {
             return Ok(CodeLookup::Forbidden);
         }
@@ -116,17 +323,14 @@ impl PairingCodeRepository {
         .bind(device_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(OperationError::at("get_pairing_code"))?;
+        .map_err(PairingCodeLookupError::Fetch)?;
         let result = match row {
-            Some(row) => CodeLookup::Active(
-                self.decrypt(row)
-                    .map_err(OperationError::at("decrypt_device_pairing_code"))?,
-            ),
+            Some(row) => {
+                CodeLookup::Active(self.decrypt(row).map_err(PairingCodeLookupError::Decrypt)?)
+            }
             None => CodeLookup::Missing,
         };
-        tx.commit()
-            .await
-            .map_err(OperationError::at("commit_pairing_code_lookup"))?;
+        tx.commit().await.map_err(PairingCodeLookupError::Commit)?;
         Ok(result)
     }
 }
@@ -140,13 +344,13 @@ impl PairingCodeRepository {
         started_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
         public_attempt_id: Option<Uuid>,
-    ) -> Result<Uuid, OperationError> {
+    ) -> Result<Uuid, BeginPairingCodeError> {
         let id = Uuid::new_v4();
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(OperationError::at("begin_pairing_attempt_transaction"))?;
+            .map_err(BeginPairingCodeError::Begin)?;
         let valid = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM devices WHERE id = $1 AND expires_at = $2
              AND expires_at > clock_timestamp() FOR UPDATE",
@@ -155,9 +359,9 @@ impl PairingCodeRepository {
         .bind(device_expiry)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(OperationError::at("lock_pairing_code_device"))?;
+        .map_err(BeginPairingCodeError::LockDevice)?;
         if valid.is_none() {
-            return Err(OperationError::without_source("pairing_device_unavailable"));
+            return Err(BeginPairingCodeError::DeviceUnavailable);
         }
         let owned = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM public_pairing_attempts
@@ -168,9 +372,9 @@ impl PairingCodeRepository {
         .bind(public_attempt_id)
         .fetch_one(&mut *tx)
         .await
-        .map_err(OperationError::at("check_pairing_attempt_owner"))?;
+        .map_err(BeginPairingCodeError::CheckOwner)?;
         if owned != public_attempt_id.is_some() {
-            return Err(OperationError::without_source("pairing_ownership_changed"));
+            return Err(BeginPairingCodeError::OwnershipChanged);
         }
         let saved = sqlx::query(
             "INSERT INTO pairing_attempts
@@ -199,15 +403,11 @@ impl PairingCodeRepository {
         .bind(public_attempt_id)
         .execute(&mut *tx)
         .await
-        .map_err(OperationError::at("insert_pairing_attempt"))?;
+        .map_err(BeginPairingCodeError::Insert)?;
         if saved.rows_affected() != 1 {
-            return Err(OperationError::without_source(
-                "pairing_attempt_already_active",
-            ));
+            return Err(BeginPairingCodeError::AlreadyActive);
         }
-        tx.commit()
-            .await
-            .map_err(OperationError::at("commit_pairing_attempt"))?;
+        tx.commit().await.map_err(BeginPairingCodeError::Commit)?;
         Ok(id)
     }
 
@@ -216,9 +416,9 @@ impl PairingCodeRepository {
         attempt_id: Uuid,
         device_id: Uuid,
         pin: String,
-    ) -> Result<(), OperationError> {
+    ) -> Result<(), PublishPairingCodeError> {
         if pin.len() != 6 || !pin.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(OperationError::without_source("invalid_pairing_code"));
+            return Err(PublishPairingCodeError::InvalidCode);
         }
         let code_id = Uuid::new_v4();
         let (nonce, ciphertext) = self
@@ -227,7 +427,7 @@ impl PairingCodeRepository {
                 &associated_data(attempt_id, code_id, device_id),
                 pin.into_bytes(),
             )
-            .map_err(OperationError::at("encrypt_pairing_code"))?;
+            .map_err(PublishPairingCodeError::Encrypt)?;
         // This row is also the outbox: the notification worker discovers it
         // independently, so a crash after publication cannot lose the enqueue.
         let saved = sqlx::query(
@@ -244,16 +444,14 @@ impl PairingCodeRepository {
         .bind(ciphertext)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("publish_pairing_code"))?;
+        .map_err(PublishPairingCodeError::Update)?;
         if saved.rows_affected() != 1 {
-            return Err(OperationError::without_source(
-                "pairing_attempt_unavailable",
-            ));
+            return Err(PublishPairingCodeError::AttemptUnavailable);
         }
         Ok(())
     }
 
-    pub(crate) async fn clear(&self, attempt_id: Uuid) -> Result<(), OperationError> {
+    pub(crate) async fn clear(&self, attempt_id: Uuid) -> Result<(), ClearPairingCodeError> {
         sqlx::query(
             "UPDATE pairing_attempts SET code_id = NULL, nonce = NULL, ciphertext = NULL,
              notification_queued_at = NULL, notification_sent_at = NULL WHERE id = $1",
@@ -261,11 +459,11 @@ impl PairingCodeRepository {
         .bind(attempt_id)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("clear_pairing_code"))?;
+        .map_err(ClearPairingCodeError)?;
         Ok(())
     }
 
-    pub(crate) async fn end(&self, attempt_id: Uuid) -> Result<(), OperationError> {
+    pub(crate) async fn end(&self, attempt_id: Uuid) -> Result<(), EndPairingAttemptError> {
         sqlx::query(
             "UPDATE pairing_attempts SET ended_at = clock_timestamp(),
              code_id = NULL, nonce = NULL, ciphertext = NULL WHERE id = $1",
@@ -273,11 +471,13 @@ impl PairingCodeRepository {
         .bind(attempt_id)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("end_pairing_attempt"))?;
+        .map_err(EndPairingAttemptError)?;
         Ok(())
     }
 
-    pub(crate) async fn pending_notifications(&self) -> Result<Vec<Uuid>, OperationError> {
+    pub(crate) async fn pending_notifications(
+        &self,
+    ) -> Result<Vec<Uuid>, PendingPairingNotificationsError> {
         sqlx::query_scalar(
             "SELECT notification.id FROM pairing_attempts a
              JOIN devices d ON d.id = a.device_id
@@ -302,10 +502,13 @@ impl PairingCodeRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(OperationError::at("load_pending_pairing_notifications"))
+        .map_err(PendingPairingNotificationsError)
     }
 
-    pub(crate) async fn mark_queued(&self, notification_id: Uuid) -> Result<(), OperationError> {
+    pub(crate) async fn mark_queued(
+        &self,
+        notification_id: Uuid,
+    ) -> Result<(), MarkPairingNotificationQueuedError> {
         sqlx::query(
             "UPDATE pairing_attempts SET
                  started_notification_queued_at = CASE WHEN id = $1
@@ -322,19 +525,19 @@ impl PairingCodeRepository {
         .bind(notification_id)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("mark_pairing_notification_queued"))?;
+        .map_err(MarkPairingNotificationQueuedError)?;
         Ok(())
     }
 
     pub(crate) async fn notification(
         &self,
         notification_id: Uuid,
-    ) -> Result<Option<Notification>, OperationError> {
+    ) -> Result<Option<Notification>, PairingNotificationLookupError> {
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(OperationError::at("begin_pairing_notification_lookup"))?;
+            .map_err(PairingNotificationLookupError::Begin)?;
         let attempt = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, bool, bool)>(
             "SELECT a.id, a.device_id, notification.expires_at,
                     COALESCE(a.success_notification_id = $1, FALSE),
@@ -357,7 +560,7 @@ impl PairingCodeRepository {
         .bind(notification_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(OperationError::at("load_pairing_notification"))?;
+        .map_err(PairingNotificationLookupError::Fetch)?;
         let Some((attempt_id, device_id, expires_at, success, timed_out)) = attempt else {
             return Ok(None);
         };
@@ -376,10 +579,10 @@ impl PairingCodeRepository {
             .bind(notification_id)
             .fetch_one(&mut *tx)
             .await
-            .map_err(OperationError::at("load_notification_pairing_code"))?;
+            .map_err(PairingNotificationLookupError::FetchCode)?;
             NotificationContent::Code(
                 self.decrypt(row)
-                    .map_err(OperationError::at("decrypt_notification_pairing_code"))?,
+                    .map_err(PairingNotificationLookupError::Decrypt)?,
             )
         };
         let token = sqlx::query_as::<_, (Vec<u8>, String, DateTime<Utc>)>(
@@ -388,7 +591,7 @@ impl PairingCodeRepository {
         .bind(device_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(OperationError::at("load_pairing_push_token"))?;
+        .map_err(PairingNotificationLookupError::FetchToken)?;
         let Some((token, environment, token_updated_at)) = token else {
             return Ok(None);
         };
@@ -402,11 +605,14 @@ impl PairingCodeRepository {
         };
         tx.commit()
             .await
-            .map_err(OperationError::at("commit_pairing_notification_lookup"))?;
+            .map_err(PairingNotificationLookupError::Commit)?;
         Ok(Some(notification))
     }
 
-    pub(crate) async fn mark_sent(&self, notification_id: Uuid) -> Result<(), OperationError> {
+    pub(crate) async fn mark_sent(
+        &self,
+        notification_id: Uuid,
+    ) -> Result<(), MarkPairingNotificationSentError> {
         sqlx::query(
             "UPDATE pairing_attempts SET
                  started_notification_sent_at = CASE WHEN id = $1
@@ -423,16 +629,14 @@ impl PairingCodeRepository {
         .bind(notification_id)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("mark_pairing_notification_sent"))?;
+        .map_err(MarkPairingNotificationSentError)?;
         Ok(())
     }
 
     pub(crate) async fn remove_invalid_token(
         &self,
         notification: &Notification,
-    ) -> Result<(), OperationError> {
-        super::push_tokens::PushTokenRepository::remove_if_current(&self.pool, notification)
-            .await
-            .map_err(Into::into)
+    ) -> Result<(), RemovePushTokenError> {
+        PushTokenRepository::remove_if_current(&self.pool, notification).await
     }
 }

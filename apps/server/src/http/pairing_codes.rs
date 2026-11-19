@@ -42,7 +42,7 @@ pub(super) async fn get(
             .codes
             .for_device(device_id, &credential.hash)
             .await
-            .map_err(ApiError::Internal)?
+            .map_err(|error| ApiError::Internal(error.into()))?
         {
             CodeLookup::Forbidden => Err(ApiError::unauthorized()),
             CodeLookup::Missing => Err(ApiError::Public {
