@@ -20,7 +20,7 @@ async fn run() -> Result<(), OperationError> {
             devices::DeviceRepository, pairing_codes::PairingCodeRepository,
             push_tokens::PushTokenRepository,
         },
-        http, reconciliation,
+        http, vpn_reconciliation,
     };
     use tokio::{
         net::TcpListener,
@@ -88,8 +88,8 @@ async fn run() -> Result<(), OperationError> {
     let install_cleanup = artifacts
         .clone()
         .map(|api| tokio::spawn(api.clean_install_uploads()));
-    let attempts = db::pairing_attempts::PairingAttemptRepository::new(pool.clone());
-    let reconciliation = tokio::spawn(reconciliation::run(pool, agent.clone()));
+    let attempts = db::pairing_attempts::PairingAttemptRepository::new(pool);
+    let vpn_reconciliation = tokio::spawn(vpn_reconciliation::run(devices.clone(), agent.clone()));
     let result = axum::serve(
         listener,
         http::router(
@@ -119,9 +119,9 @@ async fn run() -> Result<(), OperationError> {
         let _ = install_cleanup.await;
     }
     cleanup.abort();
-    reconciliation.abort();
+    vpn_reconciliation.abort();
     let _ = cleanup.await;
-    let _ = reconciliation.await;
+    let _ = vpn_reconciliation.await;
     result.map_err(OperationError::at("serve_http"))
 }
 

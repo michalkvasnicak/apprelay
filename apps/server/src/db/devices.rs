@@ -367,6 +367,37 @@ impl DeviceRepository {
         .map_err(SetRemotePairingPortError)
     }
 
+    /// Walk active devices by ID without waiting on rows held by other work.
+    /// Skipped rows can be picked up on the next reconciliation sweep.
+    #[cfg(unix)]
+    pub(crate) async fn lock_next_active_for_provisioning(
+        &self,
+        after: Option<Uuid>,
+    ) -> Result<Option<LockedDevice>, LockDeviceForProvisioningError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(LockDeviceForProvisioningError::Begin)?;
+        let device = sqlx::query_as::<_, Device>(
+            "SELECT id, wireguard_public_key, created_at, expires_at, host(address) AS address
+             FROM devices
+             WHERE expires_at > statement_timestamp()
+               AND ($1::uuid IS NULL OR id > $1)
+             ORDER BY id
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED",
+        )
+        .bind(after)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(LockDeviceForProvisioningError::Lock)?;
+        Ok(device.map(|device| LockedDevice {
+            device,
+            transaction,
+        }))
+    }
+
     pub async fn lock_for_provisioning(
         &self,
         id: Uuid,

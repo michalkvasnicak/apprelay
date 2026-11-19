@@ -10,10 +10,10 @@ pub mod error;
 pub mod http;
 #[cfg(unix)]
 mod r2;
-#[cfg(unix)]
-pub mod reconciliation;
 mod secrets;
 pub mod telemetry;
+#[cfg(unix)]
+pub mod vpn_reconciliation;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod pairing;
