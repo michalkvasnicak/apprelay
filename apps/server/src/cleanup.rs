@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use tokio::time::{MissedTickBehavior, interval};
 use uuid::Uuid;
 
-use crate::agent::Client;
+use crate::vpn::agent::Client;
 
 /// Runs immediately at startup, then every minute. Failed removals remain in
 /// PostgreSQL for retry; no HTTP request is involved.

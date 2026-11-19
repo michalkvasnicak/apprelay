@@ -5,12 +5,12 @@ use std::{
 };
 
 use apprelay_server::{
-    agent::{VpnState, VpnStatus, testing::FakeAgent},
     db::{
         devices::DeviceRepository, pairing_attempts::PairingAttemptRepository,
         pairing_codes::PairingCodeRepository, push_tokens::PushTokenRepository,
     },
     http::{self, AppKey, HttpsProxy, RegistrationRateLimiter, RouterConfig},
+    vpn::agent::{VpnState, VpnStatus, testing::FakeAgent},
 };
 use axum::{
     Router,

@@ -2,7 +2,8 @@ use std::{error::Error, net::Ipv4Addr, time::Duration};
 
 use tokio::time::{MissedTickBehavior, interval};
 
-use crate::{agent::Client, db::devices::DeviceRepository};
+use super::agent::Client;
+use crate::db::devices::DeviceRepository;
 
 /// Restore active peers at startup and periodically, including when the agent
 /// restarts independently of the API. Reapplying a peer is idempotent.

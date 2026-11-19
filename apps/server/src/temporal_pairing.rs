@@ -19,7 +19,6 @@ use tokio::time::{Instant, MissedTickBehavior, interval, sleep_until};
 use uuid::Uuid;
 
 use crate::{
-    agent::{Client, VpnState},
     db::{
         self,
         devices::{DevicePeer, PairingDeviceRepository, PairingTarget},
@@ -30,6 +29,7 @@ use crate::{
     error::OperationError,
     iphone::pairing::{SetupSession, verify_saved_pairing},
     telemetry,
+    vpn::agent::{Client, VpnState},
 };
 
 const TASK_QUEUE: &str = "apprelay-pairing";

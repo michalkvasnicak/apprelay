@@ -14,13 +14,13 @@ fn main() -> std::process::ExitCode {
 #[cfg(unix)]
 async fn run() -> Result<(), OperationError> {
     use apprelay_server::{
-        agent::Client,
         cleanup, db,
         db::{
             devices::DeviceRepository, pairing_codes::PairingCodeRepository,
             push_tokens::PushTokenRepository,
         },
-        http, vpn_reconciliation,
+        http,
+        vpn::{agent::Client, reconciliation},
     };
     use tokio::{
         net::TcpListener,
@@ -89,7 +89,7 @@ async fn run() -> Result<(), OperationError> {
         .clone()
         .map(|api| tokio::spawn(api.clean_install_uploads()));
     let attempts = db::pairing_attempts::PairingAttemptRepository::new(pool);
-    let vpn_reconciliation = tokio::spawn(vpn_reconciliation::run(devices.clone(), agent.clone()));
+    let vpn_reconciliation = tokio::spawn(reconciliation::run(devices.clone(), agent.clone()));
     let result = axum::serve(
         listener,
         http::router(

@@ -11,7 +11,7 @@ use super::{
     socket::Socket,
     socket_path,
 };
-use crate::vpn::{Vpn, VpnConfig};
+use crate::vpn::wireguard::{Vpn, VpnConfig};
 
 pub async fn run() -> io::Result<()> {
     if unsafe { libc::geteuid() } != 0 {

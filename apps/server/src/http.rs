@@ -35,13 +35,13 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    agent::{Client, VpnState},
     db::{
         devices::{DeviceRepository, Registration},
         pairing_codes::PairingCodeRepository,
         push_tokens::PushTokenRepository,
     },
     error::OperationError,
+    vpn::agent::{Client, VpnState},
 };
 
 #[derive(Clone)]

@@ -5,7 +5,7 @@ fn main() -> std::process::ExitCode {
         "VPN agent terminated with an error",
         tokio::runtime::Builder::new_current_thread(),
         async {
-            apprelay_server::agent::run()
+            apprelay_server::vpn::agent::run()
                 .await
                 .map_err(apprelay_server::error::OperationError::at("run_service"))
         },

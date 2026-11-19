@@ -2,7 +2,7 @@
 
 mod support;
 
-use apprelay_server::agent::{VpnState, testing::AgentRequest};
+use apprelay_server::vpn::agent::{VpnState, testing::AgentRequest};
 use axum::{
     body::Body,
     http::{HeaderValue, StatusCode},

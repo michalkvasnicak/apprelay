@@ -13,7 +13,7 @@ use tokio::{
     time::{Interval, interval, timeout},
 };
 
-use crate::{agent::VpnStatus, error::OperationError};
+use crate::{error::OperationError, vpn::agent::VpnStatus};
 
 mod discovery;
 mod identity;
