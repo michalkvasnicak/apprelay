@@ -58,7 +58,7 @@ pub(super) async fn create(State(state): State<AppState>) -> Result<impl IntoRes
         .attempts
         .create(&credential.hash)
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|error| ApiError::Internal(error.into()))?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedAttempt {
@@ -86,7 +86,7 @@ pub(super) async fn get(
         .attempts
         .status(&token_hash(&token)?, &state.codes)
         .await
-        .map_err(ApiError::Internal)?
+        .map_err(|error| ApiError::Internal(error.into()))?
         .ok_or(ApiError::Public {
             status: StatusCode::NOT_FOUND,
             body: super::ErrorResponse::NotFound {
@@ -125,7 +125,7 @@ pub(super) async fn start(
         .attempts
         .claim(&token_hash(&request.token)?, device_id, &credential.hash)
         .await
-        .map_err(ApiError::Internal)?
+        .map_err(|error| ApiError::Internal(error.into()))?
     {
         Claim::Accepted => Ok(StatusCode::CREATED),
         Claim::Unauthorized => Err(ApiError::unauthorized()),

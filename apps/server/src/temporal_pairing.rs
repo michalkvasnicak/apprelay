@@ -189,7 +189,7 @@ impl PairingActivities {
         self.attempts
             .mark_failed(attempt)
             .await
-            .map_err(activity_failure)?;
+            .map_err(|error| activity_failure(error.into()))?;
         Ok(())
     }
 

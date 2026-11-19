@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::pairing_codes::{CodeRow, PairingCodeRepository};
+use super::pairing_codes::{CodeRow, DecryptPairingCodeError, PairingCodeRepository};
 use crate::error::OperationError;
 
 #[derive(Clone)]
@@ -72,12 +72,76 @@ pub(crate) enum Claim {
     Expired,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("could not create pairing attempt")]
+pub(crate) struct CreatePairingAttemptError(#[source] sqlx::Error);
+
+impl From<CreatePairingAttemptError> for OperationError {
+    fn from(error: CreatePairingAttemptError) -> Self {
+        Self::at("create_pairing_attempt")(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PairingAttemptStatusError {
+    #[error("could not fetch pairing attempt")]
+    Fetch(#[source] sqlx::Error),
+    #[error("could not decrypt pairing attempt code")]
+    Decrypt(#[source] DecryptPairingCodeError),
+}
+
+impl From<PairingAttemptStatusError> for OperationError {
+    fn from(error: PairingAttemptStatusError) -> Self {
+        let operation = match &error {
+            PairingAttemptStatusError::Fetch(_) => "get_pairing_attempt",
+            PairingAttemptStatusError::Decrypt(_) => "decrypt_pairing_attempt_code",
+        };
+        Self::at(operation)(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PairingAttemptClaimError {
+    #[error("could not start pairing attempt claim")]
+    Begin(#[source] sqlx::Error),
+    #[error("could not authorize pairing attempt claim")]
+    Authorize(#[source] sqlx::Error),
+    #[error("could not expire overdue device pairing attempts")]
+    ExpireOverdue(#[source] sqlx::Error),
+    #[error("could not lock pairing attempt claim")]
+    Lock(#[source] sqlx::Error),
+    #[error("could not check device pairing conflict")]
+    CheckConflict(#[source] sqlx::Error),
+    #[error("could not claim pairing attempt")]
+    Claim(#[source] sqlx::Error),
+    #[error("could not commit pairing attempt claim")]
+    Commit(#[source] sqlx::Error),
+}
+
+impl From<PairingAttemptClaimError> for OperationError {
+    fn from(error: PairingAttemptClaimError) -> Self {
+        let operation = match &error {
+            PairingAttemptClaimError::Begin(_) => "begin_pairing_attempt_claim",
+            PairingAttemptClaimError::Authorize(_) => "authorize_pairing_attempt_claim",
+            PairingAttemptClaimError::ExpireOverdue(_) => "expire_overdue_device_pairing_attempts",
+            PairingAttemptClaimError::Lock(_) => "lock_pairing_attempt_claim",
+            PairingAttemptClaimError::CheckConflict(_) => "check_device_pairing_conflict",
+            PairingAttemptClaimError::Claim(_) => "claim_pairing_attempt",
+            PairingAttemptClaimError::Commit(_) => "commit_pairing_attempt_claim",
+        };
+        Self::at(operation)(error)
+    }
+}
+
 impl PairingAttemptRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    pub(crate) async fn create(&self, hash: &[u8; 32]) -> Result<DateTime<Utc>, OperationError> {
+    pub(crate) async fn create(
+        &self,
+        hash: &[u8; 32],
+    ) -> Result<DateTime<Utc>, CreatePairingAttemptError> {
         sqlx::query_scalar(
             "INSERT INTO public_pairing_attempts (id, token_hash) VALUES ($1, $2) RETURNING expires_at",
         )
@@ -85,14 +149,14 @@ impl PairingAttemptRepository {
         .bind(hash.as_slice())
         .fetch_one(&self.pool)
         .await
-        .map_err(OperationError::at("create_pairing_attempt"))
+        .map_err(CreatePairingAttemptError)
     }
 
     pub(crate) async fn status(
         &self,
         hash: &[u8; 32],
         codes: &PairingCodeRepository,
-    ) -> Result<Option<AttemptStatus>, OperationError> {
+    ) -> Result<Option<AttemptStatus>, PairingAttemptStatusError> {
         let row = sqlx::query_as::<_, StatusRow>(
             "SELECT a.status, a.reason, a.expires_at <= statement_timestamp() AS expired,
                  a.worker_started_at IS NOT NULL AS worker_started,
@@ -114,7 +178,7 @@ impl PairingAttemptRepository {
         .bind(hash.as_slice())
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("get_pairing_attempt"))?;
+        .map_err(PairingAttemptStatusError::Fetch)?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -150,7 +214,7 @@ impl PairingAttemptRepository {
                                 ciphertext,
                                 expires_at,
                             })
-                            .map_err(OperationError::at("decrypt_pairing_attempt_code"))?;
+                            .map_err(PairingAttemptStatusError::Decrypt)?;
                         AttemptStatus::Pairing {
                             code: active.code,
                             expires_at: active.expires_at,
@@ -188,12 +252,12 @@ impl PairingAttemptRepository {
         hash: &[u8; 32],
         device_id: Uuid,
         credential_hash: &[u8; 32],
-    ) -> Result<Claim, OperationError> {
+    ) -> Result<Claim, PairingAttemptClaimError> {
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(OperationError::at("begin_pairing_attempt_claim"))?;
+            .map_err(PairingAttemptClaimError::Begin)?;
         // Device lock serializes claims for different tokens targeting one device.
         let device_expiry = sqlx::query_scalar::<_, DateTime<Utc>>(
             "SELECT expires_at FROM devices WHERE id = $1 AND bearer_token_hash = $2
@@ -203,7 +267,7 @@ impl PairingAttemptRepository {
         .bind(credential_hash.as_slice())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(OperationError::at("authorize_pairing_attempt_claim"))?;
+        .map_err(PairingAttemptClaimError::Authorize)?;
         let Some(device_expiry) = device_expiry else {
             return Ok(Claim::Unauthorized);
         };
@@ -214,7 +278,7 @@ impl PairingAttemptRepository {
         .bind(device_id)
         .execute(&mut *tx)
         .await
-        .map_err(OperationError::at("expire_overdue_device_pairing_attempts"))?;
+        .map_err(PairingAttemptClaimError::ExpireOverdue)?;
         let row = sqlx::query_as::<_, (Option<Uuid>, String, bool, Option<DateTime<Utc>>)>(
             "SELECT device_id, status, expires_at <= clock_timestamp(), device_expires_at
              FROM public_pairing_attempts WHERE token_hash = $1 FOR UPDATE",
@@ -222,7 +286,7 @@ impl PairingAttemptRepository {
         .bind(hash.as_slice())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(OperationError::at("lock_pairing_attempt_claim"))?;
+        .map_err(PairingAttemptClaimError::Lock)?;
         let Some((owner, status, expired, claimed_expiry)) = row else {
             return Ok(Claim::Missing);
         };
@@ -249,7 +313,7 @@ impl PairingAttemptRepository {
         .bind(device_id)
         .fetch_one(&mut *tx)
         .await
-        .map_err(OperationError::at("check_device_pairing_conflict"))?;
+        .map_err(PairingAttemptClaimError::CheckConflict)?;
         if busy {
             return Ok(Claim::Conflict);
         }
@@ -264,10 +328,10 @@ impl PairingAttemptRepository {
         .bind(device_expiry)
         .execute(&mut *tx)
         .await
-        .map_err(OperationError::at("claim_pairing_attempt"))?;
+        .map_err(PairingAttemptClaimError::Claim)?;
         tx.commit()
             .await
-            .map_err(OperationError::at("commit_pairing_attempt_claim"))?;
+            .map_err(PairingAttemptClaimError::Commit)?;
         Ok(Claim::Accepted)
     }
 }
@@ -280,8 +344,92 @@ pub(crate) struct PendingPairingAttempt {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not mark pairing attempt failed")]
+pub(crate) struct MarkPairingAttemptFailedError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<MarkPairingAttemptFailedError> for OperationError {
+    fn from(error: MarkPairingAttemptFailedError) -> Self {
+        Self::at("mark_pairing_attempt_failed")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not mark pairing attempt started")]
+pub(crate) struct MarkPairingAttemptStartedError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<MarkPairingAttemptStartedError> for OperationError {
+    fn from(error: MarkPairingAttemptStartedError) -> Self {
+        Self::at("mark_pairing_attempt_started")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RequirePairingAttemptError {
+    #[error("could not validate pairing attempt")]
+    Validate(#[source] sqlx::Error),
+    #[error("pairing attempt is unavailable")]
+    Unavailable,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<RequirePairingAttemptError> for OperationError {
+    fn from(error: RequirePairingAttemptError) -> Self {
+        match error {
+            RequirePairingAttemptError::Validate(_) => Self::at("validate_pairing_attempt")(error),
+            RequirePairingAttemptError::Unavailable => {
+                Self::without_source("pairing_attempt_unavailable")
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not expire pairing attempts")]
+pub(crate) struct ExpirePairingAttemptsError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<ExpirePairingAttemptsError> for OperationError {
+    fn from(error: ExpirePairingAttemptsError) -> Self {
+        Self::at("expire_pairing_attempts")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not load pending pairing attempts")]
+pub(crate) struct LoadPendingPairingAttemptsError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<LoadPendingPairingAttemptsError> for OperationError {
+    fn from(error: LoadPendingPairingAttemptsError) -> Self {
+        Self::at("load_pending_pairing_attempts")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not mark pairing attempt queued")]
+pub(crate) struct MarkPairingAttemptQueuedError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<MarkPairingAttemptQueuedError> for OperationError {
+    fn from(error: MarkPairingAttemptQueuedError) -> Self {
+        Self::at("mark_pairing_attempt_queued")(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl PairingAttemptRepository {
-    pub(crate) async fn mark_failed(&self, attempt: Option<Uuid>) -> Result<(), OperationError> {
+    pub(crate) async fn mark_failed(
+        &self,
+        attempt: Option<Uuid>,
+    ) -> Result<(), MarkPairingAttemptFailedError> {
         sqlx::query(
             "UPDATE public_pairing_attempts SET status = 'failed',
              reason = CASE WHEN expires_at <= clock_timestamp() THEN 'timeout' ELSE 'pairing_failed' END
@@ -290,7 +438,7 @@ impl PairingAttemptRepository {
         .bind(attempt)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("mark_pairing_attempt_failed"))?;
+        .map_err(MarkPairingAttemptFailedError)?;
         Ok(())
     }
 
@@ -298,7 +446,7 @@ impl PairingAttemptRepository {
         &self,
         attempt_id: Uuid,
         device_id: Uuid,
-    ) -> Result<(), OperationError> {
+    ) -> Result<(), MarkPairingAttemptStartedError> {
         sqlx::query(
             "UPDATE public_pairing_attempts
              SET worker_started_at = COALESCE(worker_started_at, clock_timestamp())
@@ -309,7 +457,7 @@ impl PairingAttemptRepository {
         .bind(device_id)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("mark_pairing_attempt_started"))?;
+        .map_err(MarkPairingAttemptStartedError)?;
         Ok(())
     }
 
@@ -317,7 +465,7 @@ impl PairingAttemptRepository {
         &self,
         device: Uuid,
         attempt: Option<Uuid>,
-    ) -> Result<Option<DateTime<Utc>>, OperationError> {
+    ) -> Result<Option<DateTime<Utc>>, RequirePairingAttemptError> {
         let valid = sqlx::query_scalar::<_, DateTime<Utc>>(
             "SELECT a.expires_at FROM public_pairing_attempts a JOIN devices d ON d.id = a.device_id
                 WHERE a.device_id = $1 AND ($2::uuid IS NULL OR a.id = $2)
@@ -328,30 +476,28 @@ impl PairingAttemptRepository {
         .bind(attempt)
         .fetch_optional(&self.pool)
         .await
-        .map_err(OperationError::at("validate_pairing_attempt"))?;
+        .map_err(RequirePairingAttemptError::Validate)?;
         // CLI sessions cannot race a web-owned session.
         if valid.is_some() != attempt.is_some() {
-            return Err(OperationError::without_source(
-                "pairing_attempt_unavailable",
-            ));
+            return Err(RequirePairingAttemptError::Unavailable);
         }
         Ok(valid)
     }
 
-    pub(crate) async fn expire_overdue(&self) -> Result<(), OperationError> {
+    pub(crate) async fn expire_overdue(&self) -> Result<(), ExpirePairingAttemptsError> {
         sqlx::query(
             "UPDATE public_pairing_attempts SET status = 'expired'
              WHERE status IN ('pending', 'pairing') AND expires_at <= clock_timestamp()",
         )
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("expire_pairing_attempts"))?;
+        .map_err(ExpirePairingAttemptsError)?;
         Ok(())
     }
 
     pub(crate) async fn pending_dispatch(
         &self,
-    ) -> Result<Vec<PendingPairingAttempt>, OperationError> {
+    ) -> Result<Vec<PendingPairingAttempt>, LoadPendingPairingAttemptsError> {
         sqlx::query_as(
             "SELECT id, device_id FROM public_pairing_attempts
              WHERE status = 'pairing' AND queued_at IS NULL AND expires_at > clock_timestamp()
@@ -359,17 +505,20 @@ impl PairingAttemptRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(OperationError::at("load_pending_pairing_attempts"))
+        .map_err(LoadPendingPairingAttemptsError)
     }
 
-    pub(crate) async fn mark_queued(&self, attempt: Uuid) -> Result<(), OperationError> {
+    pub(crate) async fn mark_queued(
+        &self,
+        attempt: Uuid,
+    ) -> Result<(), MarkPairingAttemptQueuedError> {
         sqlx::query(
             "UPDATE public_pairing_attempts SET queued_at = clock_timestamp() WHERE id = $1",
         )
         .bind(attempt)
         .execute(&self.pool)
         .await
-        .map_err(OperationError::at("mark_pairing_attempt_queued"))?;
+        .map_err(MarkPairingAttemptQueuedError)?;
         Ok(())
     }
 }
