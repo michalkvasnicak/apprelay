@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Canvas, useFrame } from "@react-three/fiber/native";
+import { Canvas, useFrame, useThree } from "@react-three/fiber/native";
 import { Asset } from "expo-asset";
 import { File } from "expo-file-system";
+import { useLayoutEffect, useSyncExternalStore } from "react";
+import { AppState } from "react-native";
 import { Box3, Group, Mesh, MeshStandardMaterial, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
@@ -80,8 +82,17 @@ function setLed({ led }: Model, state: LedState, time: number) {
 }
 
 function Mini({ model, led }: { model: Model; led: LedState }) {
+  const invalidate = useThree((state) => state.invalidate);
+
+  useLayoutEffect(() => {
+    setLed(model, led, 0);
+    invalidate();
+  }, [model, led, invalidate]);
+
   useFrame(({ clock }) => {
-    setLed(model, led, clock.elapsedTime);
+    if (led === "pulsing") {
+      setLed(model, led, clock.elapsedTime);
+    }
   });
 
   return (
@@ -91,7 +102,17 @@ function Mini({ model, led }: { model: Model; led: LedState }) {
   );
 }
 
+function subscribeToAppState(onChange: () => void) {
+  const subscription = AppState.addEventListener("change", onChange);
+  return () => subscription.remove();
+}
+
+function isAppActive() {
+  return AppState.currentState === "active";
+}
+
 export function MacMini({ led }: { led: LedState }) {
+  const active = useSyncExternalStore(subscribeToAppState, isAppActive);
   const { data: model } = useQuery({
     queryKey: ["mac-mini-model"],
     queryFn: loadModel,
@@ -99,8 +120,13 @@ export function MacMini({ led }: { led: LedState }) {
     gcTime: Infinity,
   });
 
+  let frameloop: "never" | "always" | "demand" = "never";
+  if (active) {
+    frameloop = led === "pulsing" ? "always" : "demand";
+  }
+
   return (
-    <Canvas flat camera={{ position: [0, 1.6, 5], fov: 35 }}>
+    <Canvas flat frameloop={frameloop} camera={{ position: [0, 1.6, 5], fov: 35 }}>
       <hemisphereLight args={["#ffffff", "#8899aa", 1.6]} />
       <directionalLight position={[3, 5, 4]} intensity={2.5} />
       <directionalLight position={[-4, 3, 3]} intensity={1.2} />
