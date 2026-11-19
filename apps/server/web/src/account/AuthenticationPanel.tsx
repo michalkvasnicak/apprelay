@@ -49,14 +49,17 @@ function Login() {
           </Pending>
         </button>
         <div className="space-y-1.5 rounded-xl border border-text/10 bg-background/40 px-4 py-3 text-xs leading-5 text-muted">
-          <p className="font-medium text-text">Your credentials stay on this device</p>
+          <p className="font-medium text-text">How Apple sign-in works</p>
           <ul className="list-disc space-y-1 pl-4">
-            <li>Your Apple ID and password are never saved, here or on our server.</li>
-            <li>Sign-in runs in this browser; your password is not sent to AppRelay.</li>
             <li>
-              Only if you set a passphrase, your Apple session is kept encrypted in this browser.
+              Your browser uses your password to prove your identity to Apple without sending the
+              password itself. AppRelay doesn’t save it.
             </li>
-            <li>Requests to Apple pass through our relay over HTTPS, including session tokens.</li>
+            <li>
+              AppRelay relays requests to Apple over HTTPS, including your account identifier,
+              verification code, and session tokens.
+            </li>
+            <li>Set a passphrase to save your Apple session and signing assets in this browser.</li>
           </ul>
         </div>
       </fieldset>
@@ -192,7 +195,9 @@ export function AuthenticationPanel({ account }: { account: AccountSnapshot }) {
     return <TeamSelection account={account} />;
   }
   if (account.vaultExists) {
-    return <p className="text-sm text-muted">Your Apple account is saved on this device.</p>;
+    return (
+      <p className="text-sm text-muted">An encrypted Apple session is saved in this browser.</p>
+    );
   }
   return <Login />;
 }

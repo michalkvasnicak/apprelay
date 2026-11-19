@@ -30,7 +30,9 @@ export default defineConfig(({ command, mode }) => {
   return {
     appType: "mpa",
     build: {
-      rolldownOptions: { input: ["index.html", "workspace.html"] },
+      rolldownOptions: {
+        input: ["index.html", "workspace.html", "terms/index.html", "privacy/index.html"],
+      },
       // Keep fingerprinted output separate from public files with stable URLs.
       assetsDir: "assets/build",
       // Uninstrumented builds don't generate maps that could be served publicly.

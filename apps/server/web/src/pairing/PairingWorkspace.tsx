@@ -187,7 +187,7 @@ export function PairingWorkspace({
       </h2>
       {!pairingConfigured && <Alert error="Pairing is unavailable in this build." />}
       <p className="text-sm text-muted">
-        Need the app? <TestFlightInvite />
+        Pairing requires AppRelay VPN on an iPhone running iOS 27 or later. <TestFlightInvite />
       </p>
       {!active && !failed && <Guide />}
 

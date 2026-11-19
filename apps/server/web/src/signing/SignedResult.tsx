@@ -19,11 +19,11 @@ export function SignedResult({
 }) {
   const queued = progress.stage === "queued";
   const failed = progress.stage === "failed";
-  let title = "Installing…";
+  let title = "Submitting install…";
   if (queued) {
     title = "Install queued";
   } else if (failed) {
-    title = "Install failed";
+    title = "Couldn’t submit install";
   }
   return (
     <section aria-labelledby="signed-title" className="space-y-5">
@@ -52,7 +52,8 @@ export function SignedResult({
       )}
       {queued && (
         <p role="status" className="text-sm text-muted">
-          Keep your iPhone on Wi-Fi with the VPN connected until the app appears.
+          Keep your iPhone on Wi-Fi with AppRelay VPN connected while the install runs. Check your
+          Home Screen for the app.
         </p>
       )}
       {failed && <Alert error={error ?? "Could not submit the install."} />}

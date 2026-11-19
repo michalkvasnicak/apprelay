@@ -5,19 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
     <meta name="theme-color" content="#041423" />
-    <title>AppRelay — Sign iOS IPA Files in Your Browser</title>
+    <title>AppRelay — Share and Install iOS Development Builds</title>
     <meta
       name="description"
-      content="Sign an iOS IPA in your browser with AppRelay, or upload it with the @brosoft/apprelay CLI to get a share link."
+      content="Share a development IPA with the AppRelay CLI, or sign it in your browser and install it on a paired iPhone."
     />
     <link rel="canonical" href="https://apprelay.app/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="AppRelay" />
     <meta property="og:url" content="https://apprelay.app/" />
-    <meta property="og:title" content="AppRelay — Sign iOS IPA Files in Your Browser" />
+    <meta property="og:title" content="AppRelay — Share and Install iOS Development Builds" />
     <meta
       property="og:description"
-      content="Sign an iOS IPA in your browser with AppRelay, or upload it with the @brosoft/apprelay CLI to get a share link."
+      content="Share a development IPA with the AppRelay CLI, or sign it in your browser and install it on a paired iPhone."
     />
     <meta property="og:image" content="https://apprelay.app/assets/share.png" />
     <meta property="og:image:alt" content="AppRelay logo" />
@@ -27,36 +27,90 @@
     <script type="module" src="/src/home.ts"></script>
   </head>
   <body>
-    <main class="mx-auto max-w-2xl space-y-8 px-5 py-12 sm:py-20">
-      <header class="space-y-4">
-        <p class="flex items-center gap-2.5 font-semibold text-primary">
-          <img src="/assets/logo.svg" alt="" width="36" height="36" />
-          AppRelay
-        </p>
-        <h1 class="text-3xl font-bold tracking-tight sm:text-4xl">
-          Sign iOS IPA files in your browser
+    <main class="mx-auto max-w-3xl px-5 pb-10 pt-12 sm:pt-20">
+      <header class="space-y-6 text-center">
+        <img class="mx-auto" src="/assets/logo.svg" alt="" width="88" height="88" />
+        <h1 class="text-3xl font-bold tracking-tight sm:text-5xl">
+          Share iOS development builds with <span class="text-primary">AppRelay</span>.
         </h1>
         <p class="text-muted">
-          Sign in with your Apple account, pair your iPhone with AppRelay VPN, and choose an
-          <code>.ipa</code> file to sign.
+          AppRelay is open source. Upload an IPA to get a share link, or sign and install a build on
+          your own iPhone from the browser.
         </p>
-        <a
-          href="/sign"
-          class="inline-flex rounded-xl bg-primary px-4 py-2.5 font-semibold text-background"
+        <div
+          class="mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl border border-text/10 bg-text/[0.04] py-2 pl-4 pr-2 text-left"
         >
-          Open signing workspace
-        </a>
-      </header>
-      <section aria-labelledby="cli-title" class="space-y-3 rounded-2xl border border-text/10 p-5">
-        <h2 id="cli-title" class="text-xl font-semibold">Upload an IPA from the command line</h2>
+          <code class="overflow-x-auto whitespace-nowrap text-sm"
+            >npx @brosoft/apprelay app.ipa</code
+          >
+          <button
+            id="copy"
+            type="button"
+            class="cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-background"
+          >
+            Copy
+          </button>
+        </div>
         <p class="text-muted">
-          The AppRelay CLI uploads your IPA and prints a share link you can open in the signing
-          workspace. Requires Node.js 24.12 or newer.
+          or <a class="text-primary underline" href="/sign">sign and install an IPA</a>
         </p>
-        <pre
-          class="overflow-x-auto rounded-lg bg-background/70 p-3 text-sm"
-        ><code>npx @brosoft/apprelay ./MyApp.ipa</code></pre>
+      </header>
+
+      <section class="mt-16 space-y-10 sm:mt-24 sm:space-y-16" aria-label="Features">
+        <article class="rounded-3xl border border-text/10 bg-text/[0.04] p-6 sm:p-10">
+          <h2 class="text-xl font-semibold sm:text-2xl">
+            Share a build with a <span class="text-primary">link</span>.
+          </h2>
+          <p class="mt-2 text-muted">
+            Upload an <code>.ipa</code> with the CLI and send the link to your testers. Anyone with
+            the link can download the IPA, but each tester needs to sign it for their own iPhone
+            before installing it with AppRelay.
+          </p>
+        </article>
+        <article class="rounded-3xl border border-text/10 bg-text/[0.04] p-6 sm:p-10">
+          <h2 class="text-xl font-semibold sm:text-2xl">
+            <span class="text-primary">Pair your iPhone</span> to install without a Mac.
+          </h2>
+          <p class="mt-2 text-muted">
+            You’ll need an iPhone running iOS 27 or later, with Developer Mode enabled and AppRelay
+            VPN installed from TestFlight. Keep the iPhone on Wi-Fi with the VPN connected while
+            pairing and installing. No Xcode is needed to install an existing build.
+          </p>
+        </article>
+        <article class="rounded-3xl border border-text/10 bg-text/[0.04] p-6 sm:p-10">
+          <h2 class="text-xl font-semibold sm:text-2xl">
+            <span class="text-primary">Sign the app in your browser.</span>
+          </h2>
+          <p class="mt-2 text-muted">
+            Sign in with your Apple Account. You can use a free Apple development team for supported
+            builds, subject to Apple’s provisioning limits. The browser signs the IPA for your
+            paired iPhone, then uploads it so AppRelay can install it over the VPN.
+          </p>
+        </article>
+        <article class="rounded-3xl border border-text/10 bg-text/[0.04] p-6 sm:p-10">
+          <h2 class="text-xl font-semibold sm:text-2xl">
+            Built for <span class="text-primary">simple development builds</span>.
+          </h2>
+          <p class="mt-2 text-muted">
+            Signing supports IPAs up to 100 MiB compressed and 256 MiB unpacked. Apps with
+            extensions, embedded frameworks, custom capabilities, or encrypted binaries aren’t
+            supported.
+          </p>
+        </article>
       </section>
+
+      <footer
+        class="mt-16 flex flex-col items-center gap-4 border-t border-text/10 pt-8 text-sm text-muted sm:mt-24"
+      >
+        <img src="/assets/logo.svg" alt="AppRelay" width="28" height="28" />
+        <nav class="flex flex-wrap justify-center gap-x-5 gap-y-2">
+          <a class="hover:text-text" href="https://github.com/michalkvasnicak/apprelay">GitHub</a>
+          <a class="hover:text-text" href="/terms/">Terms</a>
+          <a class="hover:text-text" href="/privacy/">Privacy</a>
+          <a class="hover:text-text" href="mailto:apprelay@apprelay.app">Contact</a>
+        </nav>
+        <p>&copy; Brosoft s.r.o.</p>
+      </footer>
     </main>
   </body>
 </html>

@@ -16,7 +16,7 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
   const forget = useAccountAction(async () => {
     if (
       window.confirm(
-        "Delete the Apple session and signing assets saved on this device? This cannot be undone.",
+        "Delete the Apple session and signing assets saved in this browser? This cannot be undone.",
       )
     ) {
       await accountController.forget();
@@ -26,7 +26,7 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
   return (
     <section aria-labelledby="vault-title" className="border-t border-text/10 pt-6">
       <h3 id="vault-title" className="text-base font-semibold">
-        {account.vaultExists ? "Unlock your account" : "Protect with a passphrase"}
+        {account.vaultExists ? "Unlock saved session" : "Set a browser passphrase"}
       </h3>
       <form
         ref={form}
@@ -38,7 +38,7 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
       >
         <fieldset disabled={busy} className="space-y-4">
           <label className="block text-sm font-medium">
-            Device passphrase
+            Browser passphrase
             <input
               name="passphrase"
               type="password"
@@ -51,7 +51,8 @@ export function VaultPanel({ account }: { account: AccountSnapshot }) {
           </label>
           {!account.vaultExists && (
             <p className="text-xs text-muted">
-              At least 12 characters. Encrypts your session in this browser and can’t be recovered.
+              Use at least 12 characters. This passphrase encrypts your Apple session and signing
+              assets in this browser. AppRelay can’t recover it.
             </p>
           )}
           <button type="submit" className={buttonClass + " w-full"}>
