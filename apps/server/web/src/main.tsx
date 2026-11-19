@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import { trackPageview } from "./analytics";
 import { App } from "./App";
 import { buttonClass } from "./components/forms";
 import "./styles.css";
@@ -15,6 +16,8 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Missing application root");
 }
+
+trackPageview();
 
 createRoot(root, {
   onUncaughtError: Sentry.reactErrorHandler(),
