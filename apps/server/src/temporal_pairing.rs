@@ -28,8 +28,7 @@ use crate::{
         pairings::PairingStore,
     },
     error::OperationError,
-    pairing::Session,
-    phone::verify_saved_pairing,
+    iphone::pairing::{SetupSession, verify_saved_pairing},
     telemetry,
 };
 
@@ -312,7 +311,7 @@ impl PairingActivities {
                 .require_connected_peer(public_key)
                 .await
                 .map_err(OperationError::at("check_pairing_vpn_peer"))?;
-            let session = Session::new(&status, peer)
+            let session = SetupSession::new(&status, peer)
                 .await
                 .map_err(OperationError::at("open_pairing_session"))?;
             let code_expiry = Utc::now()
@@ -388,9 +387,6 @@ impl PairingActivities {
                     "Encrypted pairing saved; waiting for the VPN extension's port report"
                 );
                 let verify = async {
-                    let peer_key = record
-                        .peer_public_key
-                        .ok_or_else(|| OperationError::without_source("target_missing_peer_key"))?;
                     loop {
                         if let Some(port) = self
                             .pairings
@@ -406,7 +402,7 @@ impl PairingActivities {
                                     peer,
                                     port,
                                     &mut record.pairing_file,
-                                    &peer_key,
+                                    &record.peer_public_key,
                                 ),
                             )
                             .await

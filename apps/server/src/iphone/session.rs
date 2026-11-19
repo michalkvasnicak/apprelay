@@ -1,28 +1,25 @@
-//! Authenticated connections to paired iPhones and access to their services.
+//! Authenticated service connections to paired iPhones.
 
-use std::{net::Ipv4Addr, time::Duration};
+use std::net::Ipv4Addr;
 
 use idevice::{
     IdeviceError, RsdService,
-    remote_pairing::{RemotePairingClient, RpPairingFile, connect_tls_psk_tunnel_native},
+    remote_pairing::{RpPairingFile, connect_tls_psk_tunnel_native},
     rsd::RsdHandshake,
     tcp::{adapter::Adapter, handle::AdapterHandle},
 };
-use tokio::{net::TcpStream, time::timeout};
 
-use crate::{
-    error::OperationError,
-    remote_pairing_identity::{IdentitySocket, Transcript},
-};
+use super::pairing::{VerifiedPairing, connect_verified_pairing, dial_device};
+use crate::error::OperationError;
 
-pub(crate) struct VerifiedPhoneSession {
+pub(crate) struct IphoneSession {
     rsd: RsdHandshake,
     handle: AdapterHandle,
     // Keep the control connection alive while using the tunnel it opened.
-    _control: RemotePairingClient<IdentitySocket>,
+    _control: VerifiedPairing,
 }
 
-impl VerifiedPhoneSession {
+impl IphoneSession {
     pub(crate) async fn connect(
         address: Ipv4Addr,
         port: u16,
@@ -73,51 +70,4 @@ impl VerifiedPhoneSession {
     pub(crate) async fn connect_service<T: RsdService>(&mut self) -> Result<T, IdeviceError> {
         self.rsd.connect(&mut self.handle).await
     }
-}
-
-/// Confirm saved pairing credentials without opening a service tunnel.
-pub(crate) async fn verify_saved_pairing(
-    address: Ipv4Addr,
-    port: u16,
-    record: &mut RpPairingFile,
-    peer_key: &[u8; 32],
-) -> Result<(), OperationError> {
-    connect_verified_pairing(address, port, record, peer_key).await?;
-    Ok(())
-}
-
-async fn dial_device(address: Ipv4Addr, port: u16) -> Result<TcpStream, OperationError> {
-    if port == 0 {
-        return Err(OperationError::without_source("invalid-tunnel-port"));
-    }
-    timeout(Duration::from_secs(10), TcpStream::connect((address, port)))
-        .await
-        .map_err(OperationError::at("device-connect-timeout"))?
-        .map_err(OperationError::at("device-connect"))
-}
-
-async fn connect_verified_pairing(
-    address: Ipv4Addr,
-    port: u16,
-    record: &mut RpPairingFile,
-    peer_key: &[u8; 32],
-) -> Result<RemotePairingClient<IdentitySocket>, OperationError> {
-    let transcript = Transcript::default();
-    let stream = dial_device(address, port).await?;
-    let mut control = RemotePairingClient::new(
-        IdentitySocket::new(stream, transcript.clone(), false),
-        "AppRelay",
-    );
-    control
-        .attempt_pair_verify()
-        .await
-        .map_err(OperationError::at("pairing-handshake"))?;
-    control
-        .validate_pairing(record)
-        .await
-        .map_err(OperationError::at("pairing-verification"))?;
-    transcript
-        .verify(control.encryption_key(), peer_key)
-        .map_err(OperationError::at("peer-identity-verification"))?;
-    Ok(control)
 }

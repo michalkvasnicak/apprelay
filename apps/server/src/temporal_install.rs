@@ -21,8 +21,11 @@ use crate::{
     },
     error::OperationError,
     http::ArtifactApi,
-    ios_app_install::{UnpackedIpa, deliver},
-    phone::{VerifiedPhoneSession, verify_saved_pairing},
+    iphone::{
+        install::{UnpackedIpa, deliver},
+        pairing::verify_saved_pairing,
+        session::IphoneSession,
+    },
     r2::R2Storage,
     telemetry,
     temporal_pairing::{activity_failure, client, report_failure},
@@ -169,7 +172,7 @@ impl InstallActivities {
                 .to_std()
                 .map_err(OperationError::at("install_authorization_expired"))?;
             tokio::time::timeout(remaining.min(Duration::from_secs(540)), async {
-                let mut phone = VerifiedPhoneSession::connect(
+                let mut phone = IphoneSession::connect(
                     target.address,
                     target.port,
                     &mut target.record,

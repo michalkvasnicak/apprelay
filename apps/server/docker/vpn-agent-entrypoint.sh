@@ -21,7 +21,7 @@ export XTABLES_LOCKFILE=/run/apprelay/xtables.lock
 vpn_address="${APPRELAY_VPN_ADDRESS:-10.77.0.1/24}"
 vpn_address="${vpn_address%/*}"
 
-# Pairing listeners use the dedicated 50-port pool in src/pairing.rs, separate
+# Pairing listeners use the 50-port pool in src/iphone/pairing/discovery.rs, separate
 # from outbound ephemeral ports. The HTTP API uses HTTPS, not WireGuard.
 # Nothing on the VPN may reach other addresses, Docker services, another peer,
 # or the internet through forwarding.

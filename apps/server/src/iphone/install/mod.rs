@@ -9,7 +9,8 @@ use idevice::{
 use tokio::{io::AsyncReadExt, time::timeout};
 use uuid::Uuid;
 
-use crate::{error::OperationError, phone::VerifiedPhoneSession};
+use super::session::IphoneSession;
+use crate::error::OperationError;
 
 mod ipa_bundle;
 
@@ -17,7 +18,7 @@ pub(crate) use ipa_bundle::UnpackedIpa;
 
 pub(crate) async fn deliver(
     id: Uuid,
-    phone: &mut VerifiedPhoneSession,
+    phone: &mut IphoneSession,
     app: UnpackedIpa,
     expires_at: DateTime<Utc>,
 ) -> Result<(), OperationError> {

@@ -10,7 +10,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::{error::OperationError, pairing::PairingRecord, secrets::SecretKey};
+use crate::{error::OperationError, iphone::pairing::PairingRecord, secrets::SecretKey};
 
 const FORMAT_VERSION: i16 = 1;
 
@@ -26,7 +26,7 @@ struct StoredPairing<'a> {
     pairing_file: &'a [u8],
     host: StoredHost<'a>,
     peer: StoredPeer<'a>,
-    peer_public_key: Option<[u8; 32]>,
+    peer_public_key: [u8; 32],
 }
 
 #[derive(Serialize)]

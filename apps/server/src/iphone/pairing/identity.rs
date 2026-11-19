@@ -59,7 +59,7 @@ fn decrypt(
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct Transcript(Arc<Mutex<Messages>>);
+pub(super) struct Transcript(Arc<Mutex<Messages>>);
 
 #[derive(Default)]
 struct Messages {
@@ -68,7 +68,7 @@ struct Messages {
 }
 
 impl Transcript {
-    pub(crate) fn setup_public_key(&self, srp_key: &[u8]) -> Result<[u8; 32], IdeviceError> {
+    pub(super) fn setup_public_key(&self, srp_key: &[u8]) -> Result<[u8; 32], IdeviceError> {
         let messages = self.0.lock().map_err(|_| invalid())?;
         let reply = tlv(&messages.peer_reply)?;
         // PairableHost has already authenticated the phone via PIN/SRP and
@@ -85,7 +85,7 @@ impl Transcript {
             .map_err(|_| invalid())
     }
 
-    pub(crate) fn verify(&self, secret: &[u8], peer_key: &[u8; 32]) -> Result<(), IdeviceError> {
+    pub(super) fn verify(&self, secret: &[u8], peer_key: &[u8; 32]) -> Result<(), IdeviceError> {
         let messages = self.0.lock().map_err(|_| invalid())?;
         if messages.host_ephemeral.len() != 32
             || secret.len() != 32
@@ -112,7 +112,7 @@ impl Transcript {
     }
 }
 
-pub(crate) struct IdentitySocket {
+pub(super) struct IdentitySocket {
     stream: TcpStream,
     next_sequence: u64,
     transcript: Transcript,
@@ -128,7 +128,7 @@ impl std::fmt::Debug for IdentitySocket {
 }
 
 impl IdentitySocket {
-    pub(crate) fn new(stream: TcpStream, transcript: Transcript, setup: bool) -> Self {
+    pub(super) fn new(stream: TcpStream, transcript: Transcript, setup: bool) -> Self {
         Self {
             stream,
             next_sequence: 0,

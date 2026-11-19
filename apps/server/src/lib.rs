@@ -16,7 +16,7 @@ pub mod telemetry;
 pub mod vpn_reconciliation;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub mod pairing;
+mod iphone;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod temporal_pairing;
@@ -30,11 +30,5 @@ mod apns;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod vpn;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-mod ios_app_install;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-mod phone;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-mod remote_pairing_identity;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod temporal_install;
