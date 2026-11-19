@@ -7,7 +7,7 @@ import { parseArgs } from "node:util";
 
 import { createApiClient } from "./api/client.ts";
 
-const DEFAULT_SERVER = "https://apprelay.brosoft.sk";
+const DEFAULT_SERVER = "https://apprelay.app";
 const MAX_BYTES = 100 * 1024 * 1024;
 const HELP = `Usage: apprelay [--server <origin>] <file.ipa>
 

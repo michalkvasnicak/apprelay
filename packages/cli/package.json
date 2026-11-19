@@ -1,7 +1,8 @@
 {
   "name": "@brosoft/apprelay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Upload an IPA to AppRelay and print its share URL.",
+  "homepage": "https://apprelay.app",
   "license": "MIT",
   "repository": {
     "type": "git",
