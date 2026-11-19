@@ -83,7 +83,11 @@ impl RegistrationRateLimiter {
         let peer = request
             .extensions()
             .get::<ConnectInfo<SocketAddr>>()
-            .ok_or_else(|| ApiError::unavailable("client address is unavailable"))?
+            .ok_or_else(|| {
+                ApiError::Internal(crate::error::OperationError::without_source(
+                    "missing_http_connect_info",
+                ))
+            })?
             .0
             .ip()
             .to_canonical();
@@ -95,7 +99,7 @@ impl RegistrationRateLimiter {
             // Never use client-controlled forwarding headers from direct peers.
             return Ok(peer);
         }
-        let invalid = || ApiError {
+        let invalid = || ApiError::Public {
             status: StatusCode::BAD_REQUEST,
             body: super::ErrorResponse::InvalidRequest {
                 error: "trusted proxy must supply one valid CF-Connecting-IP header",
@@ -194,7 +198,7 @@ async fn limit(
     {
         Ok(Ok(None)) => Ok(next.run(request).await),
         Ok(Ok(Some(retry_after))) => {
-            let mut response = ApiError {
+            let mut response = ApiError::Public {
                 status: StatusCode::TOO_MANY_REQUESTS,
                 body: super::ErrorResponse::RateLimited {
                     error: "too many requests",
@@ -206,9 +210,7 @@ async fn limit(
                 .insert(RETRY_AFTER, retry_after.into());
             Ok(response)
         }
-        _ => {
-            tracing::error!("HTTP rate-limit Redis check failed");
-            Err(ApiError::unavailable("rate limiter is unavailable"))
-        }
+        Ok(Err(error)) => Err(ApiError::internal("check_http_rate_limit")(error)),
+        Err(error) => Err(ApiError::internal("check_http_rate_limit_timeout")(error)),
     }
 }

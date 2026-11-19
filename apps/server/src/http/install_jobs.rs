@@ -32,7 +32,7 @@ struct InstallUpload {
 }
 
 fn pairing_credential(headers: &HeaderMap) -> Result<Credential, ApiError> {
-    Credential::required(headers).map_err(|_| ApiError {
+    Credential::required(headers).map_err(|_| ApiError::Public {
         status: StatusCode::UNAUTHORIZED,
         body: ErrorResponse::PairingTokenRequired {
             error: "a valid browser pairing bearer token is required",
@@ -40,22 +40,13 @@ fn pairing_credential(headers: &HeaderMap) -> Result<Credential, ApiError> {
     })
 }
 
-fn database(_: sqlx::Error) -> ApiError {
-    ApiError::unavailable("install job database is unavailable")
-}
-
 fn missing() -> ApiError {
-    ApiError {
+    ApiError::Public {
         status: StatusCode::NOT_FOUND,
         body: ErrorResponse::NotFound {
             error: "install job or active browser pairing not found",
         },
     }
-}
-
-fn unavailable() -> ApiError {
-    // Storage errors may include presigned URLs and must not be logged.
-    ApiError::unavailable("install artifact storage is unavailable")
 }
 
 #[utoipa::path(
@@ -70,7 +61,7 @@ fn unavailable() -> ApiError {
         (status = 415, body = ErrorResponse),
         (status = 422, body = ErrorResponse),
         (status = 429, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     ),
     security(("pairing_token" = []))
 )]
@@ -80,8 +71,9 @@ pub(super) async fn create(
     request: Result<Json<CreateInstallJob>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
     let credential = pairing_credential(&headers)?;
-    let api = api.ok_or_else(unavailable)?;
-    let Json(request) = request.map_err(|error| ApiError {
+    let api =
+        api.ok_or_else(|| ApiError::internal_without_source("install_storage_not_configured"))?;
+    let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
         body: ErrorResponse::InvalidRequest {
             error: "expected size_bytes and base64 sha256",
@@ -94,7 +86,7 @@ pub(super) async fn create(
         .install_jobs
         .create(&credential.hash, id, request.size_bytes, &request.sha256)
         .await
-        .map_err(database)?
+        .map_err(ApiError::database("create_install_job"))?
         .ok_or_else(missing)?;
     let now = Utc::now();
     let seconds = (deadline - now).num_seconds().min(900);
@@ -110,7 +102,7 @@ pub(super) async fn create(
             Duration::from_secs(seconds as u64),
         )
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(ApiError::Internal)?;
 
     Ok((
         StatusCode::CREATED,
@@ -132,7 +124,7 @@ pub(super) async fn create(
         (status = 404, body = ErrorResponse),
         (status = 409, body = ErrorResponse),
         (status = 429, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     ),
     security(("pairing_token" = []))
 )]
@@ -142,12 +134,13 @@ pub(super) async fn complete(
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let credential = pairing_credential(&headers)?;
-    let api = api.ok_or_else(unavailable)?;
+    let api =
+        api.ok_or_else(|| ApiError::internal_without_source("install_storage_not_configured"))?;
     let job = api
         .install_jobs
         .find(&credential.hash, id)
         .await
-        .map_err(database)?
+        .map_err(ApiError::database("find_install_job"))?
         .ok_or_else(missing)?;
     if job.queued_at.is_some() {
         return Ok(StatusCode::ACCEPTED);
@@ -156,7 +149,7 @@ pub(super) async fn complete(
         .storage
         .verify(&object_key(id), job.size_bytes, &job.sha256)
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(ApiError::Internal)?;
     let error = match verification {
         Verification::Valid => None,
         Verification::Missing => Some("upload has not completed"),
@@ -165,7 +158,7 @@ pub(super) async fn complete(
         }
     };
     if let Some(error) = error {
-        return Err(ApiError {
+        return Err(ApiError::Public {
             status: StatusCode::CONFLICT,
             body: ErrorResponse::Conflict { error },
         });
@@ -174,7 +167,7 @@ pub(super) async fn complete(
         .install_jobs
         .queue(&credential.hash, id)
         .await
-        .map_err(database)?
+        .map_err(ApiError::database("queue_install_job"))?
     {
         return Err(missing());
     }

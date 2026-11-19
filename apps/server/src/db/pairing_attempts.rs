@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::pairing_codes::{CodeRow, PairingCodeRepository};
+use crate::error::OperationError;
 
 #[derive(Clone)]
 pub struct PairingAttemptRepository {
@@ -92,7 +93,7 @@ impl PairingAttemptRepository {
         &self,
         hash: &[u8; 32],
         codes: &PairingCodeRepository,
-    ) -> io::Result<Option<AttemptStatus>> {
+    ) -> Result<Option<AttemptStatus>, OperationError> {
         let row = sqlx::query_as::<_, StatusRow>(
             "SELECT a.status, a.reason, a.expires_at <= statement_timestamp() AS expired,
                  a.worker_started_at IS NOT NULL AS worker_started,
@@ -114,7 +115,7 @@ impl PairingAttemptRepository {
         .bind(hash.as_slice())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|_| io::Error::other("could not read pairing attempt"))?;
+        .map_err(OperationError::at("get_pairing_attempt"))?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -141,14 +142,16 @@ impl PairingAttemptRepository {
                         Some(ciphertext),
                         Some(expires_at),
                     ) => {
-                        let active = codes.decrypt(CodeRow {
-                            id,
-                            device_id,
-                            code_id,
-                            nonce,
-                            ciphertext,
-                            expires_at,
-                        })?;
+                        let active = codes
+                            .decrypt(CodeRow {
+                                id,
+                                device_id,
+                                code_id,
+                                nonce,
+                                ciphertext,
+                                expires_at,
+                            })
+                            .map_err(OperationError::at("decrypt_pairing_attempt_code"))?;
                         AttemptStatus::Pairing {
                             code: active.code,
                             expires_at: active.expires_at,

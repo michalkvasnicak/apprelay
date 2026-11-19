@@ -316,7 +316,7 @@ export interface components {
         }
       | {
           /** @enum {string} */
-          code: "service_unavailable";
+          code: "internal_server_error";
           error: string;
         }
       | {
@@ -550,8 +550,8 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      /** @description Upstream TLS, DNS, transport, encoding or response-size failure */
-      502: {
+      /** @description Internal server error */
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -559,8 +559,8 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      /** @description Proxy concurrency limit reached */
-      503: {
+      /** @description Upstream TLS, DNS, transport, encoding or response-size failure */
+      502: {
         headers: {
           [name: string]: unknown;
         };
@@ -624,7 +624,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -676,7 +676,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -722,7 +722,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -808,8 +808,8 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      /** @description Provisioning unavailable */
-      503: {
+      /** @description Internal server error */
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -905,7 +905,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -958,7 +958,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1030,7 +1030,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1074,7 +1074,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1162,7 +1162,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1222,7 +1222,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1257,7 +1257,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1303,7 +1303,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      503: {
+      500: {
         headers: {
           [name: string]: unknown;
         };

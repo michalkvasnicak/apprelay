@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::secrets::SecretKey;
+use crate::{error::OperationError, secrets::SecretKey};
 
 #[derive(Clone)]
 pub struct PairingCodeRepository {
@@ -93,8 +93,12 @@ impl PairingCodeRepository {
         &self,
         device_id: Uuid,
         credential_hash: &[u8; 32],
-    ) -> io::Result<CodeLookup> {
-        let mut tx = self.pool.begin().await.map_err(storage_error)?;
+    ) -> Result<CodeLookup, OperationError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_pairing_code_lookup"))?;
         let authorized = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM devices WHERE id = $1 AND bearer_token_hash = $2
              AND expires_at > clock_timestamp() FOR SHARE",
@@ -103,7 +107,7 @@ impl PairingCodeRepository {
         .bind(credential_hash.as_slice())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("authorize_pairing_code_lookup"))?;
         if authorized.is_none() {
             return Ok(CodeLookup::Forbidden);
         }
@@ -117,12 +121,17 @@ impl PairingCodeRepository {
         .bind(device_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("get_pairing_code"))?;
         let result = match row {
-            Some(row) => CodeLookup::Active(self.decrypt(row)?),
+            Some(row) => CodeLookup::Active(
+                self.decrypt(row)
+                    .map_err(OperationError::at("decrypt_device_pairing_code"))?,
+            ),
             None => CodeLookup::Missing,
         };
-        tx.commit().await.map_err(storage_error)?;
+        tx.commit()
+            .await
+            .map_err(OperationError::at("commit_pairing_code_lookup"))?;
         Ok(result)
     }
 }

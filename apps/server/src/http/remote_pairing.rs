@@ -22,7 +22,7 @@ pub(super) async fn put(
     request: Result<Json<RemotePairingRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
     let credential = Credential::required(&headers)?;
-    let Json(request) = request.map_err(|error| ApiError {
+    let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
         body: ErrorResponse::InvalidRequest {
             error: "expected a port between 1 and 65535",
@@ -32,10 +32,7 @@ pub(super) async fn put(
         .devices
         .set_remote_pairing_port(device_id, &credential.hash, request.port.get())
         .await
-        .map_err(|_| {
-            tracing::error!("Remote pairing port database operation failed");
-            ApiError::unavailable("remote pairing port storage is unavailable")
-        })?;
+        .map_err(ApiError::database("set_remote_pairing_port"))?;
     if !updated {
         return Err(ApiError::unauthorized());
     }

@@ -105,7 +105,6 @@ function apiFailure(stage: string, status: number): CliError {
   const hints: Record<number, string> = {
     413: "The IPA exceeds the server's size limit.",
     429: "Rate limited; wait before trying again.",
-    503: "Artifact storage is unavailable on this server.",
   };
   return new CliError(`${stage} failed (HTTP ${status}). ${hints[status] ?? "Try again later."}`);
 }

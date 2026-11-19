@@ -9,6 +9,8 @@ use aws_sdk_s3::{
     presigning::PresigningConfig,
 };
 
+use crate::error::OperationError;
+
 #[derive(Clone)]
 pub(crate) struct R2Storage {
     client: Client,
@@ -80,7 +82,7 @@ impl R2Storage {
         size: i64,
         sha256: &str,
         expires_in: Duration,
-    ) -> Result<Upload, StorageError> {
+    ) -> Result<Upload, OperationError> {
         let request = self
             .client
             .put_object()
@@ -94,9 +96,12 @@ impl R2Storage {
             .metadata("sha256", sha256)
             // A still-valid upload URL must not overwrite a completed artifact.
             .if_none_match("*")
-            .presigned(PresigningConfig::expires_in(expires_in).map_err(|_| StorageError)?)
+            .presigned(
+                PresigningConfig::expires_in(expires_in)
+                    .map_err(OperationError::at("configure_r2_upload_presign"))?,
+            )
             .await
-            .map_err(|_| StorageError)?;
+            .map_err(OperationError::at("presign_r2_upload"))?;
         let headers = request
             .headers()
             .filter(|(name, _)| !name.eq_ignore_ascii_case("host"))
@@ -113,7 +118,7 @@ impl R2Storage {
         key: &str,
         size: i64,
         sha256: &str,
-    ) -> Result<Verification, StorageError> {
+    ) -> Result<Verification, OperationError> {
         let object = match self
             .client
             .head_object()
@@ -130,7 +135,7 @@ impl R2Storage {
             {
                 return Ok(Verification::Missing);
             }
-            Err(_) => return Err(StorageError),
+            Err(error) => return Err(OperationError::at("verify_r2_upload")(error)),
         };
         let matching_checksum = object
             .metadata()
@@ -149,8 +154,7 @@ impl R2Storage {
         key: &str,
         size: i64,
         sha256: &str,
-    ) -> Result<Vec<u8>, crate::error::OperationError> {
-        use crate::error::OperationError;
+    ) -> Result<Vec<u8>, OperationError> {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
         use ring::digest::{Context, SHA256};
 
@@ -200,17 +204,17 @@ impl R2Storage {
             .map_err(|_| StorageError)
     }
 
-    pub async fn download(&self, key: &str, seconds: u64) -> Result<String, StorageError> {
+    pub async fn download(&self, key: &str, seconds: u64) -> Result<String, OperationError> {
         self.client
             .get_object()
             .bucket(&self.bucket)
             .key(key)
             .presigned(
                 PresigningConfig::expires_in(Duration::from_secs(seconds))
-                    .map_err(|_| StorageError)?,
+                    .map_err(OperationError::at("configure_r2_download_presign"))?,
             )
             .await
             .map(|request| request.uri().to_owned())
-            .map_err(|_| StorageError)
+            .map_err(OperationError::at("presign_r2_download"))
     }
 }

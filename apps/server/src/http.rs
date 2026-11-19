@@ -17,7 +17,7 @@ pub use https_proxy::HttpsProxy;
 pub use openapi::document;
 pub use rate_limit::RegistrationRateLimiter;
 
-use std::{net::Ipv4Addr, time::Instant};
+use std::{net::Ipv4Addr, sync::Arc, time::Instant};
 
 use axum::{
     Json, Router,
@@ -41,6 +41,7 @@ use crate::{
         pairing_codes::PairingCodeRepository,
         push_tokens::PushTokenRepository,
     },
+    error::OperationError,
 };
 
 #[derive(Clone)]
@@ -183,18 +184,34 @@ async fn log_request(request: Request, next: Next) -> Response {
     let started = Instant::now();
     let mut response = next.run(request).await;
     if response.status().is_server_error() {
+        let error = response.extensions_mut().remove::<Arc<OperationError>>();
+        let status = response.status();
         sentry::with_scope(
             |scope| {
-                scope.set_tag("http.status_code", response.status().as_str());
-                scope.set_fingerprint(Some(&[
-                    "http",
-                    method.as_str(),
-                    route.as_str(),
-                    response.status().as_str(),
-                ]));
+                scope.set_tag("http.status_code", status.as_str());
+                let mut fingerprint =
+                    vec!["http", method.as_str(), route.as_str(), status.as_str()];
+                if let Some(error) = &error {
+                    fingerprint.push(error.operation);
+                }
+                scope.set_fingerprint(Some(&fingerprint));
             },
-            || crate::telemetry::report("HTTP request failed"),
+            || {
+                if let Some(error) = &error {
+                    crate::telemetry::report_operation(
+                        "HTTP request failed",
+                        error.operation,
+                        error.cause_code(),
+                    );
+                } else {
+                    crate::telemetry::report("HTTP request failed");
+                }
+            },
         );
+        if status == StatusCode::INTERNAL_SERVER_ERROR && error.is_none() {
+            // Normalize framework/service 500s that bypass ApiError as well.
+            response = internal_error_response();
+        }
     }
     response
         .headers_mut()
@@ -243,7 +260,7 @@ async fn health() -> Json<Health> {
         (status = 415, description = "Expected application/json", body = ErrorResponse),
         (status = 422, description = "Invalid JSON fields", body = ErrorResponse),
         (status = 429, description = "Rate limited; see Retry-After", body = ErrorResponse),
-        (status = 503, description = "Provisioning unavailable", body = ErrorResponse)
+        (status = 500, description = "Internal server error", body = ErrorResponse)
     ),
     security(("app_key" = []))
 )]
@@ -253,13 +270,13 @@ async fn register_device(
     request: Result<Json<RegistrationRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
     let credential = auth::Credential::optional(&headers)?;
-    let Json(request) = request.map_err(|error| ApiError {
+    let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
         body: ErrorResponse::InvalidRequest {
             error: "invalid registration JSON; expected wireguard_public_key",
         },
     })?;
-    let invalid_key = || ApiError {
+    let invalid_key = || ApiError::Public {
         status: StatusCode::BAD_REQUEST,
         body: ErrorResponse::InvalidRequest {
             error: "wireguard_public_key must be a nonzero, base64-encoded 32-byte key",
@@ -276,25 +293,27 @@ async fn register_device(
         return Err(invalid_key());
     }
 
-    let status = state.agent.status().await.map_err(ApiError::agent)?;
+    let status = state
+        .agent
+        .status()
+        .await
+        .map_err(ApiError::internal("read_vpn_agent_status"))?;
     if status.state != VpnState::Running {
-        return Err(ApiError::unavailable("VPN is not running"));
+        return Err(ApiError::internal_without_source("vpn_not_running"));
     }
     let server_public_key = status
         .public_key
-        .ok_or_else(|| ApiError::unavailable("VPN public key is unavailable"))?;
+        .ok_or_else(|| ApiError::internal_without_source("vpn_public_key_missing"))?;
     if request.wireguard_public_key == server_public_key {
         return Err(invalid_key());
     }
     let subnet = Ipv4Net::new(status.address, status.prefix_len)
-        .map_err(|_| ApiError::unavailable("invalid VPN subnet"))?;
+        .map_err(ApiError::internal("parse_vpn_subnet"))?;
     if subnet.prefix_len() > 30
         || subnet.addr() == subnet.network()
         || subnet.addr() == subnet.broadcast()
     {
-        return Err(ApiError::unavailable(
-            "VPN subnet has no usable device pool",
-        ));
+        return Err(ApiError::internal_without_source("unusable_vpn_subnet"));
     }
 
     let new_credential = auth::Credential::generate()?;
@@ -307,7 +326,7 @@ async fn register_device(
             &new_credential.hash,
         )
         .await
-        .map_err(|error| ApiError::database("register_device", error))?
+        .map_err(ApiError::database("register_device"))?
     {
         Registration::Registered { device, created } => {
             let token = if created {
@@ -319,7 +338,9 @@ async fn register_device(
         }
         Registration::Unauthorized => return Err(ApiError::unauthorized()),
         Registration::Exhausted => {
-            return Err(ApiError::unavailable("VPN address pool is exhausted"));
+            return Err(ApiError::internal_without_source(
+                "vpn_address_pool_exhausted",
+            ));
         }
     };
     // The reservation above is already committed. If the agent times out or
@@ -328,45 +349,44 @@ async fn register_device(
         .devices
         .lock_for_provisioning(device.id)
         .await
-        .map_err(|error| ApiError::database("lock_device_for_provisioning", error))?
-        .ok_or_else(|| ApiError::unavailable("registration expired; retry registration"))?;
+        .map_err(ApiError::database("lock_device_for_provisioning"))?
+        .ok_or_else(|| ApiError::internal_without_source("registration_expired"))?;
     let address = locked
         .device
         .address
         .parse::<Ipv4Addr>()
-        .map_err(|_| ApiError::unavailable("device address is invalid"))?;
+        .map_err(OperationError::at("parse_reserved_device_address"))
+        .map_err(ApiError::Internal)?;
     if !subnet.contains(&address)
         || address == subnet.addr()
         || address == subnet.network()
         || address == subnet.broadcast()
     {
-        return Err(ApiError::unavailable(
-            "reserved address does not match the VPN subnet",
+        return Err(ApiError::internal_without_source(
+            "reserved_address_outside_vpn_pool",
         ));
     }
     let configured = state
         .agent
         .ensure_peer(public_key, address, locked.device.expires_at.timestamp())
         .await
-        .map_err(ApiError::agent)?;
+        .map_err(ApiError::internal("provision_vpn_peer"))?;
     if configured.state != VpnState::Running
         || configured.address != status.address
         || configured.prefix_len != status.prefix_len
         || configured.public_key.as_deref() != Some(server_public_key.as_str())
     {
-        return Err(ApiError::unavailable(
-            "VPN configuration changed; retry registration",
+        return Err(ApiError::internal_without_source(
+            "vpn_configuration_changed",
         ));
     }
     let device = locked
         .commit()
         .await
-        .map_err(|error| ApiError::database("commit_device_provisioning", error))?;
+        .map_err(ApiError::database("commit_device_provisioning"))?;
     let lifetime_seconds = device.expires_at.timestamp() - Utc::now().timestamp();
     if lifetime_seconds <= 0 {
-        return Err(ApiError::unavailable(
-            "registration expired; retry registration",
-        ));
+        return Err(ApiError::internal_without_source("registration_expired"));
     }
     Ok((
         StatusCode::CREATED,
@@ -393,7 +413,7 @@ enum ErrorResponse {
     AppKeyRequired { error: &'static str },
     DeviceTokenRequired { error: &'static str },
     PairingTokenRequired { error: &'static str },
-    ServiceUnavailable { error: &'static str },
+    InternalServerError { error: &'static str },
     NotFound { error: &'static str },
     Conflict { error: &'static str },
     Expired { error: &'static str },
@@ -402,14 +422,17 @@ enum ErrorResponse {
     UpstreamTimeout { error: &'static str },
 }
 
-struct ApiError {
-    status: StatusCode,
-    body: ErrorResponse,
+enum ApiError {
+    Public {
+        status: StatusCode,
+        body: ErrorResponse,
+    },
+    Internal(OperationError),
 }
 
 impl ApiError {
     fn unauthorized() -> Self {
-        Self {
+        Self::Public {
             status: StatusCode::UNAUTHORIZED,
             body: ErrorResponse::DeviceTokenRequired {
                 error: "a valid device bearer token is required",
@@ -417,30 +440,42 @@ impl ApiError {
         }
     }
 
-    fn unavailable(message: &'static str) -> Self {
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            body: ErrorResponse::ServiceUnavailable { error: message },
-        }
+    fn internal<E>(operation: &'static str) -> impl FnOnce(E) -> Self
+    where
+        E: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        move |error| Self::Internal(OperationError::at(operation)(error))
     }
 
-    fn database(operation: &'static str, error: sqlx::Error) -> Self {
-        let cause = crate::error::database_cause(&error);
-        const MESSAGE: &str = "Device database operation failed";
-        tracing::error!(operation, cause, "{MESSAGE}");
-        crate::telemetry::report_operation(MESSAGE, operation, cause);
-        Self::unavailable("device database is unavailable")
+    fn internal_without_source(operation: &'static str) -> Self {
+        Self::Internal(OperationError::without_source(operation))
     }
 
-    fn agent(error: std::io::Error) -> Self {
-        let cause = crate::error::io_cause(&error);
-        tracing::warn!(cause, "Device registration VPN agent error");
-        Self::unavailable("VPN provisioning is unavailable; retry registration")
+    fn database(operation: &'static str) -> impl FnOnce(sqlx::Error) -> Self {
+        Self::internal(operation)
     }
+}
+
+fn internal_error_response() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse::InternalServerError {
+            error: "internal server error",
+        }),
+    )
+        .into_response()
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(self.body)).into_response()
+        match self {
+            Self::Public { status, body } => (status, Json(body)).into_response(),
+            Self::Internal(error) => {
+                let mut response = internal_error_response();
+                // Carry the source to the HTTP boundary, not into the response body.
+                response.extensions_mut().insert(Arc::new(error));
+                response
+            }
+        }
     }
 }

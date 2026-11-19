@@ -27,7 +27,7 @@ struct PairingCodeResponse {
         (status = 400, description = "Invalid device ID"),
         (status = 401, body = ErrorResponse),
         (status = 404, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     ),
     security(("app_key" = [], "device_token" = []))
 )]
@@ -42,10 +42,10 @@ pub(super) async fn get(
             .codes
             .for_device(device_id, &credential.hash)
             .await
-            .map_err(|_| ApiError::unavailable("pairing code storage is unavailable"))?
+            .map_err(ApiError::Internal)?
         {
             CodeLookup::Forbidden => Err(ApiError::unauthorized()),
-            CodeLookup::Missing => Err(ApiError {
+            CodeLookup::Missing => Err(ApiError::Public {
                 status: StatusCode::NOT_FOUND,
                 body: super::ErrorResponse::NotFound {
                     error: "no active pairing code",

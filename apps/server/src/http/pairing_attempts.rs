@@ -27,7 +27,7 @@ pub(super) struct StartRequest {
 }
 
 fn token_hash(token: &str) -> Result<[u8; 32], ApiError> {
-    let missing = || ApiError {
+    let missing = || ApiError::Public {
         status: StatusCode::NOT_FOUND,
         body: super::ErrorResponse::NotFound {
             error: "pairing attempt not found",
@@ -49,7 +49,7 @@ fn token_hash(token: &str) -> Result<[u8; 32], ApiError> {
     responses(
         (status = 201, body = CreatedAttempt),
         (status = 429, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     )
 )]
 pub(super) async fn create(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
@@ -58,7 +58,7 @@ pub(super) async fn create(State(state): State<AppState>) -> Result<impl IntoRes
         .attempts
         .create(&credential.hash)
         .await
-        .map_err(|error| ApiError::database("create_pairing_attempt", error))?;
+        .map_err(ApiError::database("create_pairing_attempt"))?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedAttempt {
@@ -75,7 +75,7 @@ pub(super) async fn create(State(state): State<AppState>) -> Result<impl IntoRes
         (status = 200, body = AttemptStatus),
         (status = 404, body = ErrorResponse),
         (status = 429, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     )
 )]
 pub(super) async fn get(
@@ -86,8 +86,8 @@ pub(super) async fn get(
         .attempts
         .status(&token_hash(&token)?, &state.codes)
         .await
-        .map_err(|_| ApiError::unavailable("pairing attempt status is unavailable"))?
-        .ok_or(ApiError {
+        .map_err(ApiError::Internal)?
+        .ok_or(ApiError::Public {
             status: StatusCode::NOT_FOUND,
             body: super::ErrorResponse::NotFound {
                 error: "pairing attempt not found",
@@ -105,7 +105,7 @@ pub(super) async fn get(
         (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse),
         (status = 410, body = ErrorResponse), (status = 413, body = ErrorResponse),
         (status = 415, body = ErrorResponse), (status = 422, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     ), security(("app_key" = [], "device_token" = []))
 )]
 pub(super) async fn start(
@@ -115,7 +115,7 @@ pub(super) async fn start(
     request: Result<Json<StartRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
     let credential = Credential::required(&headers)?;
-    let Json(request) = request.map_err(|error| ApiError {
+    let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
         body: super::ErrorResponse::InvalidRequest {
             error: "invalid pairing JSON; expected token",
@@ -125,23 +125,23 @@ pub(super) async fn start(
         .attempts
         .claim(&token_hash(&request.token)?, device_id, &credential.hash)
         .await
-        .map_err(|error| ApiError::database("claim_pairing_attempt", error))?
+        .map_err(ApiError::database("claim_pairing_attempt"))?
     {
         Claim::Accepted => Ok(StatusCode::CREATED),
         Claim::Unauthorized => Err(ApiError::unauthorized()),
-        Claim::Missing => Err(ApiError {
+        Claim::Missing => Err(ApiError::Public {
             status: StatusCode::NOT_FOUND,
             body: super::ErrorResponse::NotFound {
                 error: "pairing attempt not found",
             },
         }),
-        Claim::Conflict => Err(ApiError {
+        Claim::Conflict => Err(ApiError::Public {
             status: StatusCode::CONFLICT,
             body: super::ErrorResponse::Conflict {
                 error: "attempt already used or device has an active attempt",
             },
         }),
-        Claim::Expired => Err(ApiError {
+        Claim::Expired => Err(ApiError::Public {
             status: StatusCode::GONE,
             body: super::ErrorResponse::Expired {
                 error: "pairing attempt expired",

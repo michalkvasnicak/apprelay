@@ -27,7 +27,7 @@ pub(super) struct PushTokenRequest {
         (status = 413, body = ErrorResponse),
         (status = 415, body = ErrorResponse),
         (status = 422, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     ),
     security(("app_key" = [], "device_token" = []))
 )]
@@ -37,13 +37,13 @@ pub(super) async fn put(
     Path(device_id): Path<Uuid>,
     request: Result<Json<PushTokenRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
-    let Json(request) = request.map_err(|error| ApiError {
+    let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
         body: super::ErrorResponse::InvalidRequest {
             error: "invalid push token JSON; expected token",
         },
     })?;
-    let token = decode_token(&request.token).ok_or(ApiError {
+    let token = decode_token(&request.token).ok_or(ApiError::Public {
         status: StatusCode::BAD_REQUEST,
         body: super::ErrorResponse::InvalidRequest {
             error: "token must be a nonempty, even-length hexadecimal string",
@@ -60,7 +60,7 @@ pub(super) async fn put(
         (status = 204, description = "Push token removed"),
         (status = 400, description = "Invalid device ID"),
         (status = 401, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     ),
     security(("app_key" = [], "device_token" = []))
 )]
@@ -99,11 +99,7 @@ async fn update(
         .push_tokens
         .set_token(device_id, &credential.hash, token)
         .await
-        .map_err(|_| {
-            // Do not print SQL errors: constraint details may include the token.
-            tracing::error!("Push token database operation failed");
-            ApiError::unavailable("push token storage is unavailable")
-        })?;
+        .map_err(ApiError::database("set_push_token"))?;
     if !authorized {
         return Err(ApiError::unauthorized());
     }

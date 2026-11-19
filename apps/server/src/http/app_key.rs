@@ -36,7 +36,7 @@ pub(super) async fn require_app_key(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let unauthorized = || ApiError {
+    let unauthorized = || ApiError::Public {
         status: StatusCode::UNAUTHORIZED,
         body: super::ErrorResponse::AppKeyRequired {
             error: "a valid app key is required",

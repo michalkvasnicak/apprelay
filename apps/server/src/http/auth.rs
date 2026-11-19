@@ -15,9 +15,11 @@ pub(super) struct Credential {
 impl Credential {
     pub fn generate() -> Result<Self, ApiError> {
         let mut bytes = [0u8; 32];
-        SystemRandom::new()
-            .fill(&mut bytes)
-            .map_err(|_| ApiError::unavailable("could not generate device credential"))?;
+        SystemRandom::new().fill(&mut bytes).map_err(|_| {
+            ApiError::Internal(crate::error::OperationError::without_source(
+                "generate_credential",
+            ))
+        })?;
         Ok(Self::from_bytes(bytes))
     }
 

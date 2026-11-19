@@ -354,9 +354,9 @@ async fn status_failure_does_not_reserve_a_device(pool: PgPool) {
     api.agent
         .enqueue_response(Err("agent unavailable".to_owned()));
     api.register(DEVICE_KEY, None).await.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "service_unavailable",
-        "VPN provisioning is unavailable; retry registration",
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_server_error",
+        "internal server error",
     );
     assert_eq!(api.device_count().await, 0);
     assert!(matches!(
@@ -372,18 +372,18 @@ async fn stopped_or_unconfigured_vpn_does_not_reserve_a_device(pool: PgPool) {
     stopped.state = VpnState::Stopped;
     api.agent.set_status(stopped);
     api.register(DEVICE_KEY, None).await.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "service_unavailable",
-        "VPN is not running",
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_server_error",
+        "internal server error",
     );
 
     let mut missing_key = running_status();
     missing_key.public_key = None;
     api.agent.set_status(missing_key);
     api.register(DEVICE_KEY, None).await.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "service_unavailable",
-        "VPN public key is unavailable",
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_server_error",
+        "internal server error",
     );
     assert_eq!(api.device_count().await, 0);
 }
@@ -391,20 +391,20 @@ async fn stopped_or_unconfigured_vpn_does_not_reserve_a_device(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn unusable_vpn_subnets_do_not_reserve_devices(pool: PgPool) {
     let api = TestApi::new(pool).await;
-    for (address, prefix, message) in [
-        ([10, 77, 0, 1], 33, "invalid VPN subnet"),
-        ([10, 77, 0, 1], 31, "VPN subnet has no usable device pool"),
-        ([10, 77, 0, 0], 24, "VPN subnet has no usable device pool"),
-        ([10, 77, 0, 255], 24, "VPN subnet has no usable device pool"),
+    for (address, prefix) in [
+        ([10, 77, 0, 1], 33),
+        ([10, 77, 0, 1], 31),
+        ([10, 77, 0, 0], 24),
+        ([10, 77, 0, 255], 24),
     ] {
         let mut status = running_status();
         status.address = address.into();
         status.prefix_len = prefix;
         api.agent.set_status(status);
         api.register(DEVICE_KEY, None).await.assert_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "service_unavailable",
-            message,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_server_error",
+            "internal server error",
         );
     }
     assert_eq!(api.device_count().await, 0);
@@ -419,9 +419,9 @@ async fn exhausted_address_pool_does_not_insert_another_device(pool: PgPool) {
     let first = api.register(DEVICE_KEY, None).await.registration();
     assert_eq!(first.address, "10.77.0.2/32");
     api.register([2; 32], None).await.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "service_unavailable",
-        "VPN address pool is exhausted",
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_server_error",
+        "internal server error",
     );
     assert_eq!(api.device_count().await, 1);
     assert_eq!(api.agent.requests().len(), 3);
@@ -434,9 +434,9 @@ async fn provisioning_failure_keeps_the_reservation_out_of_the_address_pool(pool
     api.agent
         .enqueue_response(Err("peer provisioning failed".to_owned()));
     api.register(DEVICE_KEY, None).await.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "service_unavailable",
-        "VPN provisioning is unavailable; retry registration",
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_server_error",
+        "internal server error",
     );
     assert_eq!(api.device_count().await, 1);
     let reserved: String =
@@ -459,9 +459,9 @@ async fn detects_vpn_configuration_changes_during_provisioning(pool: PgPool) {
     changed.public_key = Some(STANDARD.encode([8; 32]));
     api.agent.enqueue_response(Ok(changed));
     api.register(DEVICE_KEY, None).await.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "service_unavailable",
-        "VPN configuration changed; retry registration",
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_server_error",
+        "internal server error",
     );
     assert_eq!(api.device_count().await, 1);
     assert_eq!(api.agent.requests().len(), 2);
@@ -477,9 +477,9 @@ async fn rejects_a_reserved_address_outside_the_current_subnet(pool: PgPool) {
     api.register(DEVICE_KEY, Some(&first.token))
         .await
         .assert_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "service_unavailable",
-            "reserved address does not match the VPN subnet",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_server_error",
+            "internal server error",
         );
     assert_eq!(
         api.stored_device(first.device_id).await.address,

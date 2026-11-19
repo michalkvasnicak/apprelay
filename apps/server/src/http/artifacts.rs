@@ -159,7 +159,7 @@ pub(super) struct ResolvedArtifact {
 }
 
 fn invalid(message: &'static str) -> ApiError {
-    ApiError {
+    ApiError::Public {
         status: StatusCode::BAD_REQUEST,
         body: ErrorResponse::InvalidRequest { error: message },
     }
@@ -180,21 +180,12 @@ pub(super) fn validate_upload(size_bytes: i64, sha256: &str) -> Result<(), ApiEr
 }
 
 fn missing() -> ApiError {
-    ApiError {
+    ApiError::Public {
         status: StatusCode::NOT_FOUND,
         body: ErrorResponse::NotFound {
             error: "artifact not found or expired",
         },
     }
-}
-
-fn unavailable() -> ApiError {
-    // Never log SDK errors: they can contain credentials or presigned URLs.
-    ApiError::unavailable("artifact storage is unavailable")
-}
-
-fn database(_: sqlx::Error) -> ApiError {
-    ApiError::unavailable("artifact database is unavailable")
 }
 
 #[utoipa::path(
@@ -204,15 +195,16 @@ fn database(_: sqlx::Error) -> ApiError {
         (status = 400, body = ErrorResponse),
         (status = 413, body = ErrorResponse),
         (status = 429, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     )
 )]
 pub(super) async fn create(
     State(api): State<Option<ArtifactApi>>,
     request: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let api = api.ok_or_else(unavailable)?;
-    let Json(request) = request.map_err(|error| ApiError {
+    let api =
+        api.ok_or_else(|| ApiError::internal_without_source("artifact_storage_not_configured"))?;
+    let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
         body: ErrorResponse::InvalidRequest {
             error: "expected file_name, size_bytes, and base64 sha256",
@@ -255,12 +247,12 @@ pub(super) async fn create(
             Duration::from_secs(900),
         )
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(ApiError::Internal)?;
     let expires_at = api
         .repository
         .create(&artifact, &credential.hash, api.lifetime_days)
         .await
-        .map_err(database)?;
+        .map_err(ApiError::database("create_artifact"))?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedArtifact {
@@ -282,29 +274,30 @@ pub(super) async fn create(
         (status = 404, body = ErrorResponse),
         (status = 409, body = ErrorResponse),
         (status = 429, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     )
 )]
 pub(super) async fn complete(
     State(api): State<Option<ArtifactApi>>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let api = api.ok_or_else(unavailable)?;
+    let api =
+        api.ok_or_else(|| ApiError::internal_without_source("artifact_storage_not_configured"))?;
     let artifact = api
         .repository
         .find(id)
         .await
-        .map_err(database)?
+        .map_err(ApiError::database("find_artifact"))?
         .ok_or_else(missing)?;
     match api
         .storage
         .verify(&artifact.object_key, artifact.size_bytes, &artifact.sha256)
         .await
-        .map_err(|_| unavailable())?
+        .map_err(ApiError::Internal)?
     {
         Verification::Valid => {}
         Verification::Missing => {
-            return Err(ApiError {
+            return Err(ApiError::Public {
                 status: StatusCode::CONFLICT,
                 body: ErrorResponse::Conflict {
                     error: "upload has not completed",
@@ -312,7 +305,7 @@ pub(super) async fn complete(
             });
         }
         Verification::Mismatch => {
-            return Err(ApiError {
+            return Err(ApiError::Public {
                 status: StatusCode::CONFLICT,
                 body: ErrorResponse::Conflict {
                     error: "uploaded object does not match the declared size or checksum",
@@ -320,7 +313,12 @@ pub(super) async fn complete(
             });
         }
     }
-    if !api.repository.complete(id).await.map_err(database)? {
+    if !api
+        .repository
+        .complete(id)
+        .await
+        .map_err(ApiError::database("complete_artifact"))?
+    {
         return Err(missing());
     }
     Ok(StatusCode::NO_CONTENT)
@@ -333,14 +331,15 @@ pub(super) async fn complete(
         (status = 200, body = ResolvedArtifact),
         (status = 404, body = ErrorResponse),
         (status = 429, body = ErrorResponse),
-        (status = 503, body = ErrorResponse)
+        (status = 500, body = ErrorResponse)
     )
 )]
 pub(super) async fn resolve(
     State(api): State<Option<ArtifactApi>>,
     Path(token): Path<String>,
 ) -> Result<Json<ResolvedArtifact>, ApiError> {
-    let api = api.ok_or_else(unavailable)?;
+    let api =
+        api.ok_or_else(|| ApiError::internal_without_source("artifact_storage_not_configured"))?;
     if token.len() != 43 {
         return Err(missing());
     }
@@ -354,7 +353,7 @@ pub(super) async fn resolve(
         .repository
         .resolve(&hash)
         .await
-        .map_err(database)?
+        .map_err(ApiError::database("resolve_artifact"))?
         .ok_or_else(missing)?;
     let now = Utc::now();
     let seconds = artifact
@@ -367,7 +366,7 @@ pub(super) async fn resolve(
         .storage
         .download(&artifact.object_key, seconds as u64)
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(ApiError::Internal)?;
     Ok(Json(ResolvedArtifact {
         file_name: artifact.file_name,
         size_bytes: artifact.size_bytes,

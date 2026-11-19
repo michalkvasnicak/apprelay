@@ -154,12 +154,10 @@ pub(super) fn router(proxy: HttpsProxy) -> Router<super::AppState> {
 // Acquire before reading JSON, bound upload time too, and never queue excess work.
 async fn limit_request(State(proxy): State<HttpsProxy>, request: Request, next: Next) -> Response {
     let result = async {
-        let _permit = proxy.permits.try_acquire().map_err(|_| ApiError {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            body: super::ErrorResponse::ServiceUnavailable {
-                error: "HTTPS proxy is busy; retry later",
-            },
-        })?;
+        let _permit = proxy
+            .permits
+            .try_acquire()
+            .map_err(ApiError::internal("acquire_https_proxy_permit"))?;
         timeout(REQUEST_TIMEOUT, next.run(request))
             .await
             .map_err(|_| upstream_timeout())
@@ -233,8 +231,8 @@ struct ProxyResponse {
         (status = 413, description = "Request too large", body = super::ErrorResponse),
         (status = 415, description = "Expected application/json", body = super::ErrorResponse),
         (status = 422, description = "Invalid JSON fields", body = super::ErrorResponse),
+        (status = 500, description = "Internal server error", body = super::ErrorResponse),
         (status = 502, description = "Upstream TLS, DNS, transport, encoding or response-size failure", body = super::ErrorResponse),
-        (status = 503, description = "Proxy concurrency limit reached", body = super::ErrorResponse),
         (status = 504, description = "Proxy timed out", body = super::ErrorResponse)
     )
 )]
@@ -242,7 +240,7 @@ async fn relay(
     State(proxy): State<HttpsProxy>,
     request: Result<Json<ProxyRequest>, JsonRejection>,
 ) -> Result<Json<ProxyResponse>, ApiError> {
-    let Json(request) = request.map_err(|error| ApiError {
+    let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
         body: super::ErrorResponse::InvalidRequest {
             error: "invalid HTTPS proxy JSON",
@@ -520,7 +518,7 @@ fn public_address(address: IpAddr) -> bool {
 }
 
 fn policy_error() -> ApiError {
-    ApiError {
+    ApiError::Public {
         status: StatusCode::BAD_REQUEST,
         body: super::ErrorResponse::InvalidRequest {
             error: "HTTPS proxy request violates destination, method, body or header policy",
@@ -529,7 +527,7 @@ fn policy_error() -> ApiError {
 }
 
 fn request_too_large() -> ApiError {
-    ApiError {
+    ApiError::Public {
         status: StatusCode::PAYLOAD_TOO_LARGE,
         body: super::ErrorResponse::InvalidRequest {
             error: "HTTPS proxy request is too large",
@@ -539,7 +537,7 @@ fn request_too_large() -> ApiError {
 
 fn upstream_error(upstream: &'static str, failure: &'static str) -> ApiError {
     tag_failure(upstream, failure);
-    ApiError {
+    ApiError::Public {
         status: StatusCode::BAD_GATEWAY,
         body: super::ErrorResponse::UpstreamFailure {
             error: "HTTPS proxy upstream request failed",
@@ -548,7 +546,7 @@ fn upstream_error(upstream: &'static str, failure: &'static str) -> ApiError {
 }
 
 fn upstream_timeout() -> ApiError {
-    ApiError {
+    ApiError::Public {
         status: StatusCode::GATEWAY_TIMEOUT,
         body: super::ErrorResponse::UpstreamTimeout {
             error: "HTTPS proxy request timed out",
