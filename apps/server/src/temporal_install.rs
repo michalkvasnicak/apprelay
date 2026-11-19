@@ -21,7 +21,7 @@ use crate::{
     },
     error::OperationError,
     http::ArtifactApi,
-    install::{Application, deliver},
+    ios_app_install::{UnpackedIpa, deliver},
     phone::{VerifiedPhoneSession, verify_saved_pairing},
     r2::R2Storage,
     telemetry,
@@ -160,7 +160,7 @@ impl InstallActivities {
             )
             .await
             .map_err(OperationError::at("download_signed_ipa_timeout"))??;
-            let app = tokio::task::spawn_blocking(move || Application::unpack(bytes))
+            let app = tokio::task::spawn_blocking(move || UnpackedIpa::unpack(bytes))
                 .await
                 .map_err(OperationError::at("stage_ipa_task"))??;
             // Refresh the lease after staging, then verify the connection delivery will use.

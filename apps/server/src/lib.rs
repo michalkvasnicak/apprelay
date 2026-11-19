@@ -31,7 +31,7 @@ mod apns;
 mod vpn;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod install;
+mod ios_app_install;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod peer_identity;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
