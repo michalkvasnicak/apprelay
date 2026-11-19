@@ -225,7 +225,9 @@ impl InstallJobRepository {
         &self,
         notification: &Notification,
     ) -> Result<(), OperationError> {
-        PushTokenRepository::remove_if_current(&self.pool, notification).await
+        PushTokenRepository::remove_if_current(&self.pool, notification)
+            .await
+            .map_err(Into::into)
     }
 
     pub(crate) async fn pending_dispatch(&self) -> Result<Vec<Uuid>, OperationError> {

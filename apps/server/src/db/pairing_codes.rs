@@ -431,6 +431,8 @@ impl PairingCodeRepository {
         &self,
         notification: &Notification,
     ) -> Result<(), OperationError> {
-        super::push_tokens::PushTokenRepository::remove_if_current(&self.pool, notification).await
+        super::push_tokens::PushTokenRepository::remove_if_current(&self.pool, notification)
+            .await
+            .map_err(Into::into)
     }
 }

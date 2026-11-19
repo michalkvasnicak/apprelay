@@ -7,6 +7,8 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::db::push_tokens::PushTokenUpdateError;
+
 use super::{ApiError, AppState, ErrorResponse, auth::Credential};
 
 #[derive(Deserialize, ToSchema)]
@@ -95,13 +97,13 @@ async fn update(
     token: Option<&[u8]>,
 ) -> Result<StatusCode, ApiError> {
     let credential = Credential::required(headers)?;
-    let authorized = state
+    state
         .push_tokens
         .set_token(device_id, &credential.hash, token)
         .await
-        .map_err(ApiError::Internal)?;
-    if !authorized {
-        return Err(ApiError::unauthorized());
-    }
+        .map_err(|error| match error {
+            PushTokenUpdateError::Unauthorized => ApiError::unauthorized(),
+            error => ApiError::Internal(error.into()),
+        })?;
     Ok(StatusCode::NO_CONTENT)
 }

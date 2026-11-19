@@ -29,6 +29,48 @@ pub struct PushTokenRepository {
     environment: ApnsEnvironment,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PushTokenUpdateError {
+    #[error("no active registration matches the device credential")]
+    Unauthorized,
+    #[error("could not start push token update")]
+    Begin(#[source] sqlx::Error),
+    #[error("could not authorize push token update")]
+    Authorize(#[source] sqlx::Error),
+    #[error("could not save push token")]
+    Upsert(#[source] sqlx::Error),
+    #[error("could not delete push token")]
+    Delete(#[source] sqlx::Error),
+    #[error("could not commit push token update")]
+    Commit(#[source] sqlx::Error),
+}
+
+impl From<PushTokenUpdateError> for OperationError {
+    fn from(error: PushTokenUpdateError) -> Self {
+        let operation = match &error {
+            PushTokenUpdateError::Unauthorized => "push_token_update_unauthorized",
+            PushTokenUpdateError::Begin(_) => "begin_push_token_update",
+            PushTokenUpdateError::Authorize(_) => "authorize_push_token_update",
+            PushTokenUpdateError::Upsert(_) => "upsert_push_token",
+            PushTokenUpdateError::Delete(_) => "delete_push_token",
+            PushTokenUpdateError::Commit(_) => "commit_push_token_update",
+        };
+        Self::at(operation)(error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Debug, thiserror::Error)]
+#[error("could not remove invalid push token")]
+pub(super) struct RemovePushTokenError(#[source] sqlx::Error);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl From<RemovePushTokenError> for OperationError {
+    fn from(error: RemovePushTokenError) -> Self {
+        Self::at("remove_invalid_push_token")(error)
+    }
+}
+
 impl PushTokenRepository {
     pub fn from_env(pool: PgPool) -> io::Result<Self> {
         let environment = match std::env::var("APPRELAY_APNS_ENVIRONMENT").as_deref() {
@@ -48,7 +90,7 @@ impl PushTokenRepository {
     pub(super) async fn remove_if_current(
         pool: &PgPool,
         notification: &Notification,
-    ) -> Result<(), OperationError> {
+    ) -> Result<(), RemovePushTokenError> {
         sqlx::query(
             "DELETE FROM device_push_tokens WHERE device_id = $1 AND token = $2
              AND environment = $3 AND updated_at = $4",
@@ -59,23 +101,22 @@ impl PushTokenRepository {
         .bind(notification.token_updated_at)
         .execute(pool)
         .await
-        .map_err(OperationError::at("remove_invalid_push_token"))?;
+        .map_err(RemovePushTokenError)?;
         Ok(())
     }
 
-    /// None removes the token. False means the caller does not own an active
-    /// registration. Authorization and mutation share a row lock with cleanup.
+    /// None removes the token. Authorization and mutation share a row lock with cleanup.
     pub async fn set_token(
         &self,
         device_id: Uuid,
         credential_hash: &[u8; 32],
         token: Option<&[u8]>,
-    ) -> Result<bool, OperationError> {
+    ) -> Result<(), PushTokenUpdateError> {
         let mut transaction = self
             .pool
             .begin()
             .await
-            .map_err(OperationError::at("begin_push_token_update"))?;
+            .map_err(PushTokenUpdateError::Begin)?;
         let device = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM devices
              WHERE id = $1 AND bearer_token_hash = $2
@@ -86,9 +127,9 @@ impl PushTokenRepository {
         .bind(credential_hash.as_slice())
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(OperationError::at("authorize_push_token_update"))?;
+        .map_err(PushTokenUpdateError::Authorize)?;
         if device.is_none() {
-            return Ok(false);
+            return Err(PushTokenUpdateError::Unauthorized);
         }
 
         if let Some(token) = token {
@@ -105,18 +146,18 @@ impl PushTokenRepository {
             .bind(self.environment.as_str())
             .execute(&mut *transaction)
             .await
-            .map_err(OperationError::at("upsert_push_token"))?;
+            .map_err(PushTokenUpdateError::Upsert)?;
         } else {
             sqlx::query("DELETE FROM device_push_tokens WHERE device_id = $1")
                 .bind(device_id)
                 .execute(&mut *transaction)
                 .await
-                .map_err(OperationError::at("delete_push_token"))?;
+                .map_err(PushTokenUpdateError::Delete)?;
         }
         transaction
             .commit()
             .await
-            .map_err(OperationError::at("commit_push_token_update"))?;
-        Ok(true)
+            .map_err(PushTokenUpdateError::Commit)?;
+        Ok(())
     }
 }
