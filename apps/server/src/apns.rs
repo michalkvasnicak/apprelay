@@ -133,12 +133,16 @@ impl ApnsClient {
             NotificationContent::Code(code) => (
                 "code",
                 "Pair with AppRelay",
-                format!("Enter {} to pair your device.", code.code),
+                format!(
+                    "Enter {} in Settings > General > Privacy & Security > Developer Mode > Pair with AppRelay.",
+                    code.code
+                ),
             ),
             NotificationContent::Started => (
                 "started",
                 "Pairing started",
-                "You have 60 seconds to finish pairing your device.".to_owned(),
+                "Pairing is open for up to 2 minutes. Go to Settings > General > Privacy & Security > Developer Mode and tap Pair with AppRelay."
+                    .to_owned(),
             ),
             NotificationContent::Success => (
                 "success",
@@ -148,7 +152,7 @@ impl ApnsClient {
             NotificationContent::Timeout => (
                 "timeout",
                 "Pairing failed",
-                "Pairing wasn't completed within one minute.".to_owned(),
+                "The pairing window expired. Start a new pairing to try again.".to_owned(),
             ),
             NotificationContent::Install { outcome, .. } => match outcome {
                 None => (
