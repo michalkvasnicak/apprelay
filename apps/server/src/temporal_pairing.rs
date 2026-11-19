@@ -27,7 +27,9 @@ use crate::{
         pairing_codes::PairingCodeRepository,
         pairings::PairingStore,
     },
+    error::OperationError,
     pairing::Session,
+    telemetry,
 };
 
 const TASK_QUEUE: &str = "apprelay-pairing";
@@ -150,17 +152,20 @@ impl PairAttemptWorkflow {
     }
 }
 
-fn activity_ids(input: &str) -> io::Result<(Uuid, Option<Uuid>)> {
+fn activity_ids(input: &str) -> Result<(Uuid, Option<Uuid>), ActivityError> {
     let (device, attempt) = match input.split_once('/') {
         Some((device, attempt)) => (device, Some(attempt)),
         None => (input, None),
     };
     Ok((
-        Uuid::parse_str(device).map_err(io::Error::other)?,
+        Uuid::parse_str(device)
+            .map_err(OperationError::at("parse_pairing_device_id"))
+            .map_err(activity_failure)?,
         attempt
             .map(Uuid::parse_str)
             .transpose()
-            .map_err(io::Error::other)?,
+            .map_err(OperationError::at("parse_public_pairing_attempt_id"))
+            .map_err(activity_failure)?,
     ))
 }
 
@@ -184,8 +189,8 @@ impl PairingActivities {
         self.attempts
             .mark_failed(attempt)
             .await
-            .inspect_err(|_| crate::telemetry::report("Could not finish pairing attempt"))
-            .map_err(|_| io::Error::other("could not finish pairing attempt"))?;
+            .map_err(OperationError::at("mark_pairing_attempt_failed"))
+            .map_err(activity_failure)?;
         Ok(())
     }
 
@@ -201,7 +206,7 @@ impl PairingActivities {
                 self.attempts
                     .mark_worker_started(attempt_id, device_id)
                     .await
-                    .map_err(|_| io::Error::other("could not mark pairing attempt as started"))?;
+                    .map_err(OperationError::at("mark_pairing_attempt_started"))?;
             }
             let attempt_expiry = self
                 .attempts
@@ -213,17 +218,16 @@ impl PairingActivities {
             } = self
                 .devices
                 .active_peer(device_id)
-                .await
-                .map_err(io::Error::other)?
-                .ok_or_else(|| io::Error::other("device is missing or expired"))?;
+                .await?
+                .ok_or_else(|| OperationError::without_source("pairing_device_unavailable"))?;
             let public_key: [u8; 32] = public_key
                 .try_into()
-                .map_err(|_| io::Error::other("invalid device WireGuard public key"))?;
+                .map_err(|_| OperationError::without_source("invalid_pairing_wireguard_key"))?;
             tracing::info!("Waiting for device to establish its WireGuard connection");
             let mut last_error = None;
             loop {
                 if Utc::now() >= attempt_expiry.unwrap_or(expires_at).min(expires_at) {
-                    return Err(io::Error::other("device expired while waiting for VPN"));
+                    return Err(OperationError::without_source("pairing_device_expired"));
                 }
                 match self.agent.require_connected_peer(public_key).await {
                     Ok(()) => {
@@ -272,41 +276,49 @@ impl PairingActivities {
             } = self
                 .devices
                 .pairing_target(device_id)
+                .await?
+                .ok_or_else(|| OperationError::without_source("pairing_device_unavailable"))?;
+            let peer = address
+                .parse::<Ipv4Addr>()
+                .map_err(OperationError::at("parse_pairing_device_address"))?;
+            let status = self
+                .agent
+                .status()
                 .await
-                .map_err(io::Error::other)?
-                .ok_or_else(|| io::Error::other("device is missing or expired"))?;
-            let peer = address.parse::<Ipv4Addr>().map_err(io::Error::other)?;
-            let status = self.agent.status().await?;
-            let subnet =
-                Ipv4Net::new(status.address, status.prefix_len).map_err(io::Error::other)?;
+                .map_err(OperationError::at("read_pairing_vpn_status"))?;
+            let subnet = Ipv4Net::new(status.address, status.prefix_len)
+                .map_err(OperationError::at("read_pairing_vpn_subnet"))?;
             if status.state != VpnState::Running
                 || !subnet.contains(&peer)
                 || peer == status.address
                 || peer == subnet.network()
                 || peer == subnet.broadcast()
             {
-                return Err(io::Error::other(
-                    "device address does not belong to the running VPN",
-                ));
+                return Err(OperationError::without_source("pairing_device_outside_vpn"));
             }
             let remaining = (attempt_expiry.unwrap_or(expires_at).min(expires_at) - Utc::now())
                 .to_std()
-                .map_err(io::Error::other)?;
+                .map_err(OperationError::at("pairing_lease_expired"))?;
             let lease_deadline = Instant::now() + remaining;
             // Recheck at activity execution time in case it was queued after the
             // readiness activity completed. Do not create a session for a stale peer.
             let public_key: [u8; 32] = public_key
                 .try_into()
-                .map_err(|_| io::Error::other("invalid device WireGuard public key"))?;
-            self.agent.require_connected_peer(public_key).await?;
-            let session = Session::new(&status, peer).await?;
+                .map_err(|_| OperationError::without_source("invalid_pairing_wireguard_key"))?;
+            self.agent
+                .require_connected_peer(public_key)
+                .await
+                .map_err(OperationError::at("check_pairing_vpn_peer"))?;
+            let session = Session::new(&status, peer)
+                .await
+                .map_err(OperationError::at("open_pairing_session"))?;
             let code_expiry = Utc::now()
                 + chrono::Duration::from_std(
                     deadline
                         .min(lease_deadline)
                         .saturating_duration_since(Instant::now()),
                 )
-                .map_err(io::Error::other)?;
+                .map_err(OperationError::at("compute_pairing_code_expiry"))?;
             let attempt_id = self
                 .codes
                 .begin(
@@ -334,7 +346,10 @@ impl PairingActivities {
                 .run(move |pin| async move {
                     match pin {
                         Some(pin) => codes.publish(attempt_id, device_id, pin).await,
-                        None => codes.clear(attempt_id).await,
+                        None => codes
+                            .clear(attempt_id)
+                            .await
+                            .map_err(OperationError::at("clear_pairing_code")),
                     }
                 })
                 .await?;
@@ -356,11 +371,14 @@ impl PairingActivities {
         // A crash still expires its last announcement after the ten-second DNS TTL.
         session.stop().await;
         // Best effort on cancellation as well; expiry also handles process crashes.
-        let ended = tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id)).await;
-        if !matches!(ended, Ok(Ok(()))) {
-            crate::telemetry::report("Could not invalidate pairing code");
-            tracing::warn!(
-                "Could not invalidate pairing code; it will expire at the session deadline"
+        let ended = tokio::time::timeout(Duration::from_secs(2), self.codes.end(attempt_id))
+            .await
+            .map_err(OperationError::at("end_pairing_attempt_timeout"))
+            .and_then(|result| result.map_err(OperationError::at("end_pairing_attempt")));
+        if let Err(error) = ended {
+            report_failure(
+                "Could not invalidate pairing code; it will expire at the session deadline",
+                &error,
             );
         }
         result
@@ -372,14 +390,22 @@ impl PairingActivities {
 async fn dispatch_attempts(attempts: PairingAttemptRepository) {
     let mut was_unavailable = false;
     loop {
-        let mut dispatch_failed = false;
         let result = async {
-            attempts.expire_overdue().await?;
-            let pending = attempts.pending_dispatch().await?;
+            attempts
+                .expire_overdue()
+                .await
+                .map_err(OperationError::at("expire_pairing_attempts"))?;
+            let pending = attempts
+                .pending_dispatch()
+                .await
+                .map_err(OperationError::at("load_pending_pairing_attempts"))?;
             if pending.is_empty() {
-                return Ok::<(), Error>(());
+                return Ok(());
             }
-            let client = client().await?;
+            let client = client()
+                .await
+                .map_err(OperationError::at("connect_temporal"))?;
+            let mut enqueue_error = None;
             for PendingPairingAttempt {
                 id: attempt,
                 device_id: device,
@@ -395,32 +421,50 @@ async fn dispatch_attempts(attempts: PairingAttemptRepository) {
                             .build(),
                     )
                     .await;
-                if started.is_err() {
-                    dispatch_failed = true;
-                    tracing::warn!("Could not enqueue pairing attempt; will retry");
+                if let Err(error) = started {
+                    enqueue_error.get_or_insert_with(|| {
+                        OperationError::at("enqueue_pairing_attempt")(error)
+                    });
                     continue;
                 }
-                attempts.mark_queued(attempt).await?;
+                attempts
+                    .mark_queued(attempt)
+                    .await
+                    .map_err(OperationError::at("mark_pairing_attempt_queued"))?;
             }
-            Ok(())
+            enqueue_error.map_or(Ok(()), Err)
         }
         .await;
-        if result.is_err() {
-            tracing::warn!("Pairing attempt dispatch unavailable; durable claims will be retried");
+        if let Err(error) = &result
+            && !was_unavailable
+        {
+            report_failure(
+                "Pairing attempt dispatch unavailable; durable claims will be retried",
+                error,
+            );
         }
-        let unavailable = result.is_err() || dispatch_failed;
-        if unavailable && !was_unavailable {
-            crate::telemetry::report("Pairing attempt dispatch unavailable");
-        }
-        was_unavailable = unavailable;
+        was_unavailable = result.is_err();
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+pub(crate) fn report_failure(message: &'static str, error: &OperationError) {
+    let operation = error.operation;
+    let cause = error.cause_code();
+    tracing::warn!(operation, cause, "{message}");
+    telemetry::report_operation(message, operation, cause);
+}
+
+pub(crate) fn activity_failure(error: OperationError) -> ActivityError {
+    report_failure("Activity failed", &error);
+    // Only the fixed operation code belongs in Temporal history.
+    io::Error::other(error.operation).into()
 }
 
 /// Heartbeat even during database/agent setup, and drop network futures on cancel.
 async fn wait<T>(
     ctx: &ActivityContext,
-    operation: impl Future<Output = io::Result<T>>,
+    operation: impl Future<Output = Result<T, OperationError>>,
     deadline: Instant,
     timeout_message: &'static str,
 ) -> Result<T, ActivityError> {
@@ -433,27 +477,38 @@ async fn wait<T>(
             _ = sleep_until(deadline) => return Err(io::Error::new(
                 io::ErrorKind::TimedOut, timeout_message,
             ).into()),
-            result = &mut operation => return result.inspect_err(|error| {
-                if error.kind() != io::ErrorKind::TimedOut {
-                    crate::telemetry::report("Pairing activity failed");
-                }
-            }).map_err(Into::into),
-            _ = heartbeats.tick() => ctx.record_heartbeat(()).await?,
+            result = &mut operation => return result.map_err(activity_failure),
+            _ = heartbeats.tick() => ctx.record_heartbeat(()).await
+                .map_err(OperationError::at("record_pairing_heartbeat"))
+                .map_err(activity_failure)?,
         }
     }
 }
 
-pub async fn run_worker() -> Result<(), Error> {
-    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let pool = db::connect(&std::env::var("DATABASE_URL")?).await?;
-    let pairings = PairingStore::from_env(pool.clone())?;
-    let codes = PairingCodeRepository::from_env(pool.clone())?;
-    db::migrate(&pool).await?;
+pub async fn run_worker() -> Result<(), OperationError> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut interrupt =
+        signal(SignalKind::interrupt()).map_err(OperationError::at("register_sigint"))?;
+    let mut terminate =
+        signal(SignalKind::terminate()).map_err(OperationError::at("register_sigterm"))?;
+    let database_url =
+        std::env::var("DATABASE_URL").map_err(OperationError::at("read_database_url"))?;
+    let pool = db::connect(&database_url)
+        .await
+        .map_err(OperationError::at("connect_database"))?;
+    let pairings = PairingStore::from_env(pool.clone())
+        .map_err(OperationError::at("configure_pairing_store"))?;
+    let codes = PairingCodeRepository::from_env(pool.clone())
+        .map_err(OperationError::at("configure_pairing_code_repository"))?;
+    db::migrate(&pool)
+        .await
+        .map_err(OperationError::at("migrate_database"))?;
     let devices = PairingDeviceRepository::new(pool.clone());
     let attempts = PairingAttemptRepository::new(pool);
-    let agent = Client::from_env()?;
-    let runtime = Runtime::from_current_tokio(Default::default())?;
+    let agent = Client::from_env().map_err(OperationError::at("configure_vpn_agent"))?;
+    let runtime = Runtime::from_current_tokio(Default::default())
+        .map_err(OperationError::at("build_temporal_runtime"))?;
     let tuner = TunerHolder::builder()
         .workflow_task_slot_supplier(FixedSizeSlotSupplier::new(10))
         .activity_task_slot_supplier(FixedSizeSlotSupplier::new(20))
@@ -461,8 +516,10 @@ pub async fn run_worker() -> Result<(), Error> {
         .nexus_task_slot_supplier(FixedSizeSlotSupplier::new(1))
         .build();
     let options = WorkerOptions::new(TASK_QUEUE)
-        .register_workflow::<PairDeviceWorkflow>()?
-        .register_workflow::<PairAttemptWorkflow>()?
+        .register_workflow::<PairDeviceWorkflow>()
+        .map_err(OperationError::at("register_pair_device_workflow"))?
+        .register_workflow::<PairAttemptWorkflow>()
+        .map_err(OperationError::at("register_pair_attempt_workflow"))?
         .register_activities(PairingActivities {
             devices,
             attempts: attempts.clone(),
@@ -473,7 +530,11 @@ pub async fn run_worker() -> Result<(), Error> {
         .tuner(tuner)
         .graceful_shutdown_period(Duration::from_secs(1))
         .build();
-    let worker = Worker::new(&runtime, client().await?, options)?;
+    let temporal = client()
+        .await
+        .map_err(OperationError::at("connect_temporal"))?;
+    let worker = Worker::new(&runtime, temporal, options)
+        .map_err(OperationError::at("build_pairing_worker"))?;
     tracing::info!(task_queue = TASK_QUEUE, "Pairing worker listening");
     let dispatcher = tokio::spawn(dispatch_attempts(attempts));
     let result = worker
@@ -486,6 +547,5 @@ pub async fn run_worker() -> Result<(), Error> {
         .await;
     dispatcher.abort();
     let _ = dispatcher.await;
-    result?;
-    Ok(())
+    result.map_err(OperationError::at("run_pairing_worker"))
 }

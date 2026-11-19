@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::{pairing::PairingRecord, secrets::SecretKey};
+use crate::{error::OperationError, pairing::PairingRecord, secrets::SecretKey};
 
 const FORMAT_VERSION: i16 = 1;
 
@@ -172,7 +172,7 @@ impl PairingStore {
         expected_expiry: DateTime<Utc>,
         attempt_started_at: DateTime<Utc>,
         record: &PairingRecord,
-    ) -> io::Result<()> {
+    ) -> Result<(), OperationError> {
         let (attempt_id, public_attempt_id) = attempts;
         let pairing_file = Zeroizing::new(record.pairing_file.to_bytes());
         let host = &record.host_info;
@@ -199,12 +199,19 @@ impl PairingStore {
             },
         };
         let plaintext = serde_json::to_vec(&stored)
-            .map_err(|_| io::Error::other("could not serialize pairing credentials"))?;
+            .map_err(OperationError::at("serialize_pairing_credentials"))?;
         // Domain separation + format version + device ID prevents moving a
         // ciphertext to a different device or interpreting it as another format.
-        let (nonce, ciphertext) = self.key.seal(&associated_data(device_id), plaintext)?;
+        let (nonce, ciphertext) = self
+            .key
+            .seal(&associated_data(device_id), plaintext)
+            .map_err(OperationError::at("encrypt_pairing_credentials"))?;
 
-        let mut transaction = self.pool.begin().await.map_err(io::Error::other)?;
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_save_pairing"))?;
         // Coordinate with renewal/cleanup. A completed pairing must never be
         // attached to an expired, deleted, or subsequently renewed registration.
         let current = sqlx::query_scalar::<_, Uuid>(
@@ -216,11 +223,9 @@ impl PairingStore {
         .bind(expected_expiry)
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(io::Error::other)?;
+        .map_err(OperationError::at("lock_pairing_device"))?;
         if current.is_none() {
-            return Err(io::Error::other(
-                "device registration changed or expired before pairing was saved",
-            ));
+            return Err(OperationError::without_source("pairing_device_unavailable"));
         }
         if let Some(public_attempt_id) = public_attempt_id {
             let completed = sqlx::query(
@@ -240,10 +245,10 @@ impl PairingStore {
             .bind(attempt_started_at)
             .execute(&mut *transaction)
             .await
-            .map_err(|_| io::Error::other("could not complete public pairing attempt"))?;
+            .map_err(OperationError::at("complete_public_pairing_attempt"))?;
             if completed.rows_affected() != 1 {
-                return Err(io::Error::other(
-                    "public pairing attempt changed or expired",
+                return Err(OperationError::without_source(
+                    "public_pairing_attempt_unavailable",
                 ));
             }
         }
@@ -267,11 +272,9 @@ impl PairingStore {
         .bind(attempt_started_at)
         .execute(&mut *transaction)
         .await
-        .map_err(io::Error::other)?;
+        .map_err(OperationError::at("upsert_pairing_credentials"))?;
         if saved.rows_affected() != 1 {
-            return Err(io::Error::other(
-                "a newer pairing attempt has already been saved",
-            ));
+            return Err(OperationError::without_source("pairing_superseded"));
         }
         // Commit the success notification together with the saved credentials.
         let completed = sqlx::query(
@@ -290,12 +293,15 @@ impl PairingStore {
         .bind(expected_expiry)
         .execute(&mut *transaction)
         .await
-        .map_err(io::Error::other)?;
+        .map_err(OperationError::at("complete_pairing_attempt"))?;
         if completed.rows_affected() != 1 {
-            return Err(io::Error::other(
-                "pairing attempt changed or expired before completion",
+            return Err(OperationError::without_source(
+                "pairing_attempt_unavailable",
             ));
         }
-        transaction.commit().await.map_err(io::Error::other)
+        transaction
+            .commit()
+            .await
+            .map_err(OperationError::at("commit_save_pairing"))
     }
 }

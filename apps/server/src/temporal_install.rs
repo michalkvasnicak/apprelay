@@ -24,7 +24,7 @@ use crate::{
     install::{Application, deliver},
     r2::R2Storage,
     telemetry,
-    temporal_pairing::client,
+    temporal_pairing::{activity_failure, client, report_failure},
 };
 
 const TASK_QUEUE: &str = "apprelay-install";
@@ -92,10 +92,6 @@ pub struct InstallActivities {
     apns: Option<ApnsClient>,
 }
 
-fn database_unavailable() -> io::Error {
-    io::Error::other("install job storage unavailable")
-}
-
 #[activities]
 impl InstallActivities {
     #[activity]
@@ -109,8 +105,7 @@ impl InstallActivities {
             let artifact = self
                 .jobs
                 .load_installable(id)
-                .await
-                .map_err(OperationError::at("load_install_job"))?
+                .await?
                 .ok_or_else(|| OperationError::without_source("install_job_expired"))?;
             // Check that the authorized pairing is still usable before downloading.
             self.pairings
@@ -180,11 +175,7 @@ impl InstallActivities {
         self.jobs
             .record_outcome(notice.id, installed)
             .await
-            .map_err(|_| database_unavailable())
-            .inspect_err(|_| {
-                tracing::error!(job_id = %notice.id, outcome, "Could not record install outcome");
-                telemetry::report("Could not record install outcome");
-            })?;
+            .map_err(activity_failure)?;
         if installed {
             tracing::info!(job_id = %notice.id, outcome, "Install finished");
         } else {
@@ -211,7 +202,7 @@ impl InstallActivities {
             .jobs
             .notification(notice.id, notice.outcome)
             .await
-            .map_err(|_| database_unavailable())?
+            .map_err(activity_failure)?
         else {
             return Ok(());
         };
@@ -233,7 +224,7 @@ impl InstallActivities {
                     self.jobs
                         .remove_invalid_token(&notification)
                         .await
-                        .map_err(|_| database_unavailable())?;
+                        .map_err(activity_failure)?;
                 }
             }
         }
@@ -248,11 +239,8 @@ async fn dispatch(jobs: InstallJobRepository, temporal: temporalio_client::Clien
     loop {
         ticks.tick().await;
         let result = async {
-            let pending = jobs
-                .pending_dispatch()
-                .await
-                .map_err(|_| database_unavailable())?;
-            let mut failed = false;
+            let pending = jobs.pending_dispatch().await?;
+            let mut enqueue_error = None;
             for id in pending {
                 let start = temporal.start_workflow(
                     InstallWorkflow::run,
@@ -262,26 +250,28 @@ async fn dispatch(jobs: InstallJobRepository, temporal: temporalio_client::Clien
                         .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
                         .build(),
                 );
-                if !matches!(
-                    tokio::time::timeout(Duration::from_secs(2), start).await,
-                    Ok(Ok(_))
-                ) {
-                    failed = true;
-                    continue;
-                }
-                jobs.mark_dispatched(id)
-                    .await
-                    .map_err(|_| database_unavailable())?;
+                let error = match tokio::time::timeout(Duration::from_secs(2), start).await {
+                    Ok(Ok(_)) => {
+                        jobs.mark_dispatched(id).await?;
+                        continue;
+                    }
+                    Ok(Err(error)) => OperationError::at("enqueue_install_job")(error),
+                    Err(error) => OperationError::at("enqueue_install_job_timeout")(error),
+                };
+                enqueue_error.get_or_insert(error);
             }
-            Ok::<_, io::Error>(failed)
+            enqueue_error.map_or(Ok(()), Err)
         }
         .await;
-        let failed = !matches!(result, Ok(false));
-        if failed && !unavailable {
-            crate::telemetry::report("Install workflow dispatch unavailable");
-            tracing::warn!("Install workflow dispatch unavailable; queued jobs will be retried");
+        if let Err(error) = &result
+            && !unavailable
+        {
+            report_failure(
+                "Install workflow dispatch unavailable; queued jobs will be retried",
+                error,
+            );
         }
-        unavailable = failed;
+        unavailable = result.is_err();
     }
 }
 

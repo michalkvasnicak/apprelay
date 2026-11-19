@@ -99,7 +99,7 @@ async fn update(
         .push_tokens
         .set_token(device_id, &credential.hash, token)
         .await
-        .map_err(ApiError::database("set_push_token"))?;
+        .map_err(ApiError::Internal)?;
     if !authorized {
         return Err(ApiError::unauthorized());
     }

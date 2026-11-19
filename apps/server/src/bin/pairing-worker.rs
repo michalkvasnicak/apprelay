@@ -4,11 +4,7 @@ fn main() -> std::process::ExitCode {
         "pairing-worker",
         "pairing-worker terminated with an error",
         tokio::runtime::Builder::new_multi_thread(),
-        async {
-            apprelay_server::temporal_pairing::run_worker()
-                .await
-                .map_err(apprelay_server::error::OperationError::at("run_service"))
-        },
+        apprelay_server::temporal_pairing::run_worker(),
     )
 }
 

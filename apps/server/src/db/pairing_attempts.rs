@@ -1,5 +1,3 @@
-use std::io;
-
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -305,7 +303,7 @@ impl PairingAttemptRepository {
         &self,
         device: Uuid,
         attempt: Option<Uuid>,
-    ) -> io::Result<Option<DateTime<Utc>>> {
+    ) -> Result<Option<DateTime<Utc>>, OperationError> {
         let valid = sqlx::query_scalar::<_, DateTime<Utc>>(
             "SELECT a.expires_at FROM public_pairing_attempts a JOIN devices d ON d.id = a.device_id
                 WHERE a.device_id = $1 AND ($2::uuid IS NULL OR a.id = $2)
@@ -316,11 +314,11 @@ impl PairingAttemptRepository {
         .bind(attempt)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|_| io::Error::other("could not validate pairing attempt"))?;
+        .map_err(OperationError::at("validate_pairing_attempt"))?;
         // CLI sessions cannot race a web-owned session.
         if valid.is_some() != attempt.is_some() {
-            return Err(io::Error::other(
-                "pairing attempt expired, changed, or device is busy",
+            return Err(OperationError::without_source(
+                "pairing_attempt_unavailable",
             ));
         }
         Ok(valid)

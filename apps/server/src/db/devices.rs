@@ -4,6 +4,8 @@ use sqlx::{PgPool, Postgres, Transaction};
 use std::num::NonZeroU32;
 use uuid::Uuid;
 
+use crate::error::OperationError;
+
 #[derive(Debug, sqlx::FromRow)]
 pub struct Device {
     pub id: Uuid,
@@ -55,7 +57,7 @@ impl PairingDeviceRepository {
     pub(crate) async fn active_peer(
         &self,
         device: Uuid,
-    ) -> Result<Option<DevicePeer>, sqlx::Error> {
+    ) -> Result<Option<DevicePeer>, OperationError> {
         sqlx::query_as(
             "SELECT wireguard_public_key, expires_at FROM devices
              WHERE id = $1 AND expires_at > statement_timestamp()",
@@ -63,12 +65,13 @@ impl PairingDeviceRepository {
         .bind(device)
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("load_pairing_device_peer"))
     }
 
     pub(crate) async fn pairing_target(
         &self,
         device: Uuid,
-    ) -> Result<Option<PairingTarget>, sqlx::Error> {
+    ) -> Result<Option<PairingTarget>, OperationError> {
         sqlx::query_as(
             "SELECT host(address) AS address, expires_at,
                     statement_timestamp() AS attempt_started_at, wireguard_public_key
@@ -77,6 +80,7 @@ impl PairingDeviceRepository {
         .bind(device)
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("load_pairing_target"))
     }
 }
 
@@ -87,8 +91,11 @@ pub struct LockedDevice {
 }
 
 impl LockedDevice {
-    pub async fn commit(self) -> Result<Device, sqlx::Error> {
-        self.transaction.commit().await?;
+    pub async fn commit(self) -> Result<Device, OperationError> {
+        self.transaction
+            .commit()
+            .await
+            .map_err(OperationError::at("commit_device_provisioning"))?;
         Ok(self.device)
     }
 }
@@ -105,7 +112,7 @@ impl DeviceRepository {
     pub async fn find_by_public_key(
         &self,
         public_key: &[u8; 32],
-    ) -> Result<Option<Device>, sqlx::Error> {
+    ) -> Result<Option<Device>, OperationError> {
         sqlx::query_as::<_, Device>(
             "SELECT id, wireguard_public_key, created_at, expires_at, host(address) AS address
              FROM devices
@@ -114,6 +121,7 @@ impl DeviceRepository {
         .bind(public_key.as_slice())
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("find_device_by_public_key"))
     }
 
     /// Durably reserves an address before any agent call. A failed/uncertain
@@ -125,19 +133,25 @@ impl DeviceRepository {
         subnet: Ipv4Net,
         credential_hash: Option<&[u8; 32]>,
         new_credential_hash: &[u8; 32],
-    ) -> Result<Registration, sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
+    ) -> Result<Registration, OperationError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_device_registration"))?;
         // Serialize address reservations across server instances. Cleanup uses
         // row locks and only frees an address after the agent confirms removal.
         sqlx::query("SELECT pg_advisory_xact_lock(71827901)")
             .execute(&mut *transaction)
-            .await?;
+            .await
+            .map_err(OperationError::at("lock_device_address_reservations"))?;
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM devices WHERE wireguard_public_key = $1)",
         )
         .bind(public_key.as_slice())
         .fetch_one(&mut *transaction)
-        .await?;
+        .await
+        .map_err(OperationError::at("check_device_registration"))?;
         // Authenticate before changing expiry. Legacy rows with no hash cannot renew.
         let existing = sqlx::query_as::<_, Device>(
             "UPDATE devices
@@ -153,9 +167,13 @@ impl DeviceRepository {
         .bind(i64::from(self.lifetime_seconds.get()))
         .bind(credential_hash.map(|hash| hash.as_slice()))
         .fetch_optional(&mut *transaction)
-        .await?;
+        .await
+        .map_err(OperationError::at("renew_device_registration"))?;
         if let Some(device) = existing {
-            transaction.commit().await?;
+            transaction
+                .commit()
+                .await
+                .map_err(OperationError::at("commit_device_registration"))?;
             return Ok(Registration::Registered {
                 device,
                 created: false,
@@ -184,7 +202,8 @@ impl DeviceRepository {
         .bind(subnet.broadcast().to_string())
         .bind(subnet.addr().to_string())
         .fetch_optional(&mut *transaction)
-        .await?;
+        .await
+        .map_err(OperationError::at("allocate_device_address"))?;
         let Some(address) = address else {
             return Ok(Registration::Exhausted);
         };
@@ -199,8 +218,12 @@ impl DeviceRepository {
         .bind(address)
         .bind(new_credential_hash.as_slice())
         .fetch_one(&mut *transaction)
-        .await?;
-        transaction.commit().await?;
+        .await
+        .map_err(OperationError::at("insert_device_registration"))?;
+        transaction
+            .commit()
+            .await
+            .map_err(OperationError::at("commit_device_registration"))?;
         Ok(Registration::Registered {
             device,
             created: true,
@@ -212,7 +235,7 @@ impl DeviceRepository {
         device_id: Uuid,
         credential_hash: &[u8; 32],
         port: u16,
-    ) -> Result<bool, sqlx::Error> {
+    ) -> Result<bool, OperationError> {
         let updated = sqlx::query(
             "UPDATE devices
              SET remote_pairing_port = $3,
@@ -226,15 +249,20 @@ impl DeviceRepository {
         .bind(credential_hash.as_slice())
         .bind(i32::from(port))
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("set_remote_pairing_port"))?;
         Ok(updated.rows_affected() != 0)
     }
 
     pub async fn lock_for_provisioning(
         &self,
         id: Uuid,
-    ) -> Result<Option<LockedDevice>, sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
+    ) -> Result<Option<LockedDevice>, OperationError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_device_provisioning"))?;
         let device = sqlx::query_as::<_, Device>(
             "SELECT id, wireguard_public_key, created_at, expires_at, host(address) AS address
              FROM devices
@@ -243,7 +271,8 @@ impl DeviceRepository {
         )
         .bind(id)
         .fetch_optional(&mut *transaction)
-        .await?;
+        .await
+        .map_err(OperationError::at("lock_device_for_provisioning"))?;
         Ok(device.map(|device| LockedDevice {
             device,
             transaction,

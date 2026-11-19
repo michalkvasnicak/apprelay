@@ -3,6 +3,8 @@ use std::io;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::error::OperationError;
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::pairing_codes::Notification;
 
@@ -46,7 +48,7 @@ impl PushTokenRepository {
     pub(super) async fn remove_if_current(
         pool: &PgPool,
         notification: &Notification,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), OperationError> {
         sqlx::query(
             "DELETE FROM device_push_tokens WHERE device_id = $1 AND token = $2
              AND environment = $3 AND updated_at = $4",
@@ -56,7 +58,8 @@ impl PushTokenRepository {
         .bind(&notification.environment)
         .bind(notification.token_updated_at)
         .execute(pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("remove_invalid_push_token"))?;
         Ok(())
     }
 
@@ -67,8 +70,12 @@ impl PushTokenRepository {
         device_id: Uuid,
         credential_hash: &[u8; 32],
         token: Option<&[u8]>,
-    ) -> Result<bool, sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
+    ) -> Result<bool, OperationError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_push_token_update"))?;
         let device = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM devices
              WHERE id = $1 AND bearer_token_hash = $2
@@ -78,7 +85,8 @@ impl PushTokenRepository {
         .bind(device_id)
         .bind(credential_hash.as_slice())
         .fetch_optional(&mut *transaction)
-        .await?;
+        .await
+        .map_err(OperationError::at("authorize_push_token_update"))?;
         if device.is_none() {
             return Ok(false);
         }
@@ -96,14 +104,19 @@ impl PushTokenRepository {
             .bind(token)
             .bind(self.environment.as_str())
             .execute(&mut *transaction)
-            .await?;
+            .await
+            .map_err(OperationError::at("upsert_push_token"))?;
         } else {
             sqlx::query("DELETE FROM device_push_tokens WHERE device_id = $1")
                 .bind(device_id)
                 .execute(&mut *transaction)
-                .await?;
+                .await
+                .map_err(OperationError::at("delete_push_token"))?;
         }
-        transaction.commit().await?;
+        transaction
+            .commit()
+            .await
+            .map_err(OperationError::at("commit_push_token_update"))?;
         Ok(true)
     }
 }

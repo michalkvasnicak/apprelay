@@ -32,7 +32,7 @@ pub(super) async fn put(
         .devices
         .set_remote_pairing_port(device_id, &credential.hash, request.port.get())
         .await
-        .map_err(ApiError::database("set_remote_pairing_port"))?;
+        .map_err(ApiError::Internal)?;
     if !updated {
         return Err(ApiError::unauthorized());
     }

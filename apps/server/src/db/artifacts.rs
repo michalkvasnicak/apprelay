@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::error::OperationError;
+
 #[derive(Clone)]
 pub(crate) struct ArtifactRepository {
     pool: PgPool,
@@ -29,7 +31,7 @@ impl ArtifactRepository {
         artifact: &Artifact,
         token_hash: &[u8; 32],
         lifetime_days: Option<NonZeroU16>,
-    ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    ) -> Result<Option<DateTime<Utc>>, OperationError> {
         sqlx::query_scalar(
             "INSERT INTO ipa_artifacts
              (id, token_hash, object_key, file_name, size_bytes, sha256, expires_at)
@@ -47,9 +49,10 @@ impl ArtifactRepository {
         .bind(lifetime_days.map(|days| i32::from(days.get())))
         .fetch_one(&self.pool)
         .await
+        .map_err(OperationError::at("create_artifact"))
     }
 
-    pub async fn find(&self, id: Uuid) -> Result<Option<Artifact>, sqlx::Error> {
+    pub async fn find(&self, id: Uuid) -> Result<Option<Artifact>, OperationError> {
         sqlx::query_as(
             "SELECT id, object_key, file_name, size_bytes, sha256, expires_at
              FROM ipa_artifacts WHERE id = $1
@@ -58,21 +61,23 @@ impl ArtifactRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("find_artifact"))
     }
 
-    pub async fn complete(&self, id: Uuid) -> Result<bool, sqlx::Error> {
+    pub async fn complete(&self, id: Uuid) -> Result<bool, OperationError> {
         Ok(sqlx::query(
             "UPDATE ipa_artifacts SET completed_at = COALESCE(completed_at, clock_timestamp())
              WHERE id = $1 AND (expires_at IS NULL OR expires_at > clock_timestamp())",
         )
         .bind(id)
         .execute(&self.pool)
-        .await?
+        .await
+        .map_err(OperationError::at("complete_artifact"))?
         .rows_affected()
             == 1)
     }
 
-    pub async fn resolve(&self, hash: &[u8; 32]) -> Result<Option<Artifact>, sqlx::Error> {
+    pub async fn resolve(&self, hash: &[u8; 32]) -> Result<Option<Artifact>, OperationError> {
         sqlx::query_as(
             "SELECT id, object_key, file_name, size_bytes, sha256, expires_at
              FROM ipa_artifacts WHERE token_hash = $1
@@ -82,5 +87,6 @@ impl ArtifactRepository {
         .bind(hash.as_slice())
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("resolve_artifact"))
     }
 }

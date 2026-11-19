@@ -27,6 +27,7 @@ use tokio::{
 
 use crate::{
     agent::VpnStatus,
+    error::OperationError,
     peer_identity::{IdentitySocket, Transcript},
 };
 
@@ -95,10 +96,13 @@ impl Session {
         }
     }
 
-    pub(crate) async fn run<F, Fut>(&mut self, mut on_code: F) -> io::Result<PairingRecord>
+    pub(crate) async fn run<F, Fut>(
+        &mut self,
+        mut on_code: F,
+    ) -> Result<PairingRecord, OperationError>
     where
         F: FnMut(Option<String>) -> Fut + Send,
-        Fut: Future<Output = io::Result<()>> + Send,
+        Fut: Future<Output = Result<(), OperationError>> + Send,
     {
         let mut announcements = interval(Duration::from_secs(5));
         let destination = SocketAddr::from((self.peer, 5354));
@@ -106,11 +110,12 @@ impl Session {
         loop {
             tokio::select! {
                 _ = announcements.tick() => {
-                    self.discovery.send_to(&self.announcement, destination).await?;
+                    self.discovery.send_to(&self.announcement, destination).await
+                        .map_err(OperationError::at("send_pairing_announcement"))?;
                     tracing::debug!("Pairing mDNS announcement sent");
                 }
                 received = self.discovery.recv_from(&mut receiving) => {
-                    let (length, source) = received?;
+                    let (length, source) = received.map_err(OperationError::at("receive_pairing_query"))?;
                     if source != destination {
                         continue;
                     }
@@ -118,11 +123,12 @@ impl Session {
                         && message.message_type() == MessageType::Query
                     {
                         tracing::debug!("Pairing DNS query received");
-                        self.discovery.send_to(&self.announcement, destination).await?;
+                        self.discovery.send_to(&self.announcement, destination).await
+                            .map_err(OperationError::at("send_pairing_announcement"))?;
                     }
                 }
                 accepted = self.listener.accept() => {
-                    let (stream, source) = accepted?;
+                    let (stream, source) = accepted.map_err(OperationError::at("accept_pairing_connection"))?;
                     if source.ip() != self.peer {
                         tracing::debug!("Rejected pairing connection from unexpected peer");
                         continue;
@@ -158,7 +164,8 @@ impl Session {
                                             tokio::select! {
                                                 result = &mut publication => { result?; break; },
                                                 _ = announcements.tick() => {
-                                                    self.discovery.send_to(&self.announcement, destination).await?;
+                                                    self.discovery.send_to(&self.announcement, destination).await
+                                                        .map_err(OperationError::at("send_pairing_announcement"))?;
                                                 }
                                             }
                                         }
@@ -168,7 +175,8 @@ impl Session {
                                     }
                                 }
                                 _ = announcements.tick() => {
-                                    self.discovery.send_to(&self.announcement, destination).await?;
+                                    self.discovery.send_to(&self.announcement, destination).await
+                                        .map_err(OperationError::at("send_pairing_announcement"))?;
                                 }
                             }
                         }

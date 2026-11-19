@@ -86,7 +86,7 @@ pub(super) async fn create(
         .install_jobs
         .create(&credential.hash, id, request.size_bytes, &request.sha256)
         .await
-        .map_err(ApiError::database("create_install_job"))?
+        .map_err(ApiError::Internal)?
         .ok_or_else(missing)?;
     let now = Utc::now();
     let seconds = (deadline - now).num_seconds().min(900);
@@ -140,7 +140,7 @@ pub(super) async fn complete(
         .install_jobs
         .find(&credential.hash, id)
         .await
-        .map_err(ApiError::database("find_install_job"))?
+        .map_err(ApiError::Internal)?
         .ok_or_else(missing)?;
     if job.queued_at.is_some() {
         return Ok(StatusCode::ACCEPTED);
@@ -167,7 +167,7 @@ pub(super) async fn complete(
         .install_jobs
         .queue(&credential.hash, id)
         .await
-        .map_err(ApiError::database("queue_install_job"))?
+        .map_err(ApiError::Internal)?
     {
         return Err(missing());
     }
@@ -181,17 +181,28 @@ impl ArtifactApi {
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
-            let Ok(ids) = self.install_jobs.expired().await else {
-                crate::telemetry::report("Could not list expired install uploads");
-                continue;
+            let ids = match self.install_jobs.expired().await {
+                Ok(ids) => ids,
+                Err(error) => {
+                    crate::telemetry::report_operation(
+                        "Could not list expired install uploads",
+                        error.operation,
+                        error.cause_code(),
+                    );
+                    continue;
+                }
             };
             for id in ids {
                 if self.storage.delete(&object_key(id)).await.is_err() {
                     crate::telemetry::report("Could not delete expired install upload from R2");
                     continue;
                 }
-                if self.install_jobs.remove(id).await.is_err() {
-                    crate::telemetry::report("Could not remove expired install job");
+                if let Err(error) = self.install_jobs.remove(id).await {
+                    crate::telemetry::report_operation(
+                        "Could not remove expired install job",
+                        error.operation,
+                        error.cause_code(),
+                    );
                     break;
                 }
             }

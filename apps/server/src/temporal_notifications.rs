@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::{
     apns::{ApnsClient, SendOutcome},
     db::{self, pairing_codes::PairingCodeRepository},
-    temporal_pairing::client,
+    error::OperationError,
+    temporal_pairing::{activity_failure, client, report_failure},
 };
 
 const TASK_QUEUE: &str = "apprelay-apns";
@@ -60,14 +61,16 @@ impl NotificationActivities {
         ctx: ActivityContext,
         notification_id: String,
     ) -> Result<(), ActivityError> {
-        let notification_id = Uuid::parse_str(&notification_id)?;
+        let notification_id = Uuid::parse_str(&notification_id)
+            .map_err(OperationError::at("parse_pairing_notification_id"))
+            .map_err(activity_failure)?;
         let operation = async {
             // All credentials and the PIN stay in this activity, never in history.
             let Some(notification) = self
                 .codes
                 .notification(notification_id)
                 .await
-                .inspect_err(|_| crate::telemetry::report("Could not read pairing notification"))?
+                .map_err(activity_failure)?
             else {
                 return Ok(());
             };
@@ -75,16 +78,15 @@ impl NotificationActivities {
                 .apns
                 .send(notification_id, &notification)
                 .await
-                .inspect_err(|_| crate::telemetry::report("APNs notification delivery failed"))?
+                .map_err(OperationError::at("send_pairing_notification"))
+                .map_err(activity_failure)?
             {
-                SendOutcome::Accepted => {
-                    self.codes
-                        .mark_sent(notification_id)
-                        .await
-                        .inspect_err(|_| {
-                            crate::telemetry::report("Could not mark pairing notification sent");
-                        })?
-                }
+                SendOutcome::Accepted => self
+                    .codes
+                    .mark_sent(notification_id)
+                    .await
+                    .map_err(OperationError::at("mark_pairing_notification_sent"))
+                    .map_err(activity_failure)?,
                 SendOutcome::Expired => {}
                 SendOutcome::InvalidToken(invalidated_at) => {
                     if invalidated_at
@@ -93,9 +95,7 @@ impl NotificationActivities {
                         self.codes
                             .remove_invalid_token(&notification)
                             .await
-                            .inspect_err(|_| {
-                                crate::telemetry::report("Could not remove invalid APNs token");
-                            })?;
+                            .map_err(activity_failure)?;
                     }
                     return Err(ActivityError::application(
                         ApplicationFailure::non_retryable(io::Error::other(
@@ -116,10 +116,8 @@ impl NotificationActivities {
         tokio::select! {
             _ = ctx.cancelled() => Err(ActivityError::cancelled()),
             result = tokio::time::timeout(Duration::from_secs(8), operation) => {
-                result.map_err(|_| {
-                    crate::telemetry::report("APNs notification attempt timed out");
-                    io::Error::other("APNs notification attempt timed out")
-                })?
+                result.map_err(OperationError::at("send_pairing_notification_timeout"))
+                    .map_err(activity_failure)?
             }
         }
     }
@@ -131,13 +129,16 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
     let mut was_unavailable = false;
     loop {
         ticks.tick().await;
-        let mut unavailable = false;
+        let mut dispatch_error = None;
         let pending = match codes.pending_notifications().await {
             Ok(pending) => pending,
-            Err(_) => {
-                tracing::warn!("Could not read pairing notification outbox; will retry");
+            Err(error) => {
                 if !was_unavailable {
-                    crate::telemetry::report("Pairing notification dispatch unavailable");
+                    let error = OperationError::at("load_pending_pairing_notifications")(error);
+                    report_failure(
+                        "Pairing notification dispatch unavailable; will retry",
+                        &error,
+                    );
                 }
                 was_unavailable = true;
                 continue;
@@ -155,35 +156,55 @@ async fn dispatch(codes: PairingCodeRepository, temporal: temporalio_client::Cli
                 .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
                 .build(),
             );
-            match tokio::time::timeout(Duration::from_secs(2), start).await {
-                Ok(Ok(_)) => {
-                    if codes.mark_queued(notification_id).await.is_err() {
-                        unavailable = true;
-                        tracing::warn!("Could not mark pairing notification queued; will retry");
-                    }
-                }
-                _ => {
-                    unavailable = true;
-                    tracing::warn!("Could not queue pairing notification; will retry while active");
-                }
+            let result = match tokio::time::timeout(Duration::from_secs(2), start).await {
+                Ok(Ok(_)) => codes
+                    .mark_queued(notification_id)
+                    .await
+                    .map_err(OperationError::at("mark_pairing_notification_queued")),
+                Ok(Err(error)) => Err(OperationError::at("enqueue_pairing_notification")(error)),
+                Err(error) => Err(OperationError::at("enqueue_pairing_notification_timeout")(
+                    error,
+                )),
+            };
+            if let Err(error) = result {
+                dispatch_error.get_or_insert(error);
             }
         }
-        if unavailable && !was_unavailable {
-            crate::telemetry::report("Pairing notification dispatch unavailable");
+        if let Some(error) = &dispatch_error
+            && !was_unavailable
+        {
+            report_failure(
+                "Pairing notification dispatch unavailable; will retry",
+                error,
+            );
         }
-        was_unavailable = unavailable;
+        was_unavailable = dispatch_error.is_some();
     }
 }
 
-pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let pool = db::connect(&std::env::var("DATABASE_URL")?).await?;
-    let codes = PairingCodeRepository::from_env(pool.clone())?;
-    let apns = ApnsClient::from_env()?;
-    db::migrate(&pool).await?;
-    let temporal = client().await?;
-    let runtime = Runtime::from_current_tokio(Default::default())?;
+pub async fn run_worker() -> Result<(), OperationError> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut interrupt =
+        signal(SignalKind::interrupt()).map_err(OperationError::at("register_sigint"))?;
+    let mut terminate =
+        signal(SignalKind::terminate()).map_err(OperationError::at("register_sigterm"))?;
+    let database_url =
+        std::env::var("DATABASE_URL").map_err(OperationError::at("read_database_url"))?;
+    let pool = db::connect(&database_url)
+        .await
+        .map_err(OperationError::at("connect_database"))?;
+    let codes = PairingCodeRepository::from_env(pool.clone())
+        .map_err(OperationError::at("configure_pairing_code_repository"))?;
+    let apns = ApnsClient::from_env().map_err(OperationError::at("configure_apns"))?;
+    db::migrate(&pool)
+        .await
+        .map_err(OperationError::at("migrate_database"))?;
+    let temporal = client()
+        .await
+        .map_err(OperationError::at("connect_temporal"))?;
+    let runtime = Runtime::from_current_tokio(Default::default())
+        .map_err(OperationError::at("build_temporal_runtime"))?;
     let tuner = TunerHolder::builder()
         .workflow_task_slot_supplier(FixedSizeSlotSupplier::new(10))
         .activity_task_slot_supplier(FixedSizeSlotSupplier::new(10))
@@ -191,7 +212,8 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .nexus_task_slot_supplier(FixedSizeSlotSupplier::new(1))
         .build();
     let options = WorkerOptions::new(TASK_QUEUE)
-        .register_workflow::<PairingNotificationWorkflow>()?
+        .register_workflow::<PairingNotificationWorkflow>()
+        .map_err(OperationError::at("register_pairing_notification_workflow"))?
         .register_activities(NotificationActivities {
             codes: codes.clone(),
             apns,
@@ -199,7 +221,8 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .tuner(tuner)
         .graceful_shutdown_period(Duration::from_secs(2))
         .build();
-    let worker = Worker::new(&runtime, temporal.clone(), options)?;
+    let worker = Worker::new(&runtime, temporal.clone(), options)
+        .map_err(OperationError::at("build_notification_worker"))?;
     let dispatch = tokio::spawn(dispatch(codes, temporal));
     tracing::info!(task_queue = TASK_QUEUE, "Notification worker listening");
     let result = worker
@@ -212,6 +235,5 @@ pub async fn run_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         .await;
     dispatch.abort();
     let _ = dispatch.await;
-    result?;
-    Ok(())
+    result.map_err(OperationError::at("run_notification_worker"))
 }

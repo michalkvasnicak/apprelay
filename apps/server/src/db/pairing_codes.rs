@@ -52,11 +52,6 @@ pub(crate) struct Notification {
     pub token_updated_at: DateTime<Utc>,
 }
 
-fn storage_error(_: sqlx::Error) -> io::Error {
-    // Database constraint errors can include secret values.
-    io::Error::other("pairing code storage operation failed")
-}
-
 fn associated_data(attempt: Uuid, code: Uuid, device: Uuid) -> Vec<u8> {
     let mut data = b"apprelay/pairing-code/v1/".to_vec();
     for id in [attempt, code, device] {
@@ -145,9 +140,13 @@ impl PairingCodeRepository {
         started_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
         public_attempt_id: Option<Uuid>,
-    ) -> io::Result<Uuid> {
+    ) -> Result<Uuid, OperationError> {
         let id = Uuid::new_v4();
-        let mut tx = self.pool.begin().await.map_err(storage_error)?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_pairing_attempt_transaction"))?;
         let valid = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM devices WHERE id = $1 AND expires_at = $2
              AND expires_at > clock_timestamp() FOR UPDATE",
@@ -156,9 +155,9 @@ impl PairingCodeRepository {
         .bind(device_expiry)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("lock_pairing_code_device"))?;
         if valid.is_none() {
-            return Err(io::Error::other("device registration changed or expired"));
+            return Err(OperationError::without_source("pairing_device_unavailable"));
         }
         let owned = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM public_pairing_attempts
@@ -169,9 +168,9 @@ impl PairingCodeRepository {
         .bind(public_attempt_id)
         .fetch_one(&mut *tx)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("check_pairing_attempt_owner"))?;
         if owned != public_attempt_id.is_some() {
-            return Err(io::Error::other("device pairing ownership changed"));
+            return Err(OperationError::without_source("pairing_ownership_changed"));
         }
         let saved = sqlx::query(
             "INSERT INTO pairing_attempts
@@ -200,13 +199,15 @@ impl PairingCodeRepository {
         .bind(public_attempt_id)
         .execute(&mut *tx)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("insert_pairing_attempt"))?;
         if saved.rows_affected() != 1 {
-            return Err(io::Error::other(
-                "a newer pairing attempt is already active",
+            return Err(OperationError::without_source(
+                "pairing_attempt_already_active",
             ));
         }
-        tx.commit().await.map_err(storage_error)?;
+        tx.commit()
+            .await
+            .map_err(OperationError::at("commit_pairing_attempt"))?;
         Ok(id)
     }
 
@@ -215,15 +216,18 @@ impl PairingCodeRepository {
         attempt_id: Uuid,
         device_id: Uuid,
         pin: String,
-    ) -> io::Result<()> {
+    ) -> Result<(), OperationError> {
         if pin.len() != 6 || !pin.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(io::Error::other("invalid pairing code"));
+            return Err(OperationError::without_source("invalid_pairing_code"));
         }
         let code_id = Uuid::new_v4();
-        let (nonce, ciphertext) = self.key.seal(
-            &associated_data(attempt_id, code_id, device_id),
-            pin.into_bytes(),
-        )?;
+        let (nonce, ciphertext) = self
+            .key
+            .seal(
+                &associated_data(attempt_id, code_id, device_id),
+                pin.into_bytes(),
+            )
+            .map_err(OperationError::at("encrypt_pairing_code"))?;
         // This row is also the outbox: the notification worker discovers it
         // independently, so a crash after publication cannot lose the enqueue.
         let saved = sqlx::query(
@@ -240,38 +244,38 @@ impl PairingCodeRepository {
         .bind(ciphertext)
         .execute(&self.pool)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("publish_pairing_code"))?;
         if saved.rows_affected() != 1 {
-            return Err(io::Error::other("pairing attempt is no longer active"));
+            return Err(OperationError::without_source(
+                "pairing_attempt_unavailable",
+            ));
         }
         Ok(())
     }
 
-    pub(crate) async fn clear(&self, attempt_id: Uuid) -> io::Result<()> {
+    pub(crate) async fn clear(&self, attempt_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE pairing_attempts SET code_id = NULL, nonce = NULL, ciphertext = NULL,
              notification_queued_at = NULL, notification_sent_at = NULL WHERE id = $1",
         )
         .bind(attempt_id)
         .execute(&self.pool)
-        .await
-        .map_err(storage_error)?;
+        .await?;
         Ok(())
     }
 
-    pub(crate) async fn end(&self, attempt_id: Uuid) -> io::Result<()> {
+    pub(crate) async fn end(&self, attempt_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE pairing_attempts SET ended_at = clock_timestamp(),
              code_id = NULL, nonce = NULL, ciphertext = NULL WHERE id = $1",
         )
         .bind(attempt_id)
         .execute(&self.pool)
-        .await
-        .map_err(storage_error)?;
+        .await?;
         Ok(())
     }
 
-    pub(crate) async fn pending_notifications(&self) -> io::Result<Vec<Uuid>> {
+    pub(crate) async fn pending_notifications(&self) -> Result<Vec<Uuid>, sqlx::Error> {
         sqlx::query_scalar(
             "SELECT notification.id FROM pairing_attempts a
              JOIN devices d ON d.id = a.device_id
@@ -296,10 +300,9 @@ impl PairingCodeRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(storage_error)
     }
 
-    pub(crate) async fn mark_queued(&self, notification_id: Uuid) -> io::Result<()> {
+    pub(crate) async fn mark_queued(&self, notification_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE pairing_attempts SET
                  started_notification_queued_at = CASE WHEN id = $1
@@ -315,16 +318,19 @@ impl PairingCodeRepository {
         )
         .bind(notification_id)
         .execute(&self.pool)
-        .await
-        .map_err(storage_error)?;
+        .await?;
         Ok(())
     }
 
     pub(crate) async fn notification(
         &self,
         notification_id: Uuid,
-    ) -> io::Result<Option<Notification>> {
-        let mut tx = self.pool.begin().await.map_err(storage_error)?;
+    ) -> Result<Option<Notification>, OperationError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(OperationError::at("begin_pairing_notification_lookup"))?;
         let attempt = sqlx::query_as::<_, (Uuid, Uuid, DateTime<Utc>, bool, bool)>(
             "SELECT a.id, a.device_id, notification.expires_at,
                     COALESCE(a.success_notification_id = $1, FALSE),
@@ -347,7 +353,7 @@ impl PairingCodeRepository {
         .bind(notification_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("load_pairing_notification"))?;
         let Some((attempt_id, device_id, expires_at, success, timed_out)) = attempt else {
             return Ok(None);
         };
@@ -366,8 +372,11 @@ impl PairingCodeRepository {
             .bind(notification_id)
             .fetch_one(&mut *tx)
             .await
-            .map_err(storage_error)?;
-            NotificationContent::Code(self.decrypt(row)?)
+            .map_err(OperationError::at("load_notification_pairing_code"))?;
+            NotificationContent::Code(
+                self.decrypt(row)
+                    .map_err(OperationError::at("decrypt_notification_pairing_code"))?,
+            )
         };
         let token = sqlx::query_as::<_, (Vec<u8>, String, DateTime<Utc>)>(
             "SELECT token, environment, updated_at FROM device_push_tokens WHERE device_id = $1",
@@ -375,7 +384,7 @@ impl PairingCodeRepository {
         .bind(device_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(storage_error)?;
+        .map_err(OperationError::at("load_pairing_push_token"))?;
         let Some((token, environment, token_updated_at)) = token else {
             return Ok(None);
         };
@@ -387,11 +396,13 @@ impl PairingCodeRepository {
             environment,
             token_updated_at,
         };
-        tx.commit().await.map_err(storage_error)?;
+        tx.commit()
+            .await
+            .map_err(OperationError::at("commit_pairing_notification_lookup"))?;
         Ok(Some(notification))
     }
 
-    pub(crate) async fn mark_sent(&self, notification_id: Uuid) -> io::Result<()> {
+    pub(crate) async fn mark_sent(&self, notification_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE pairing_attempts SET
                  started_notification_sent_at = CASE WHEN id = $1
@@ -407,14 +418,14 @@ impl PairingCodeRepository {
         )
         .bind(notification_id)
         .execute(&self.pool)
-        .await
-        .map_err(storage_error)?;
+        .await?;
         Ok(())
     }
 
-    pub(crate) async fn remove_invalid_token(&self, notification: &Notification) -> io::Result<()> {
-        super::push_tokens::PushTokenRepository::remove_if_current(&self.pool, notification)
-            .await
-            .map_err(storage_error)
+    pub(crate) async fn remove_invalid_token(
+        &self,
+        notification: &Notification,
+    ) -> Result<(), OperationError> {
+        super::push_tokens::PushTokenRepository::remove_if_current(&self.pool, notification).await
     }
 }

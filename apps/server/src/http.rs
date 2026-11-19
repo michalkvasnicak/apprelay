@@ -326,7 +326,7 @@ async fn register_device(
             &new_credential.hash,
         )
         .await
-        .map_err(ApiError::database("register_device"))?
+        .map_err(ApiError::Internal)?
     {
         Registration::Registered { device, created } => {
             let token = if created {
@@ -349,7 +349,7 @@ async fn register_device(
         .devices
         .lock_for_provisioning(device.id)
         .await
-        .map_err(ApiError::database("lock_device_for_provisioning"))?
+        .map_err(ApiError::Internal)?
         .ok_or_else(|| ApiError::internal_without_source("registration_expired"))?;
     let address = locked
         .device
@@ -380,10 +380,7 @@ async fn register_device(
             "vpn_configuration_changed",
         ));
     }
-    let device = locked
-        .commit()
-        .await
-        .map_err(ApiError::database("commit_device_provisioning"))?;
+    let device = locked.commit().await.map_err(ApiError::Internal)?;
     let lifetime_seconds = device.expires_at.timestamp() - Utc::now().timestamp();
     if lifetime_seconds <= 0 {
         return Err(ApiError::internal_without_source("registration_expired"));

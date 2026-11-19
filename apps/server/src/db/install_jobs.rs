@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::error::OperationError;
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::{
     pairing_codes::{Notification, NotificationContent},
@@ -76,7 +78,7 @@ impl InstallJobRepository {
         id: Uuid,
         size_bytes: i64,
         sha256: &str,
-    ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    ) -> Result<Option<DateTime<Utc>>, OperationError> {
         sqlx::query_scalar(concat!(
             "INSERT INTO install_jobs
                  (id, public_attempt_id, device_id, device_expires_at, pairing_started_at, size_bytes, sha256)
@@ -91,9 +93,14 @@ impl InstallJobRepository {
         .bind(sha256)
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("create_install_job"))
     }
 
-    pub async fn find(&self, hash: &[u8; 32], id: Uuid) -> Result<Option<InstallJob>, sqlx::Error> {
+    pub async fn find(
+        &self,
+        hash: &[u8; 32],
+        id: Uuid,
+    ) -> Result<Option<InstallJob>, OperationError> {
         sqlx::query_as(concat!(
             "SELECT j.size_bytes, j.sha256, j.queued_at FROM install_jobs j WHERE ",
             authorized_job!()
@@ -102,9 +109,10 @@ impl InstallJobRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("find_install_job"))
     }
 
-    pub async fn queue(&self, hash: &[u8; 32], id: Uuid) -> Result<bool, sqlx::Error> {
+    pub async fn queue(&self, hash: &[u8; 32], id: Uuid) -> Result<bool, OperationError> {
         // The row is the durable queue entry. Keep the original timestamp on
         // retries, and reauthorize after the R2 HEAD request.
         let result = sqlx::query(concat!(
@@ -114,24 +122,27 @@ impl InstallJobRepository {
         .bind(hash.as_slice())
         .bind(id)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("queue_install_job"))?;
         Ok(result.rows_affected() == 1)
     }
 
-    pub async fn expired(&self) -> Result<Vec<Uuid>, sqlx::Error> {
+    pub async fn expired(&self) -> Result<Vec<Uuid>, OperationError> {
         sqlx::query_scalar(
             "SELECT id FROM install_jobs WHERE expires_at <= clock_timestamp()
              ORDER BY expires_at LIMIT 100",
         )
         .fetch_all(&self.pool)
         .await
+        .map_err(OperationError::at("list_expired_install_jobs"))
     }
 
-    pub async fn remove(&self, id: Uuid) -> Result<(), sqlx::Error> {
+    pub async fn remove(&self, id: Uuid) -> Result<(), OperationError> {
         sqlx::query("DELETE FROM install_jobs WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_err(OperationError::at("remove_install_job"))?;
         Ok(())
     }
 }
@@ -141,7 +152,7 @@ impl InstallJobRepository {
     pub(crate) async fn load_installable(
         &self,
         id: Uuid,
-    ) -> Result<Option<InstallArtifact>, sqlx::Error> {
+    ) -> Result<Option<InstallArtifact>, OperationError> {
         sqlx::query_as(
             "SELECT size_bytes, sha256 FROM install_jobs WHERE id = $1 AND queued_at IS NOT NULL
              AND finished_at IS NULL AND expires_at > clock_timestamp()",
@@ -149,13 +160,14 @@ impl InstallJobRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
+        .map_err(OperationError::at("load_install_job"))
     }
 
     pub(crate) async fn record_outcome(
         &self,
         id: Uuid,
         installed: bool,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), OperationError> {
         let outcome = if installed { "installed" } else { "failed" };
         sqlx::query(
             "UPDATE install_jobs SET outcome = COALESCE(outcome, $2),
@@ -165,7 +177,8 @@ impl InstallJobRepository {
         .bind(id)
         .bind(outcome)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("record_install_outcome"))?;
         Ok(())
     }
 
@@ -173,7 +186,7 @@ impl InstallJobRepository {
         &self,
         id: Uuid,
         outcome: Option<bool>,
-    ) -> Result<Option<Notification>, sqlx::Error> {
+    ) -> Result<Option<Notification>, OperationError> {
         let state = match outcome {
             Some(true) => "installed",
             Some(false) => "failed",
@@ -193,7 +206,8 @@ impl InstallJobRepository {
         .bind(id)
         .bind(state)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_err(OperationError::at("load_install_notification"))?;
         Ok(target.map(|target| Notification {
             content: NotificationContent::Install {
                 job_id: id,
@@ -210,11 +224,11 @@ impl InstallJobRepository {
     pub(crate) async fn remove_invalid_token(
         &self,
         notification: &Notification,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), OperationError> {
         PushTokenRepository::remove_if_current(&self.pool, notification).await
     }
 
-    pub(crate) async fn pending_dispatch(&self) -> Result<Vec<Uuid>, sqlx::Error> {
+    pub(crate) async fn pending_dispatch(&self) -> Result<Vec<Uuid>, OperationError> {
         sqlx::query_scalar(
             "SELECT id FROM install_jobs WHERE queued_at IS NOT NULL AND dispatched_at IS NULL
              AND finished_at IS NULL AND expires_at > clock_timestamp()
@@ -222,13 +236,15 @@ impl InstallJobRepository {
         )
         .fetch_all(&self.pool)
         .await
+        .map_err(OperationError::at("load_pending_install_jobs"))
     }
 
-    pub(crate) async fn mark_dispatched(&self, id: Uuid) -> Result<(), sqlx::Error> {
+    pub(crate) async fn mark_dispatched(&self, id: Uuid) -> Result<(), OperationError> {
         sqlx::query("UPDATE install_jobs SET dispatched_at = clock_timestamp() WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_err(OperationError::at("mark_install_job_dispatched"))?;
         Ok(())
     }
 }

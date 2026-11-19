@@ -252,7 +252,7 @@ pub(super) async fn create(
         .repository
         .create(&artifact, &credential.hash, api.lifetime_days)
         .await
-        .map_err(ApiError::database("create_artifact"))?;
+        .map_err(ApiError::Internal)?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedArtifact {
@@ -287,7 +287,7 @@ pub(super) async fn complete(
         .repository
         .find(id)
         .await
-        .map_err(ApiError::database("find_artifact"))?
+        .map_err(ApiError::Internal)?
         .ok_or_else(missing)?;
     match api
         .storage
@@ -317,7 +317,7 @@ pub(super) async fn complete(
         .repository
         .complete(id)
         .await
-        .map_err(ApiError::database("complete_artifact"))?
+        .map_err(ApiError::Internal)?
     {
         return Err(missing());
     }
@@ -353,7 +353,7 @@ pub(super) async fn resolve(
         .repository
         .resolve(&hash)
         .await
-        .map_err(ApiError::database("resolve_artifact"))?
+        .map_err(ApiError::Internal)?
         .ok_or_else(missing)?;
     let now = Utc::now();
     let seconds = artifact
