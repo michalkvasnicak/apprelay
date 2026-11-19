@@ -22,7 +22,7 @@ use crate::{
     error::OperationError,
     http::ArtifactApi,
     install::{Application, deliver},
-    pairing::connect_verified_pairing,
+    phone::{VerifiedPhoneSession, verify_saved_pairing},
     r2::R2Storage,
     telemetry,
     temporal_pairing::{activity_failure, client, report_failure},
@@ -45,14 +45,17 @@ impl InstallWorkflow {
     #[run]
     pub async fn run(ctx: &mut WorkflowContext<Self>, id: Uuid) -> WorkflowResult<()> {
         let installed: WorkflowResult<()> = async {
-            ctx.execute_activity(
-                InstallActivities::verify_pairing,
-                id,
-                ActivityOptions::with_schedule_to_close_timeout(Duration::from_secs(30))
-                    .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
-                    .build(),
-            )
-            .await?;
+            // Keep the old activity sequence when replaying existing histories.
+            if !ctx.patched("install-verify-on-delivery-connection") {
+                ctx.execute_activity(
+                    InstallActivities::verify_pairing,
+                    id,
+                    ActivityOptions::with_schedule_to_close_timeout(Duration::from_secs(30))
+                        .retry_policy(RetryPolicy::builder().maximum_attempts(1).build())
+                        .build(),
+                )
+                .await?;
+            }
             let _ = ctx
                 .execute_activity(
                     InstallActivities::notify,
@@ -106,6 +109,7 @@ pub struct InstallActivities {
 
 #[activities]
 impl InstallActivities {
+    // Retained for install workflows started before the verification patch.
     #[activity]
     pub async fn verify_pairing(
         self: Arc<Self>,
@@ -120,7 +124,7 @@ impl InstallActivities {
             // Verify the saved credentials and peer identity without creating a tunnel.
             tokio::time::timeout(
                 remaining.min(Duration::from_secs(20)),
-                connect_verified_pairing(
+                verify_saved_pairing(
                     target.address,
                     target.port,
                     &mut target.record,
@@ -159,15 +163,21 @@ impl InstallActivities {
             let app = tokio::task::spawn_blocking(move || Application::unpack(bytes))
                 .await
                 .map_err(OperationError::at("stage_ipa_task"))??;
-            // Refresh the leased endpoint and verify it again on the connection used for delivery.
-            let target = self.pairings.install_target(id).await?;
+            // Refresh the lease after staging, then verify the connection delivery will use.
+            let mut target = self.pairings.install_target(id).await?;
             let remaining = (target.expires_at - Utc::now())
                 .to_std()
                 .map_err(OperationError::at("install_authorization_expired"))?;
-            tokio::time::timeout(
-                remaining.min(Duration::from_secs(540)),
-                deliver(id, target, app),
-            )
+            tokio::time::timeout(remaining.min(Duration::from_secs(540)), async {
+                let mut phone = VerifiedPhoneSession::connect(
+                    target.address,
+                    target.port,
+                    &mut target.record,
+                    &target.peer_key,
+                )
+                .await?;
+                deliver(id, &mut phone, app, target.expires_at).await
+            })
             .await
             .map_err(OperationError::at("phone_install_timeout"))?
         };

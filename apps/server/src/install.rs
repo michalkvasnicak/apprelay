@@ -6,24 +6,18 @@ use std::{
     time::Duration,
 };
 
+use chrono::{DateTime, Utc};
 use cms::{content_info::ContentInfo, signed_data::SignedData};
 use der::{Decode, asn1::OctetString};
 use idevice::{
     afc::{AfcClient, opcode::AfcFopenMode},
     installation_proxy::InstallationProxyClient,
     lockdown::LockdownClient,
-    remote_pairing::connect_tls_psk_tunnel_native,
-    rsd::RsdHandshake,
-    tcp::adapter::Adapter,
 };
 use tokio::{io::AsyncReadExt, time::timeout};
 use uuid::Uuid;
 
-use crate::{
-    db::pairings::InstallTarget,
-    error::OperationError,
-    pairing::{connect_verified_pairing, dial_device},
-};
+use crate::{error::OperationError, phone::VerifiedPhoneSession};
 
 const MAX_UNPACKED: u64 = 256 * 1024 * 1024;
 const MAX_PROFILE: u64 = 1024 * 1024;
@@ -196,51 +190,12 @@ fn collect_files(
 
 pub(crate) async fn deliver(
     id: Uuid,
-    mut target: InstallTarget,
+    phone: &mut VerifiedPhoneSession,
     app: Application,
+    expires_at: DateTime<Utc>,
 ) -> Result<(), OperationError> {
-    let mut control = connect_verified_pairing(
-        target.address,
-        target.port,
-        &mut target.record,
-        &target.peer_key,
-    )
-    .await?;
-    let port = control
-        .create_tcp_listener()
-        .await
-        .map_err(OperationError::at("tunnel-listener"))?;
-    let stream = dial_device(target.address, port).await?;
-    let tunnel = connect_tls_psk_tunnel_native(stream, control.encryption_key())
-        .await
-        .map_err(OperationError::at("tunnel-handshake"))?;
-    let client_ip = tunnel
-        .info
-        .client_address
-        .parse()
-        .map_err(OperationError::at("tunnel-client-address"))?;
-    let server_ip = tunnel
-        .info
-        .server_address
-        .parse()
-        .map_err(OperationError::at("tunnel-server-address"))?;
-    let port = tunnel.info.server_rsd_port;
-    let mtu = usize::from(tunnel.info.mtu);
-    if port == 0 || !(1280..=16_000).contains(&mtu) {
-        return Err(OperationError::without_source("tunnel-parameters"));
-    }
-    let mut adapter = Adapter::new(Box::new(tunnel.into_inner()), client_ip, server_ip);
-    adapter.set_mss(mtu - 60);
-    let mut handle = adapter.to_async_handle();
-    let rsd_stream = handle
-        .connect(port)
-        .await
-        .map_err(OperationError::at("rsd-connect"))?;
-    let mut rsd = RsdHandshake::new(rsd_stream)
-        .await
-        .map_err(OperationError::at("rsd-handshake"))?;
-    let mut lockdown = rsd
-        .connect::<LockdownClient>(&mut handle)
+    let mut lockdown = phone
+        .connect_service::<LockdownClient>()
         .await
         .map_err(OperationError::at("trusted-lockdown"))?;
     let udid = lockdown
@@ -260,12 +215,12 @@ pub(crate) async fn deliver(
     }
     drop(lockdown);
 
-    let mut installer = rsd
-        .connect::<InstallationProxyClient>(&mut handle)
+    let mut installer = phone
+        .connect_service::<InstallationProxyClient>()
         .await
         .map_err(OperationError::at("installation-service"))?;
-    let mut afc = rsd
-        .connect::<AfcClient>(&mut handle)
+    let mut afc = phone
+        .connect_service::<AfcClient>()
         .await
         .map_err(OperationError::at("afc-service"))?;
     if afc.get_file_info("PublicStaging").await.is_err() {
@@ -274,7 +229,7 @@ pub(crate) async fn deliver(
             .map_err(OperationError::at("staging-directory"))?;
     }
     let root = format!("PublicStaging/apprelay-{id}.app");
-    let remaining = (target.expires_at - chrono::Utc::now())
+    let remaining = (expires_at - Utc::now())
         .to_std()
         .map_err(OperationError::at("install-expired"))?;
     let result = timeout(remaining.min(Duration::from_secs(480)), async {
@@ -293,7 +248,7 @@ pub(crate) async fn deliver(
     drop(installer);
     // Reopen AFC after interrupted framing. Never remove another job's staging.
     let _ = timeout(Duration::from_secs(5), async {
-        let mut afc = rsd.connect::<AfcClient>(&mut handle).await?;
+        let mut afc = phone.connect_service::<AfcClient>().await?;
         afc.remove_all(&root).await
     })
     .await;

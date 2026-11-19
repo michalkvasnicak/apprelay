@@ -28,7 +28,8 @@ use crate::{
         pairings::PairingStore,
     },
     error::OperationError,
-    pairing::{Session, connect_verified_pairing},
+    pairing::Session,
+    phone::verify_saved_pairing,
     telemetry,
 };
 
@@ -401,7 +402,7 @@ impl PairingActivities {
                             tracing::info!("Remote pairing port reported; verifying saved pairing");
                             tokio::time::timeout(
                                 Duration::from_secs(20),
-                                connect_verified_pairing(
+                                verify_saved_pairing(
                                     peer,
                                     port,
                                     &mut record.pairing_file,
