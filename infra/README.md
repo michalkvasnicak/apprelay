@@ -38,13 +38,9 @@ in `temporal-data`. Its gRPC API is exposed only at `127.0.0.1:7233` and its UI 
 <http://localhost:8233>. The development server creates the `default` namespace.
 This is not a production Temporal deployment and has no authentication.
 
-Run the pairing worker natively, not in Docker: it needs the host's WireGuard
-interface and VPN-agent Unix socket. See [pairing worker](../apps/server/README.md#pairing-worker-macos)
-for startup and manually queueing a device. The 20 concurrent activity slots
-are per worker and shared by VPN readiness checks and interactive pairing.
-Export `DATABASE_URL` in its shell; optional settings
-are `APPRELAY_TEMPORAL_ADDRESS=http://127.0.0.1:7233` and
-`APPRELAY_TEMPORAL_NAMESPACE=default`.
+Run the pairing worker natively: it needs the host's WireGuard interface and
+VPN-agent Unix socket. See the [server startup guide](../apps/server/README.md#run-locally)
+for commands and required environment settings.
 
 ## Native application configuration
 

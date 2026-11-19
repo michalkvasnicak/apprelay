@@ -1,169 +1,150 @@
 # AppRelay server
 
-Two processes: a root `vpn-agent` owns WireGuard; the unprivileged application server manages it through a restricted Unix socket.
-
-## Platform support
-
-| Platform        | Status                                                                         |
-| --------------- | ------------------------------------------------------------------------------ |
-| macOS           | Implemented using `wireguard-go` and a dynamically allocated `utun` interface. |
-| Linux           | Implemented using kernel WireGuard and the dedicated `wg-apprelay` interface.  |
-| Other platforms | Not supported.                                                                 |
-
-On macOS, `wireguard-go` and `wg` (from `wireguard-tools`) must be on the agent's `PATH`.
-
-## Running on macOS
-
-From `apps/server`, with `APPRELAY_VPN_PRIVATE_KEY_FILE` exported, build as your normal user and start the agent as root:
-
-```sh
-cargo build --bins
-sudo env PATH="$PATH" \
-  APPRELAY_VPN_PRIVATE_KEY_FILE="$APPRELAY_VPN_PRIVATE_KEY_FILE" \
-  APPRELAY_VPN_AGENT_UID="$(id -u)" \
-  APPRELAY_VPN_ADDRESS="${APPRELAY_VPN_ADDRESS:-10.77.0.1/24}" \
-  APPRELAY_VPN_PORT="${APPRELAY_VPN_PORT:-51820}" \
-  ./target/debug/vpn-agent
-```
-
-Keep the agent running. In another terminal, run `pnpm start` from `apps/server` **without sudo**. Stopping the server does not stop the VPN; stopping the agent cleans it up.
-
-## Running on Linux
-
-The agent requires Linux kernel WireGuard support, with `ip` (from `iproute2`) and `wg` (from `wireguard-tools`) on its `PATH`. On Ubuntu, install them with `sudo apt-get install iproute2 wireguard-tools`. If WireGuard is a loadable module, load it on the host with `sudo modprobe wireguard` before starting a container. No `wireguard-go` process or `/dev/net/tun` device is needed.
-
-Use the same build and agent command as in the macOS section. The agent creates `wg-apprelay`, assigns `APPRELAY_VPN_ADDRESS`, and configures the connected subnet route and UDP listener. It refuses to take over an existing interface. Configuration failures roll back the newly created interface; graceful shutdown deletes it. An abrupt termination can leave the interface and agent socket behind: after confirming the old agent is no longer running, remove only its stale resources before restarting (`sudo ip link delete dev wg-apprelay` and `sudo rm /var/run/apprelay/vpn-agent.sock` for the default paths).
-
-The default agent socket on Linux is `/var/run/apprelay/vpn-agent.sock`. The server and pairing worker must run under the non-root UID selected by `APPRELAY_VPN_AGENT_UID`. They must share the agent's network namespace to access the VPN address/interface, and have access to its Unix socket.
-
-Linux pairing binds its TCP and unicast DNS-SD sockets to the VPN interface using `SO_BINDTODEVICE`, rather than macOS's `IP_BOUND_IF`. Provision `CAP_NET_RAW` for the non-root pairing worker; a binding failure aborts the session instead of falling back to another interface. For a native deployment, a service manager can grant this capability (for example, systemd `AmbientCapabilities=CAP_NET_RAW`). The API and notification worker do not need it. Pairing and notification workers and workflow dispatch are enabled on both platforms; their existing Temporal, PostgreSQL, encryption, and APNs settings still apply. No system Bonjour/Avahi service or USB access is used by this pairing flow.
-
-For a future container deployment, the agent must run as root with `NET_ADMIN` and sufficient permissions to prepare/chown the Unix socket. Do not grant `SYS_MODULE` or full privileged mode: the kernel module belongs to the host. Docker packaging is not included here.
-
-## Local PostgreSQL and HTTPS
-
-See [local infrastructure](../../infra/README.md) for the root Docker Compose setup. PostgreSQL and Caddy run in containers; this server and the VPN agent remain native on the host. Caddy proxies HTTPS to this server on port 8080. PostgreSQL integration is not implemented yet.
-
-The native listener defaults to `127.0.0.1:8080`. Override it with the exported `APPRELAY_HTTP_ADDRESS` environment variable if needed for Colima host connectivity. For example, `APPRELAY_HTTP_ADDRESS=0.0.0.0:8080 pnpm run server` listens on all IPv4 interfaces; use firewall restrictions to avoid unwanted direct HTTP access. TLS is handled by Caddy, not this listener.
-
-## Production Linux firewall
-
-The intended production policy is default-deny inbound and forwarded traffic, with only these exceptions:
-
-| Source          | Destination     | Purpose                                                      |
-| --------------- | --------------- | ------------------------------------------------------------ |
-| Public internet | TCP 443         | Caddy HTTPS, proxied to the HTTP service on port 8080        |
-| Public internet | UDP 51820       | WireGuard tunnel (adjust if configured differently)          |
-| VPN interface   | TCP 8080        | HTTP service on the server's VPN address                     |
-| VPN interface   | UDP 5354        | Device-specific unicast DNS-SD pairing discovery             |
-| VPN interface   | TCP 20000–20049 | Up to 50 pairing listeners bound to the server's VPN address |
-
-For example, on a dedicated host using UFW, the following allows HTTPS, WireGuard, and VPN HTTP only. Pairing additionally requires inbound UDP 5354 and TCP ports 20000–20049 on `wg-apprelay` to `10.77.0.1`; restrict any such rules to the VPN subnet and do not expose these ports publicly. The agent does not install firewall rules.
-
-```sh
-sudo ufw default deny incoming
-sudo ufw default deny routed
-sudo ufw default allow outgoing
-sudo ufw allow 443/tcp
-sudo ufw allow 51820/udp
-sudo ufw allow in on wg-apprelay to 10.77.0.1 port 8080 proto tcp
-sudo ufw enable
-```
-
-Before enabling, ensure console access or add a restricted SSH rule for your administrator IP to avoid locking yourself out. Apply the policy to IPv4 and IPv6 (`IPV6=yes` in `/etc/default/ufw`), and mirror public-port restrictions in the hosting provider's firewall. Preserve essential ICMP/ICMPv6 traffic for network operation.
-
-Do not publicly expose TCP 8080 or PostgreSQL's TCP 5432. Bind PostgreSQL to loopback/private container networking and expose the HTTP listener only where Caddy and the VPN interface can reach it. Keep forwarding denied: VPN devices must not reach one another, private networks, or the internet through this server. Firewall ports do not provide HTTP route authorization.
-
-Docker-published ports can bypass UFW's input rules; do not publish database/backend ports publicly, and enforce equivalent restrictions in Docker's forwarding path if using containers. Configure Caddy certificate issuance without inbound TCP 80 (for example, TLS-ALPN-01 or DNS-01) if keeping only the two public ports above.
+The backend for [apprelay.app](https://apprelay.app) serves the web app and API, coordinates iPhone pairing and installs, and issues upload and download URLs for shared builds. IPA signing happens in the browser, not on the server. For the user workflow, see the [AppRelay README](../../README.md).
 
 ## Configuration
 
-Configuration comes from exported environment variables, not `.env` files.
+Export runtime variables for each process or set them in the deployment environment. Native server processes do not load `.env` files. Defaults below are for native runs unless noted; see [`compose.coolify.yaml`](../../compose.coolify.yaml) for deployment overrides.
 
-| Variable                           | Process                 | Default                                   | Description                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------- | ----------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REDIS_URL`                        | Server                  | Required                                  | Private Redis URL for shared registration and public pairing-attempt rate limits, e.g. `redis://127.0.0.1:6379/0`. Supports credentials and `rediss://` TLS; Redis must permit `EVALSHA`, `SCRIPT LOAD`, `GET`, `SET`, and `TIME` plus connection commands.                                                                         |
-| `APPRELAY_TRUSTED_PROXY_CIDRS`     | Server                  | Empty (trust none)                        | Comma-separated CIDRs of trusted TCP proxy peers. Only these peers may supply `CF-Connecting-IP`, which must contain exactly one valid IP. Other peers are limited by their socket IP and forwarding headers are ignored. Trust only proxies that overwrite this header, never VPN/client networks. Required explicitly in Coolify. |
-| `APPRELAY_API_KEY`                 | Server                  | Required                                  | 64-character hexadecimal app key required in the `X-App-Key` header on device API requests; public pairing-attempt creation and status do not require it. Must exactly match the mobile app's `EXPO_PUBLIC_API_KEY`; an extractable deterrent, not a replacement for device authentication.                                         |
-| `DATABASE_URL`                     | Server and both workers | Required                                  | PostgreSQL connection URL, e.g. `postgres://apprelay:<URL-encoded-password>@127.0.0.1:5432/apprelay`.                                                                                                                                                                                                                               |
-| `PAIRING_ENCRYPTION_KEY`           | Server and both workers | Required                                  | Base64-encoded random 32-byte encryption key. Generate once with `openssl rand -base64 32`; store securely and reuse across restarts and workers.                                                                                                                                                                                   |
-| `APPRELAY_APNS_ENVIRONMENT`        | Server                  | Required                                  | APNs environment for uploaded push tokens: `sandbox` for development builds or `production` for TestFlight/App Store builds.                                                                                                                                                                                                        |
-| `APPRELAY_APNS_SIGNING_KEY_FILE`   | Notification worker     | Required                                  | Path to the Apple APNs P-256 signing key (`.p8`, PKCS#8 PEM). Keep outside version control with no group/other permissions, e.g. `chmod 600 /path/to/AuthKey.p8`.                                                                                                                                                                   |
-| `APPRELAY_APNS_KEY_ID`             | Notification worker     | Required                                  | Apple APNs signing key ID.                                                                                                                                                                                                                                                                                                          |
-| `APPRELAY_APNS_TEAM_ID`            | Notification worker     | Required                                  | Apple Developer team ID.                                                                                                                                                                                                                                                                                                            |
-| `APPRELAY_APNS_TOPIC`              | Notification worker     | Required                                  | App bundle ID authorized by the signing key; the topic is configured by the server, not supplied by the device.                                                                                                                                                                                                                     |
-| `APPRELAY_TEMPORAL_ADDRESS`        | Server and both workers | `http://127.0.0.1:7233`                   | Temporal connection URL.                                                                                                                                                                                                                                                                                                            |
-| `APPRELAY_TEMPORAL_NAMESPACE`      | Server and both workers | `default`                                 | Temporal namespace; it must exist on the Temporal server.                                                                                                                                                                                                                                                                           |
-| `APPRELAY_HTTP_ADDRESS`            | Server                  | `127.0.0.1:8080`                          | HTTP listener address; TLS is handled by Caddy. Bind to `0.0.0.0:8080` to also accept direct VPN clients. Push token management and pairing-code retrieval require a direct VPN connection, not a reverse proxy.                                                                                                                    |
-| `APPRELAY_ANISETTE_URL`            | Server                  | Required                                  | Public HTTPS origin of the anisette v3 provider on port 443, reachable by both the server and browser. No credentials, path, query, or fragment.                                                                                                                                                                                    |
-| `APPRELAY_DEVICE_LIFETIME_SECONDS` | Server                  | `604800` (7 days)                         | Positive 32-bit integer lifetime for new or expired registrations. Active registrations keep their expiry; changing this does not alter existing deadlines.                                                                                                                                                                         |
-| `APPRELAY_VPN_PRIVATE_KEY_FILE`    | Agent                   | Required                                  | Existing regular private-key file with no group/other permissions (typically `600`). Generate once with `(umask 077; wg genkey > /path/to/server.key)` and reuse across restarts. Keep outside version control; only the agent needs access and passes it to `wg` through stdin.                                                    |
-| `APPRELAY_VPN_ADDRESS`             | Agent                   | `10.77.0.1/24`                            | Server IPv4 address and prefix length; the agent also adds a route for this subnet.                                                                                                                                                                                                                                                 |
-| `APPRELAY_VPN_PORT`                | Agent                   | `51820`                                   | WireGuard UDP listen port, between 1 and 65535.                                                                                                                                                                                                                                                                                     |
-| `APPRELAY_VPN_AGENT_UID`           | Agent                   | `SUDO_UID`                                | Permitted non-root server user's UID.                                                                                                                                                                                                                                                                                               |
-| `APPRELAY_VPN_AGENT_SOCKET`        | Server and agent        | `/var/db/apprelay/vpn-agent.sock` (macOS) | Unix socket path; Linux defaults to `/var/run/apprelay/vpn-agent.sock`. Set for the server, pairing worker, and agent when overriding, including explicitly in `sudo env`. Its directory must be root-owned and not group/world-writable.                                                                                           |
-| `VITE_APPRELAY_APP_SCHEME`         | Web build               | Unset (pairing disabled)                  | Set in the Vite environment or pass as a Docker build argument. Must match `EXPO_PUBLIC_APP_SCHEME` in the iOS build. See [`web/.env.example`](web/.env.example).                                                                                                                                                                   |
-| `VITE_UMAMI_SCRIPT_URL`            | Web build               | Unset (analytics disabled)                | Public HTTPS Umami tracker URL. Set both Umami variables in the Vite build environment or pass them as Docker build arguments. Analytics runs only in production builds.                                                                                                                                                            |
-| `VITE_UMAMI_WEBSITE_ID`            | Web build               | Unset (analytics disabled)                | Public Umami website ID. Pageviews report only `/`, `/pair`, or `/s/shared`, without tokens, query strings, fragments, or referrers.                                                                                                                                                                                                |
+### API and workers
+
+| Variable                           | Used by                          | Default                                    | Purpose                                                                                                                                 |
+| ---------------------------------- | -------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                     | API, all workers                 | Required                                   | Private PostgreSQL connection URL.                                                                                                      |
+| `REDIS_URL`                        | API                              | Required                                   | Private Redis URL for shared rate limits. Use `rediss://` for TLS.                                                                      |
+| `PAIRING_ENCRYPTION_KEY`           | API, all workers                 | Required                                   | Persistent base64-encoded 32-byte key. Generate once with `openssl rand -base64 32` and share it across these processes.                |
+| `APPRELAY_TEMPORAL_ADDRESS`        | API, all workers                 | `http://127.0.0.1:7233`                    | Temporal connection URL; required explicitly in Coolify.                                                                                |
+| `APPRELAY_TEMPORAL_NAMESPACE`      | API, all workers                 | `default` (`apprelay` in Coolify)          | Existing Temporal namespace.                                                                                                            |
+| `APPRELAY_HTTP_ADDRESS`            | API                              | `127.0.0.1:8080`                           | HTTP bind address behind the HTTPS proxy. Coolify binds to `0.0.0.0:8080` inside the container.                                         |
+| `APPRELAY_WEB_DIR`                 | API                              | `web/dist` (`/opt/apprelay/web` in Docker) | Directory containing the built web app.                                                                                                 |
+| `APPRELAY_ANISETTE_URL`            | API                              | Required                                   | Public HTTPS origin of an anisette v3 provider on port 443, reachable by the API and browser. No credentials, path, query, or fragment. |
+| `APPRELAY_API_KEY`                 | API                              | Required                                   | 64-character hex app key for the `X-App-Key` header on device API requests. Must match the iOS build's `EXPO_PUBLIC_API_KEY`.           |
+| `APPRELAY_TRUSTED_PROXY_CIDRS`     | API                              | Unset (trust none)                         | Comma-separated CIDRs of proxy peers allowed to supply `CF-Connecting-IP`. Required explicitly in Coolify.                              |
+| `APPRELAY_DEVICE_LIFETIME_SECONDS` | API                              | `604800` (7 days)                          | Lifetime for new or renewed expired registrations. Existing active registrations keep their expiry.                                     |
+| `APPRELAY_APNS_ENVIRONMENT`        | API                              | Required                                   | `sandbox` for development builds or `production` for TestFlight and App Store builds.                                                   |
+| `APPRELAY_APNS_SIGNING_KEY_FILE`   | Notification and install workers | Required for notifications                 | Path to the APNs `.p8` signing key. The install worker can run without push notifications by leaving this unset.                        |
+| `APPRELAY_APNS_KEY_ID`             | Notification and install workers | Required with signing key                  | Apple APNs key ID.                                                                                                                      |
+| `APPRELAY_APNS_TEAM_ID`            | Notification and install workers | Required with signing key                  | Apple Developer team ID.                                                                                                                |
+| `APPRELAY_APNS_TOPIC`              | Notification and install workers | Required with signing key                  | App bundle ID authorized by the signing key.                                                                                            |
+
+### WireGuard
+
+| Variable                        | Used by                        | Default                                                                                 | Purpose                                                                                   |
+| ------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `APPRELAY_VPN_PRIVATE_KEY_FILE` | VPN agent                      | Required                                                                                | Path to a persistent WireGuard private key generated with `wg genkey`.                    |
+| `APPRELAY_VPN_ADDRESS`          | VPN agent                      | `10.77.0.1/24`                                                                          | Server's WireGuard IPv4 address and subnet.                                               |
+| `APPRELAY_VPN_PORT`             | VPN agent                      | `51820`                                                                                 | WireGuard UDP listen port.                                                                |
+| `APPRELAY_VPN_AGENT_UID`        | VPN agent                      | `SUDO_UID`                                                                              | Non-root UID allowed to use the agent socket. The API and pairing worker run as this UID. |
+| `APPRELAY_VPN_AGENT_SOCKET`     | VPN agent, API, pairing worker | `/var/db/apprelay/vpn-agent.sock` on macOS; `/var/run/apprelay/vpn-agent.sock` on Linux | Shared Unix socket path. Set the same path on all three if overriding.                    |
 
 ### R2 upload configuration
 
-Export the five required variables below on the HTTP server to enable anonymous uploads.
-Leave all R2 upload configuration unset to disable uploads; partial or invalid
-configuration fails startup.
+Set the five required variables on both the API and install worker to enable sharing and installs. Leave all R2 variables unset on the API to disable uploads, and do not run the install worker without R2. To set a finite lifetime in Coolify, pass `APPRELAY_IPA_LIFETIME_DAYS` to the API container. See the [R2 bucket setup](R2.md) for CORS and retention rules.
 
-| Variable                        | Description                                                                                                                                                                                                       |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `APPRELAY_R2_ACCOUNT_ID`        | Your 32-character Cloudflare account ID.                                                                                                                                                                          |
-| `APPRELAY_R2_BUCKET`            | Dedicated private R2 bucket name.                                                                                                                                                                                 |
-| `APPRELAY_R2_ACCESS_KEY_ID`     | R2 S3 API access key with Object Read & Write permission, restricted to this bucket.                                                                                                                              |
-| `APPRELAY_R2_SECRET_ACCESS_KEY` | Corresponding R2 secret access key.                                                                                                                                                                               |
-| `APPRELAY_PUBLIC_ORIGIN`        | Public HTTPS origin, e.g. `https://apprelay.example.com`, without a path.                                                                                                                                         |
-| `APPRELAY_IPA_LIFETIME_DAYS`    | Optional lifetime for new IPAs and their share links, in whole days (1–65535). Unset means indefinite retention. Changes do not alter existing uploads. Configure matching R2 lifecycle rules as described below. |
+| Variable                        | Default            | Purpose                                                                                                         |
+| ------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `APPRELAY_R2_ACCOUNT_ID`        | Required           | Cloudflare account ID.                                                                                          |
+| `APPRELAY_R2_BUCKET`            | Required           | Dedicated private R2 bucket.                                                                                    |
+| `APPRELAY_R2_ACCESS_KEY_ID`     | Required           | R2 S3 API access key with Object Read & Write access to that bucket only.                                       |
+| `APPRELAY_R2_SECRET_ACCESS_KEY` | Required           | Corresponding R2 secret key.                                                                                    |
+| `APPRELAY_PUBLIC_ORIGIN`        | Required           | Public HTTPS origin for share links, such as `https://apprelay.app`, without a path.                            |
+| `APPRELAY_IPA_LIFETIME_DAYS`    | Unset (indefinite) | Retention for new shared IPAs and share links, in whole days (`1`–`65535`). Existing uploads keep their expiry. |
 
-Configure your bucket using the [R2 bucket setup](R2.md). Configure reverse-proxy logs to redact
-`/v1/artifacts/*` and avoid logging response bodies.
+### Web build and telemetry
 
-### Backend telemetry configuration
+`VITE_*` values are public and embedded at build time. See [`web/.env.example`](web/.env.example) for local Vite configuration.
 
-The HTTP server, VPN agent, and both workers emit one JSON event per line to
-stdout. HTTP events use the matched route template (or `unmatched`), not the raw
-URL. Sentry remains separate from log collection.
+| Variable                   | Used by                     | Default                  | Purpose                                                                                                                                            |
+| -------------------------- | --------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_APPRELAY_APP_SCHEME` | Web build                   | Unset (pairing disabled) | Pairing link scheme. Must match the iOS build's `EXPO_PUBLIC_APP_SCHEME`.                                                                          |
+| `VITE_UMAMI_SCRIPT_URL`    | Web build                   | Unset                    | Public HTTPS Umami tracker URL. Set both Umami variables to enable production analytics.                                                           |
+| `VITE_UMAMI_WEBSITE_ID`    | Web build                   | Unset                    | Public Umami website ID.                                                                                                                           |
+| `APPRELAY_LOG_LEVEL`       | API, VPN agent, all workers | `info`                   | Minimum log level: `error`, `warn`, `info`, `debug`, `trace`, or `off`.                                                                            |
+| `SENTRY_DSN`               | API, VPN agent, all workers | Unset (disabled)         | Runtime Sentry DSN.                                                                                                                                |
+| `SENTRY_ENVIRONMENT`       | API, VPN agent, all workers | SDK default              | Runtime Sentry environment.                                                                                                                        |
+| `SENTRY_RELEASE`           | Runtime and builds          | Unset                    | Release identifier, such as a commit SHA. Docker carries its build value into runtime unless overridden.                                           |
+| `VITE_SENTRY_DSN`          | Web build                   | Unset (disabled)         | Public Sentry DSN for production web builds.                                                                                                       |
+| `VITE_SENTRY_ENVIRONMENT`  | Web build                   | `production`             | Sentry environment for the web app.                                                                                                                |
+| `SENTRY_AUTH_TOKEN`        | Build only                  | Unset                    | Required for Sentry uploads when `VITE_SENTRY_DSN` or `SENTRY_BACKEND_PROJECT` is set. In Docker, pass as a BuildKit secret, not a build argument. |
+| `SENTRY_ORG`               | Build only                  | Unset                    | Sentry organization slug, required for either upload.                                                                                              |
+| `SENTRY_PROJECT`           | Web build                   | Unset                    | Sentry project slug, required when `VITE_SENTRY_DSN` is set.                                                                                       |
+| `SENTRY_BACKEND_PROJECT`   | Docker build                | Unset                    | Sentry project slug; setting it enables backend debug-symbol and source uploads.                                                                   |
 
-On the current Coolify host, Alloy already collects Docker stdout and stderr and
-sends them to Loki. Redeploy the AppRelay stack to pick up JSON logging; no
-Coolify log drain or Alloy configuration change is needed. In **Grafana → Explore
-→ Loki**, run:
+### Coolify deployment
 
-```logql
-{project="apprelay", source="docker"} | json | __error__="" | level="ERROR"
+| Coolify setting                       | Default                 | Purpose                                                                               |
+| ------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| `APPRELAY_DOCKER_NETWORK`             | `coolify`               | Existing private Docker network that can reach PostgreSQL and Temporal.               |
+| `APPRELAY_IMAGE`                      | `apprelay-server:local` | Shared image tag for the API, agent, and workers.                                     |
+| `APPRELAY_VPN_PRIVATE_KEY_HOST_FILE`  | Required                | Absolute host path to the WireGuard key mounted into the agent.                       |
+| `APPRELAY_APNS_SIGNING_KEY_HOST_FILE` | Required                | Absolute host path to the APNs key mounted into the notification and install workers. |
+
+## How the services communicate
+
+```mermaid
+flowchart LR
+    subgraph Backend[AppRelay backend]
+        API[HTTP API and web app]
+        Agent[VPN agent]
+        Pair[Pairing worker]
+        Install[Install worker]
+        Notify[Notification worker]
+    end
+
+    Web[Browser] -->|HTTPS: start pairing and request installs| API
+    CLI[Upload CLI] -->|HTTPS: create and confirm shares| API
+    Phone[iPhone] -->|HTTPS: register, claim pairing, read code| API
+    API -->|Manage peers via Unix socket| Agent
+    Pair -->|Check VPN via Unix socket| Agent
+    Phone <-->|WireGuard tunnel| Agent
+    Pair <-->|Pair with iOS over WireGuard| Phone
+    Install -->|Deliver signed build over WireGuard| Phone
+    API -->|Store device, pairing and job state| DB[(PostgreSQL)]
+    Pair & Install & Notify <-->|Read and update state| DB
+    API -->|Rate-limit requests| Redis[(Redis)]
+    API -->|Start pairing work| Temporal[Temporal]
+    Pair & Install & Notify <-->|Run background workflows| Temporal
+    API -->|Issue signed URLs and verify uploads| R2[(Private Cloudflare R2)]
+    CLI -->|Upload original IPA| R2
+    Web <-->|Download shared IPA or upload signed IPA| R2
+    Install -->|Fetch signed IPA| R2
+    API -->|Relay sign-in and provisioning requests| Apple[Apple services]
+    Web -->|Fetch sign-in data during signing| Anisette[Anisette provider]
+    Notify -->|Send pairing updates| APNs[Apple Push Notification service]
+    Install -->|Send install updates| APNs
+    APNs -->|Push updates| Phone
 ```
 
-Add `service="api"` to the selector to narrow the query to HTTP events. Parsed
-HTTP fields include `method`, `route`, `status`, and `elapsed_ms`. For phone
-installs, use `service="install-worker"` and look for `job_id` and `reason`.
-Install activity errors also report to Sentry with a `reason` tag when a DSN is
-configured. Tempo is for traces and does not receive these log events.
+1. **Share:** The CLI asks the API for an upload URL, sends the IPA directly to R2, then confirms the upload. Testers open the resulting share link in the browser.
+2. **Pair:** The browser opens a pairing session. Once the iPhone claims it, Temporal coordinates the work and the pairing worker talks to iOS over WireGuard. The notification worker sends pairing updates through APNs.
+3. **Install:** The browser signs the shared or local IPA, uploads the signed build to R2, and confirms the install request. The install worker picks up the confirmed job, fetches the build from R2, and installs it over WireGuard. The browser reads the result from the API.
 
-| Variable             | Process                        | Default          | Description                                                                                                       |
-| -------------------- | ------------------------------ | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `APPRELAY_LOG_LEVEL` | Server, VPN agent, all workers | `info`           | Minimum application log level: `error`, `warn`, `info`, `debug`, `trace`, or `off`. Dependency logs are excluded. |
-| `SENTRY_DSN`         | Server, VPN agent, all workers | Empty (disabled) | Runtime Sentry DSN. Missing or empty disables reporting.                                                          |
-| `SENTRY_ENVIRONMENT` | Server, VPN agent, all workers | SDK environment  | Runtime deployment environment; SDK uses `development` for debug builds and `production` for release builds.      |
-| `SENTRY_RELEASE`     | Server, VPN agent, all workers | Unset            | Runtime release identifier; Docker embeds the supplied build argument, which can be overridden at runtime.        |
+## Run locally
 
-### Build telemetry configuration
+Start PostgreSQL, Redis, Temporal, and Caddy using the [local infrastructure guide](../../infra/README.md). Run the backend processes natively on macOS or Linux. On macOS, install `wireguard-go` and `wg`; on Linux, enable kernel WireGuard and install `ip` and `wg`. Linux pairing also requires `CAP_NET_RAW` for the pairing worker.
 
-| Variable                  | Default          | Description                                                                                                                                                         |
-| ------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VITE_SENTRY_DSN`         | Empty (disabled) | Public Sentry DSN, embedded in production web builds.                                                                                                               |
-| `VITE_SENTRY_ENVIRONMENT` | `production`     | Sentry environment for the web app.                                                                                                                                 |
-| `SENTRY_AUTH_TOKEN`       | Empty            | Build-only upload token; required when `VITE_SENTRY_DSN` or `SENTRY_BACKEND_PROJECT` is set. Supply through a BuildKit secret with the same name for Docker builds. |
-| `SENTRY_ORG`              | Unset            | Build-only Sentry organization slug; required when `VITE_SENTRY_DSN` or `SENTRY_BACKEND_PROJECT` is set. Pass as a Docker build argument.                           |
-| `SENTRY_PROJECT`          | Unset            | Build-only Sentry project slug; required when `VITE_SENTRY_DSN` is set. Pass as a Docker build argument.                                                            |
-| `SENTRY_BACKEND_PROJECT`  | Unset            | Docker build-only backend project slug. Setting it enables debug-symbol and source uploads for the server, VPN agent, and both workers.                             |
-| `SENTRY_RELEASE`          | Unset            | Optional release identifier for the web and backend builds, such as the commit SHA.                                                                                 |
+After exporting the settings above, run these commands from the repository root in separate terminals:
 
-## API documentation
+```sh
+pnpm --filter @apprelay/server vpn:agent             # Starts the agent with sudo
+pnpm server                                         # API and built web app
+pnpm --filter @apprelay/server pairing:worker        # iPhone pairing
+pnpm --filter @apprelay/server notifications:worker  # Pairing pushes (requires APNs)
+pnpm --filter @apprelay/server install:worker        # Installs (requires R2)
+```
 
-The OpenAPI specification is available at `/openapi.json`.
+Only the VPN agent runs as root. The API and pairing worker need access to its Unix socket, and the pairing and install workers need access to its WireGuard interface. Run `pnpm web:dev` for the web dev server, or `pnpm web:build` to serve a production web build from the API.
+
+## API and diagnostics
+
+- [`/health`](https://apprelay.app/health) checks API liveness, not database, workflow, or VPN readiness.
+- [`/openapi.json`](https://apprelay.app/openapi.json) serves the API contract.
+- Backend services emit structured logs to stdout. Sentry reports errors separately when configured.
+
+## Security
+
+- Serve public API traffic over HTTPS and expose the configured WireGuard UDP port. Keep the backend HTTP listener, PostgreSQL, Redis, Temporal, and pairing listeners off the public network.
+- Keep VPN forwarding disabled. Limit VPN ingress to pairing discovery (UDP `5354`) and pairing listeners (TCP `20000`–`20049`) at the server's VPN address. Clients must not be able to route to one another, private networks, or the internet through the server.
+- Trust only the immediate proxy peers you control in `APPRELAY_TRUSTED_PROXY_CIDRS`, and ensure they overwrite `CF-Connecting-IP`. Never trust client or VPN subnets. The shipped app key can be extracted and is not a substitute for device authentication.
+- Keep keys outside version control. Use mode `0600` on key files, with the WireGuard key readable by the agent and the APNs key readable by the workers. Keep the R2 bucket private and scope credentials to that bucket.
+- Redact share and session tokens from proxy logs (including `/s/*` and `/v1/artifacts/*`), and do not log request or response bodies.
