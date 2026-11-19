@@ -1,10 +1,10 @@
-# AppRelay VPN for iPhone
+# AppRelay VPN for iPhone and iPad
 
-AppRelay VPN connects an iPhone to [apprelay.app](https://apprelay.app) so the server can pair with the device and deliver development builds. The companion app does not sign or install IPAs itself: signing happens in the browser, and the server delivers the signed build to iOS over WireGuard.
+AppRelay VPN connects an iPhone or iPad to [apprelay.app](https://apprelay.app) so the server can pair with the device and deliver development builds. The companion app does not sign or install IPAs itself: signing happens in the browser, and the server delivers the signed build to iOS over WireGuard.
 
 [Get AppRelay VPN on TestFlight](https://testflight.apple.com/join/yW4QnZEg) · [Pair and install a build](../../README.md#sign-and-install-on-your-iphone)
 
-The app requires a physical iPhone running **iOS 27 or later**. Expo Go, the iOS simulator, Android, and web are not supported.
+VPN, pairing, and build delivery require a physical iPhone or iPad running **iOS/iPadOS 27 or later**. Simulator supports a UI-only preview. Expo Go, Android, and web are not supported.
 
 ## Configuration
 
@@ -92,6 +92,17 @@ pnpm ios
 ```
 
 Select your connected iPhone and approve the device trust, signing, and VPN setup prompts as they appear. After changing native settings or dependencies, regenerate the iOS project with `pnpm --filter @apprelay/mobile prebuild:ios` and rebuild with `pnpm ios`. If the bundle ID changes, add `--clean` to prebuild to recreate the generated project.
+
+### Preview in Simulator
+
+With `.env.local` configured, run `pnpm ios:simulator` from the repository root and choose an iPhone Duo or iPad simulator. This regenerates the local `apps/mobile/ios` project without the WireGuard extension, so it doesn't need the pinned Go toolchain or device provisioning. Connect and pairing are disabled in the preview.
+
+Switching back to a physical device requires regenerating the full project before building:
+
+```sh
+pnpm --filter @apprelay/mobile prebuild:ios --clean
+pnpm ios
+```
 
 ## Publish to TestFlight
 

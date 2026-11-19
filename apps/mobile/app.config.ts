@@ -65,17 +65,26 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     throw new Error("Set EXPO_PUBLIC_API_KEY to the server's 64-character hexadecimal app key.");
   }
 
-  const name = config.name ?? "AppRelay VPN";
+  let name = config.name ?? "AppRelay VPN";
+  const simulator = process.env.APPRELAY_ENV === "simulator";
+  if (simulator) {
+    name += " (Simulator)";
+  } else if (process.env.APPRELAY_ENV === "local") {
+    name += " (Local)";
+  }
+
   const sentryOrg = process.env.SENTRY_ORG?.trim();
   const sentryProject = process.env.SENTRY_PROJECT?.trim();
   const sentryUrl = process.env.SENTRY_URL?.trim();
 
   return {
     ...config,
-    name: process.env.APPRELAY_ENV === "local" ? `${name} (Local)` : name,
+    name,
     slug: config.slug ?? "apprelay",
     plugins: [
-      ...(config.plugins ?? []),
+      ...(config.plugins ?? []).filter(
+        (plugin) => !simulator || plugin !== "./plugins/with-wireguard",
+      ),
       ...(sentryOrg && sentryProject && sentryUrl
         ? [
             [
@@ -85,10 +94,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           ]
         : []),
     ],
-    scheme,
+    scheme: simulator ? `${scheme}-simulator` : scheme,
     ios: {
       ...config.ios,
-      bundleIdentifier,
+      bundleIdentifier: simulator ? `${bundleIdentifier}.simulator` : bundleIdentifier,
       infoPlist: {
         ...config.ios?.infoPlist,
         // Matches Apple's no-documentation assessment with France excluded from distribution.

@@ -72,7 +72,7 @@ enum VpnError: LocalizedError {
         case .busy:
             return "A VPN operation is already in progress."
         case .simulator:
-            return "WireGuard requires a signed build on a physical iPhone."
+            return "WireGuard requires a signed build on a physical iPhone or iPad."
         case .wifiRequired:
             return "Connect to Wi-Fi to change the VPN connection."
         }

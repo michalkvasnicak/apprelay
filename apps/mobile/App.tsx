@@ -92,6 +92,9 @@ function VpnScreen() {
           <Text accessibilityLiveRegion="polite" style={styles.status}>
             {statusLabel}
           </Text>
+          {!isVpnAvailable && (
+            <Text style={styles.wifiMessage}>VPN requires a physical iPhone or iPad.</Text>
+          )}
           {wifiMessage && (
             <Text accessibilityLiveRegion="polite" style={styles.wifiMessage}>
               {wifiMessage}
@@ -134,7 +137,13 @@ function VpnScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  content: { flex: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 24 },
+  content: {
+    flex: 1,
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 520,
+    padding: 24,
+  },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   logo: { width: 32, height: 32 },
   brand: { fontSize: 18, fontWeight: "700", color: colors.text },

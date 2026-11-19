@@ -4,19 +4,22 @@ import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 
 const [environment, command, ...args] = process.argv.slice(2);
-if (!["local", "testflight"].includes(environment) || !command) {
-  console.error("Usage: node scripts/with-env.mjs <local|testflight> <command> [...args]");
+if (!["local", "simulator", "testflight"].includes(environment) || !command) {
+  console.error(
+    "Usage: node scripts/with-env.mjs <local|simulator|testflight> <command> [...args]",
+  );
   process.exit(1);
 }
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const envFile = new URL(`../.env.${environment}`, import.meta.url);
+const configEnvironment = environment === "simulator" ? "local" : environment;
+const envFile = new URL(`../.env.${configEnvironment}`, import.meta.url);
 let values;
 try {
   values = parseEnv(readFileSync(envFile, "utf8"));
 } catch {
   console.error(
-    `Cannot read .env.${environment}. Copy .env.${environment}.example and fill in its values.`,
+    `Cannot read .env.${configEnvironment}. Copy .env.${configEnvironment}.example and fill in its values.`,
   );
   process.exit(1);
 }

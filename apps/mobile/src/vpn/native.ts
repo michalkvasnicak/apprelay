@@ -41,7 +41,7 @@ export const isVpnAvailable = Platform.OS === "ios" && Boolean(native);
 function requireNative(): NativeVpnModule {
   if (!isVpnAvailable || !native) {
     throw new Error(
-      "VPN requires a custom native iOS build on a physical iPhone; Expo Go is not supported.",
+      "VPN requires a custom native iOS build on a physical iPhone or iPad; Expo Go is not supported.",
     );
   }
   return native;

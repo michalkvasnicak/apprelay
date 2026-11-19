@@ -89,7 +89,11 @@ module.exports = function withWireGuard(config, { allowArbitraryBonjour = false 
     const existingExtension = Object.entries(project.pbxNativeTargetSection()).find(
       ([, target]) => target?.name?.replaceAll('"', "") === TARGET,
     );
+    const deviceFamily = quote(config.ios?.supportsTablet ? "1,2" : "1");
     if (existingExtension) {
+      for (const entry of configurations(project, existingExtension[1])) {
+        entry.buildSettings.TARGETED_DEVICE_FAMILY = deviceFamily;
+      }
       addSource(project, `${DIRECTORY}/BonjourProxy.swift`, existingExtension[0], group.uuid);
       addSource(
         project,
@@ -149,7 +153,7 @@ module.exports = function withWireGuard(config, { allowArbitraryBonjour = false 
         SWIFT_VERSION: "5.0",
         PRODUCT_MODULE_NAME: TARGET,
         IPHONEOS_DEPLOYMENT_TARGET: config.ios?.deploymentTarget ?? "15.0",
-        TARGETED_DEVICE_FAMILY: quote(config.ios?.supportsTablet ? "1,2" : "1"),
+        TARGETED_DEVICE_FAMILY: deviceFamily,
         APPLICATION_EXTENSION_API_ONLY: "YES",
         ENABLE_BITCODE: "NO",
         ENABLE_USER_SCRIPT_SANDBOXING: "NO",

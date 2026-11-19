@@ -8,6 +8,7 @@
     "server": "pnpm --filter @apprelay/server start",
     "cli": "pnpm --filter @brosoft/apprelay start",
     "ios": "pnpm --filter @apprelay/mobile ios",
+    "ios:simulator": "pnpm --filter @apprelay/mobile ios:simulator",
     "publish:ios:testflight": "pnpm --filter @apprelay/mobile publish:ios:testflight",
     "web:dev": "pnpm --filter @apprelay/web dev",
     "web:build": "pnpm --filter @apprelay/web build",

@@ -5,6 +5,7 @@ import { AppState, Linking } from "react-native";
 
 import { createApiClient } from "../api/client";
 import type { DeviceRegistration } from "../vpn/config";
+import { isVpnAvailable } from "../vpn/native";
 
 const pairingScheme = process.env.EXPO_PUBLIC_APP_SCHEME;
 const maxRetries = 3;
@@ -108,6 +109,9 @@ async function startPairing(
 
 export function usePairing(register: () => Promise<DeviceRegistration>) {
   useEffect(() => {
+    if (!isVpnAvailable) {
+      return;
+    }
     const controller = new AbortController();
     const { signal } = controller;
     const inFlight = new Set<string>();

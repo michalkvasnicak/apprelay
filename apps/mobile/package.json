@@ -8,6 +8,7 @@
     "api:check": "node scripts/generate-api.mjs --check",
     "start": "node scripts/with-env.mjs local expo start",
     "ios": "node scripts/with-env.mjs local expo run:ios --device",
+    "ios:simulator": "node scripts/with-env.mjs simulator sh -c 'expo prebuild --platform ios --clean && expo run:ios --device \"$@\"' --",
     "prebuild:ios": "node scripts/with-env.mjs local expo prebuild --platform ios",
     "publish:ios:testflight": "node scripts/publish-testflight-with-build-number.mjs",
     "lint": "oxlint --fix --deny-warnings --react-plugin .",
