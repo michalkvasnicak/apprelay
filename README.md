@@ -87,9 +87,10 @@ The mobile app uses `openapi-fetch` through `apps/mobile/src/api/client.ts` for
 typed paths, parameters, request bodies, and responses. Types provide compile-time
 checks, not runtime response validation.
 
-For new endpoints, derive `utoipa::ToSchema` on their payload types, add
-`#[utoipa::path]` to the handler, register it in
-`apps/server/src/http/openapi.rs`, and wire it into the Axum router.
+Place new handlers in `apps/server/src/http/routes/` and middleware in
+`apps/server/src/http/middleware/`. For new API endpoints, derive `utoipa::ToSchema`
+on their payload types, add `#[utoipa::path]` to the handler, register it in
+`apps/server/src/http/routes/openapi.rs`, and wire it into the Axum router.
 Document authentication and status codes alongside the endpoint.
 
 `pnpm api:check` fails if generated types are stale without modifying files.

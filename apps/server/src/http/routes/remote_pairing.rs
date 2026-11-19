@@ -7,15 +7,19 @@ use serde::Deserialize;
 use std::num::NonZeroU16;
 use uuid::Uuid;
 
-use super::{ApiError, AppState, ErrorResponse, auth::Credential};
+use crate::http::{
+    AppState,
+    auth::Credential,
+    responses::{ApiError, ErrorResponse},
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct RemotePairingRequest {
+pub(in crate::http) struct RemotePairingRequest {
     port: NonZeroU16,
 }
 
-pub(super) async fn put(
+pub(in crate::http) async fn put(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(device_id): Path<Uuid>,

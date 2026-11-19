@@ -1,3 +1,4 @@
+use axum::Json;
 use utoipa::{
     Modify, OpenApi,
     openapi::{
@@ -10,14 +11,14 @@ use utoipa::{
 #[openapi(
     info(title = "AppRelay API", version = "1.0.0"),
     paths(
-        super::health,
+        super::health::health,
         super::artifacts::create,
         super::artifacts::complete,
         super::artifacts::resolve,
         super::install_jobs::create,
         super::install_jobs::get,
         super::install_jobs::complete,
-        super::register_device,
+        super::devices::register_device,
         super::https_proxy::anisette_provider,
         super::https_proxy::relay,
         super::pairing_codes::get,
@@ -54,4 +55,8 @@ impl Modify for Security {
 /// Generate the contract without initializing application infrastructure.
 pub fn document() -> Document {
     Api::openapi()
+}
+
+pub(in crate::http) async fn get_document() -> Json<Document> {
+    Json(document())
 }

@@ -5,7 +5,7 @@ use ring::{
     rand::{SecureRandom, SystemRandom},
 };
 
-use super::ApiError;
+use super::responses::ApiError;
 
 pub(super) struct Credential {
     pub token: String,

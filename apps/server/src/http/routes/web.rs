@@ -12,7 +12,7 @@ use tower_http::{
     set_header::SetResponseHeaderLayer,
 };
 
-pub(super) fn router<S>() -> Router<S>
+pub(in crate::http) fn router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {

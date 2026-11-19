@@ -9,8 +9,14 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{ApiError, AppState, ErrorResponse, auth::Credential};
-use crate::db::pairing_codes::CodeLookup;
+use crate::{
+    db::pairing_codes::CodeLookup,
+    http::{
+        AppState,
+        auth::Credential,
+        responses::{ApiError, ErrorResponse},
+    },
+};
 
 #[derive(Serialize, ToSchema)]
 struct PairingCodeResponse {
@@ -31,7 +37,7 @@ struct PairingCodeResponse {
     ),
     security(("app_key" = [], "device_token" = []))
 )]
-pub(super) async fn get(
+pub(in crate::http) async fn get(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(device_id): Path<Uuid>,
@@ -47,7 +53,7 @@ pub(super) async fn get(
             CodeLookup::Forbidden => Err(ApiError::unauthorized()),
             CodeLookup::Missing => Err(ApiError::Public {
                 status: StatusCode::NOT_FOUND,
-                body: super::ErrorResponse::NotFound {
+                body: ErrorResponse::NotFound {
                     error: "no active pairing code",
                 },
             }),

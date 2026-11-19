@@ -11,8 +11,14 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{ApiError, AppState, ErrorResponse, auth::Credential};
-use crate::db::pairing_attempts::{AttemptStatus, Claim};
+use crate::{
+    db::pairing_attempts::{AttemptStatus, Claim},
+    http::{
+        AppState,
+        auth::Credential,
+        responses::{ApiError, ErrorResponse},
+    },
+};
 
 #[derive(Serialize, ToSchema)]
 struct CreatedAttempt {
@@ -22,14 +28,14 @@ struct CreatedAttempt {
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StartRequest {
+pub(in crate::http) struct StartRequest {
     token: String,
 }
 
 fn token_hash(token: &str) -> Result<[u8; 32], ApiError> {
     let missing = || ApiError::Public {
         status: StatusCode::NOT_FOUND,
-        body: super::ErrorResponse::NotFound {
+        body: ErrorResponse::NotFound {
             error: "pairing attempt not found",
         },
     };
@@ -52,7 +58,9 @@ fn token_hash(token: &str) -> Result<[u8; 32], ApiError> {
         (status = 500, body = ErrorResponse)
     )
 )]
-pub(super) async fn create(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+pub(in crate::http) async fn create(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
     let credential = Credential::generate()?;
     let expires_at = state
         .attempts
@@ -78,7 +86,7 @@ pub(super) async fn create(State(state): State<AppState>) -> Result<impl IntoRes
         (status = 500, body = ErrorResponse)
     )
 )]
-pub(super) async fn get(
+pub(in crate::http) async fn get(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -89,7 +97,7 @@ pub(super) async fn get(
         .map_err(|error| ApiError::Internal(error.into()))?
         .ok_or(ApiError::Public {
             status: StatusCode::NOT_FOUND,
-            body: super::ErrorResponse::NotFound {
+            body: ErrorResponse::NotFound {
                 error: "pairing attempt not found",
             },
         })?;
@@ -108,7 +116,7 @@ pub(super) async fn get(
         (status = 500, body = ErrorResponse)
     ), security(("app_key" = [], "device_token" = []))
 )]
-pub(super) async fn start(
+pub(in crate::http) async fn start(
     State(state): State<AppState>,
     Path(device_id): Path<Uuid>,
     headers: HeaderMap,
@@ -117,7 +125,7 @@ pub(super) async fn start(
     let credential = Credential::required(&headers)?;
     let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
-        body: super::ErrorResponse::InvalidRequest {
+        body: ErrorResponse::InvalidRequest {
             error: "invalid pairing JSON; expected token",
         },
     })?;
@@ -131,19 +139,19 @@ pub(super) async fn start(
         Claim::Unauthorized => Err(ApiError::unauthorized()),
         Claim::Missing => Err(ApiError::Public {
             status: StatusCode::NOT_FOUND,
-            body: super::ErrorResponse::NotFound {
+            body: ErrorResponse::NotFound {
                 error: "pairing attempt not found",
             },
         }),
         Claim::Conflict => Err(ApiError::Public {
             status: StatusCode::CONFLICT,
-            body: super::ErrorResponse::Conflict {
+            body: ErrorResponse::Conflict {
                 error: "attempt already used or device has an active attempt",
             },
         }),
         Claim::Expired => Err(ApiError::Public {
             status: StatusCode::GONE,
-            body: super::ErrorResponse::Expired {
+            body: ErrorResponse::Expired {
                 error: "pairing attempt expired",
             },
         }),

@@ -9,7 +9,7 @@ use axum::{
 use ring::hmac;
 use zeroize::Zeroizing;
 
-use super::ApiError;
+use crate::http::responses::{ApiError, ErrorResponse};
 
 const HEADER: &str = "x-app-key";
 const VERIFICATION_MESSAGE: &[u8] = b"AppRelay app key verification";
@@ -31,14 +31,14 @@ impl AppKey {
     }
 }
 
-pub(super) async fn require_app_key(
+pub(in crate::http) async fn require_app_key(
     State(key): State<AppKey>,
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
     let unauthorized = || ApiError::Public {
         status: StatusCode::UNAUTHORIZED,
-        body: super::ErrorResponse::AppKeyRequired {
+        body: ErrorResponse::AppKeyRequired {
             error: "a valid app key is required",
         },
     };

@@ -7,13 +7,18 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::db::push_tokens::PushTokenUpdateError;
-
-use super::{ApiError, AppState, ErrorResponse, auth::Credential};
+use crate::{
+    db::push_tokens::PushTokenUpdateError,
+    http::{
+        AppState,
+        auth::Credential,
+        responses::{ApiError, ErrorResponse},
+    },
+};
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct PushTokenRequest {
+pub(in crate::http) struct PushTokenRequest {
     token: String,
 }
 
@@ -33,7 +38,7 @@ pub(super) struct PushTokenRequest {
     ),
     security(("app_key" = [], "device_token" = []))
 )]
-pub(super) async fn put(
+pub(in crate::http) async fn put(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(device_id): Path<Uuid>,
@@ -41,13 +46,13 @@ pub(super) async fn put(
 ) -> Result<StatusCode, ApiError> {
     let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
-        body: super::ErrorResponse::InvalidRequest {
+        body: ErrorResponse::InvalidRequest {
             error: "invalid push token JSON; expected token",
         },
     })?;
     let token = decode_token(&request.token).ok_or(ApiError::Public {
         status: StatusCode::BAD_REQUEST,
-        body: super::ErrorResponse::InvalidRequest {
+        body: ErrorResponse::InvalidRequest {
             error: "token must be a nonempty, even-length hexadecimal string",
         },
     })?;
@@ -66,7 +71,7 @@ pub(super) async fn put(
     ),
     security(("app_key" = [], "device_token" = []))
 )]
-pub(super) async fn delete(
+pub(in crate::http) async fn delete(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(device_id): Path<Uuid>,

@@ -23,7 +23,7 @@ use tokio::time::timeout;
 use tower_rate_limit_fred::rate_limit;
 use zeroize::Zeroizing;
 
-use super::ApiError;
+use crate::http::responses::{ApiError, ErrorResponse};
 
 const CAPACITY: u16 = 10;
 const EMISSION_INTERVAL: Duration = Duration::from_secs(6);
@@ -101,7 +101,7 @@ impl RegistrationRateLimiter {
         }
         let invalid = || ApiError::Public {
             status: StatusCode::BAD_REQUEST,
-            body: super::ErrorResponse::InvalidRequest {
+            body: ErrorResponse::InvalidRequest {
                 error: "trusted proxy must supply one valid CF-Connecting-IP header",
             },
         };
@@ -119,7 +119,7 @@ impl RegistrationRateLimiter {
     }
 }
 
-pub(super) async fn limit_registration(
+pub(in crate::http) async fn limit_registration(
     State(limiter): State<RegistrationRateLimiter>,
     request: Request,
     next: Next,
@@ -135,7 +135,7 @@ pub(super) async fn limit_registration(
     .await
 }
 
-pub(super) async fn limit_pairing_attempts(
+pub(in crate::http) async fn limit_pairing_attempts(
     State(limiter): State<RegistrationRateLimiter>,
     request: Request,
     next: Next,
@@ -149,7 +149,7 @@ pub(super) async fn limit_pairing_attempts(
     limit(limiter, request, next, scope, capacity, emission).await
 }
 
-pub(super) async fn limit_artifacts(
+pub(in crate::http) async fn limit_artifacts(
     State(limiter): State<RegistrationRateLimiter>,
     request: Request,
     next: Next,
@@ -162,7 +162,7 @@ pub(super) async fn limit_artifacts(
     limit(limiter, request, next, scope, capacity, emission).await
 }
 
-pub(super) async fn limit_install_jobs(
+pub(in crate::http) async fn limit_install_jobs(
     State(limiter): State<RegistrationRateLimiter>,
     request: Request,
     next: Next,
@@ -198,7 +198,7 @@ async fn limit(
         Ok(Ok(Some(retry_after))) => {
             let mut response = ApiError::Public {
                 status: StatusCode::TOO_MANY_REQUESTS,
-                body: super::ErrorResponse::RateLimited {
+                body: ErrorResponse::RateLimited {
                     error: "too many requests",
                 },
             }

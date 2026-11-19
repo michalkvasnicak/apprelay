@@ -11,12 +11,21 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{ApiError, ArtifactApi, ErrorResponse, artifacts::validate_upload, auth::Credential};
-use crate::{db::install_jobs::object_key, error::OperationError, r2::Verification};
+use crate::{
+    db::install_jobs::object_key,
+    error::OperationError,
+    http::{
+        auth::Credential,
+        responses::{ApiError, ErrorResponse},
+    },
+    r2::Verification,
+};
+
+use super::artifacts::{ArtifactApi, validate_upload};
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct CreateInstallJob {
+pub(in crate::http) struct CreateInstallJob {
     size_bytes: i64,
     /// Base64-encoded SHA-256 of the exact signed IPA to be uploaded.
     sha256: String,
@@ -82,7 +91,7 @@ fn missing() -> ApiError {
     ),
     security(("pairing_token" = []))
 )]
-pub(super) async fn create(
+pub(in crate::http) async fn create(
     State(api): State<Option<ArtifactApi>>,
     headers: HeaderMap,
     request: Result<Json<CreateInstallJob>, JsonRejection>,
@@ -144,7 +153,7 @@ pub(super) async fn create(
     ),
     security(("pairing_token" = []))
 )]
-pub(super) async fn get(
+pub(in crate::http) async fn get(
     State(api): State<Option<ArtifactApi>>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
@@ -185,7 +194,7 @@ pub(super) async fn get(
     ),
     security(("pairing_token" = []))
 )]
-pub(super) async fn complete(
+pub(in crate::http) async fn complete(
     State(api): State<Option<ArtifactApi>>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,

@@ -19,11 +19,16 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{ApiError, ErrorResponse, RegistrationRateLimiter, auth::Credential, rate_limit};
 use crate::{
     db::{
         artifacts::{Artifact, ArtifactRepository},
         install_jobs::InstallJobRepository,
+    },
+    http::{
+        RegistrationRateLimiter,
+        auth::Credential,
+        middleware::rate_limit,
+        responses::{ApiError, ErrorResponse},
     },
     r2::{R2Storage, Verification},
 };
@@ -110,7 +115,10 @@ impl ArtifactApi {
     }
 }
 
-pub(super) fn router<S>(api: Option<ArtifactApi>, limiter: RegistrationRateLimiter) -> Router<S>
+pub(in crate::http) fn router<S>(
+    api: Option<ArtifactApi>,
+    limiter: RegistrationRateLimiter,
+) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {

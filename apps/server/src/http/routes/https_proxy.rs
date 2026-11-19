@@ -13,13 +13,9 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Request, State, rejection::JsonRejection},
-    http::{
-        HeaderMap, HeaderName, HeaderValue, StatusCode,
-        header::{CACHE_CONTROL, CONTENT_ENCODING},
-    },
-    middleware::{self, Next},
-    response::{IntoResponse, Response},
+    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_ENCODING},
+    middleware::from_fn_with_state,
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -31,17 +27,20 @@ use reqwest::{
 };
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
-use tokio::{net::lookup_host, sync::Semaphore, time::timeout};
+use tokio::{net::lookup_host, sync::Semaphore};
 use utoipa::ToSchema;
 
-use super::ApiError;
+use crate::http::{
+    AppState,
+    middleware::proxy_limit,
+    responses::{ApiError, ErrorResponse},
+};
 
 const MAX_BODY_BYTES: usize = 2_000_000;
 // Base64 expansion plus bounded JSON/header overhead.
 const MAX_ENVELOPE_BYTES: usize = 2_800_000;
 const MAX_HEADER_BYTES: usize = 32_768;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(75);
 // Apple Root CA from https://www.apple.com/appleca/AppleIncRootCertificate.cer.
 const APPLE_ROOT_CA: &[u8] = include_bytes!("apple-root-ca.crt");
 const ANISETTE_URL_ENV: &str = "APPRELAY_ANISETTE_URL";
@@ -142,35 +141,16 @@ impl HttpsProxy {
     }
 }
 
-pub(super) fn router(proxy: HttpsProxy) -> Router<super::AppState> {
+pub(in crate::http) fn router(proxy: HttpsProxy) -> Router<AppState> {
     Router::new()
         .route("/v1/apple/proxy", post(relay))
         .layer(DefaultBodyLimit::max(MAX_ENVELOPE_BYTES))
-        .layer(middleware::from_fn_with_state(proxy.clone(), limit_request))
+        .layer(from_fn_with_state(
+            Arc::clone(&proxy.permits),
+            proxy_limit::limit_request,
+        ))
         .route("/v1/apple/anisette-provider", get(anisette_provider))
         .with_state(proxy)
-}
-
-// Acquire before reading JSON, bound upload time too, and never queue excess work.
-async fn limit_request(State(proxy): State<HttpsProxy>, request: Request, next: Next) -> Response {
-    let result = async {
-        let _permit = proxy
-            .permits
-            .try_acquire()
-            .map_err(ApiError::internal("acquire_https_proxy_permit"))?;
-        timeout(REQUEST_TIMEOUT, next.run(request))
-            .await
-            .map_err(|_| upstream_timeout())
-    }
-    .await;
-    let mut response = match result {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
-    };
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
 }
 
 #[derive(Serialize, ToSchema)]
@@ -227,13 +207,13 @@ struct ProxyResponse {
     request_body = ProxyRequest,
     responses(
         (status = 200, description = "Upstream response; inspect the envelope status", body = ProxyResponse),
-        (status = 400, description = "Invalid proxy request or destination/header policy", body = super::ErrorResponse),
-        (status = 413, description = "Request too large", body = super::ErrorResponse),
-        (status = 415, description = "Expected application/json", body = super::ErrorResponse),
-        (status = 422, description = "Invalid JSON fields", body = super::ErrorResponse),
-        (status = 500, description = "Internal server error", body = super::ErrorResponse),
-        (status = 502, description = "Upstream TLS, DNS, transport, encoding or response-size failure", body = super::ErrorResponse),
-        (status = 504, description = "Proxy timed out", body = super::ErrorResponse)
+        (status = 400, description = "Invalid proxy request or destination/header policy", body = ErrorResponse),
+        (status = 413, description = "Request too large", body = ErrorResponse),
+        (status = 415, description = "Expected application/json", body = ErrorResponse),
+        (status = 422, description = "Invalid JSON fields", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse),
+        (status = 502, description = "Upstream TLS, DNS, transport, encoding or response-size failure", body = ErrorResponse),
+        (status = 504, description = "Proxy timed out", body = ErrorResponse)
     )
 )]
 async fn relay(
@@ -242,7 +222,7 @@ async fn relay(
 ) -> Result<Json<ProxyResponse>, ApiError> {
     let Json(request) = request.map_err(|error| ApiError::Public {
         status: error.status(),
-        body: super::ErrorResponse::InvalidRequest {
+        body: ErrorResponse::InvalidRequest {
             error: "invalid HTTPS proxy JSON",
         },
     })?;
@@ -520,7 +500,7 @@ fn public_address(address: IpAddr) -> bool {
 fn policy_error() -> ApiError {
     ApiError::Public {
         status: StatusCode::BAD_REQUEST,
-        body: super::ErrorResponse::InvalidRequest {
+        body: ErrorResponse::InvalidRequest {
             error: "HTTPS proxy request violates destination, method, body or header policy",
         },
     }
@@ -529,7 +509,7 @@ fn policy_error() -> ApiError {
 fn request_too_large() -> ApiError {
     ApiError::Public {
         status: StatusCode::PAYLOAD_TOO_LARGE,
-        body: super::ErrorResponse::InvalidRequest {
+        body: ErrorResponse::InvalidRequest {
             error: "HTTPS proxy request is too large",
         },
     }
@@ -539,17 +519,8 @@ fn upstream_error(upstream: &'static str, failure: &'static str) -> ApiError {
     tag_failure(upstream, failure);
     ApiError::Public {
         status: StatusCode::BAD_GATEWAY,
-        body: super::ErrorResponse::UpstreamFailure {
+        body: ErrorResponse::UpstreamFailure {
             error: "HTTPS proxy upstream request failed",
-        },
-    }
-}
-
-fn upstream_timeout() -> ApiError {
-    ApiError::Public {
-        status: StatusCode::GATEWAY_TIMEOUT,
-        body: super::ErrorResponse::UpstreamTimeout {
-            error: "HTTPS proxy request timed out",
         },
     }
 }
@@ -557,7 +528,7 @@ fn upstream_timeout() -> ApiError {
 fn transport_error(upstream: &'static str, stage: &'static str, error: reqwest::Error) -> ApiError {
     if error.is_timeout() {
         tag_failure(upstream, "timeout");
-        return upstream_timeout();
+        return ApiError::upstream_timeout();
     }
     let mut source = error.source();
     while let Some(cause) = source {
