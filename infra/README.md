@@ -15,7 +15,8 @@ return 502 until the native server is running and reachable at its upstream.
 
 ## Start
 
-From the repository root, with Colima running and its Docker context selected:
+The local stack does not start when Colima or Docker starts. Start it manually
+from the repository root, with Colima running and its Docker context selected:
 
 ```sh
 cp .env.example .env

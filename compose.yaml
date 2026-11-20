@@ -3,7 +3,7 @@ name: apprelay
 services:
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -14,7 +14,7 @@ services:
 
   postgres:
     image: postgres:18-alpine
-    restart: unless-stopped
+    restart: "no"
     environment:
       POSTGRES_DB: apprelay
       POSTGRES_USER: apprelay
@@ -40,7 +40,7 @@ services:
 
   temporal:
     image: temporalio/temporal:1.6.2
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       temporal-data-init:
         condition: service_completed_successfully
@@ -67,7 +67,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    restart: unless-stopped
+    restart: "no"
     environment:
       APPRELAY_HTTPS_HOST: ${APPRELAY_HTTPS_HOST:-localhost}
       APPRELAY_API_UPSTREAM: ${APPRELAY_API_UPSTREAM:-host.lima.internal:8080}
